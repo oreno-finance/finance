@@ -86,6 +86,7 @@ export function initMonthlyReports(deps) {
     let loadedPeriod = '';
     let archive = null;
     let periods = [];
+    let archiveYear = today().slice(0, 4);
     let busy = false;
     let saving = false;
     let message = '';
@@ -97,7 +98,7 @@ export function initMonthlyReports(deps) {
     let draftConflict = false;
     const drafts = new Map();
     const active = () => deps.vault()?.unlocked === true;
-    function reset() { ++request; selected = today(); loadedPeriod = ''; archive = null; periods = []; busy = false; saving = false; message = ''; draft = ''; changed = false; loadFailed = false; draftConflict = false; chosenRevision = null; drafts.clear(); container.replaceChildren(); }
+    function reset() { ++request; selected = today(); archiveYear = selected.slice(0, 4); loadedPeriod = ''; archive = null; periods = []; busy = false; saving = false; message = ''; draft = ''; changed = false; loadFailed = false; draftConflict = false; chosenRevision = null; drafts.clear(); container.replaceChildren(); }
     async function fetch() {
         const vault = deps.vault();
         if (!vault?.unlocked)
@@ -215,6 +216,7 @@ export function initMonthlyReports(deps) {
             finishActivity('月次レポート');
         }
         selected = period;
+        archiveYear = period.slice(0, 4);
         loadedPeriod = '';
         archive = null;
         draft = '';
@@ -256,14 +258,32 @@ export function initMonthlyReports(deps) {
             return;
         }
         if (periods.length) {
+            const years = [...new Set(periods.map(period => period.slice(0, 4)))].sort().reverse();
+            if (!years.includes(archiveYear))
+                archiveYear = years.includes(selected.slice(0, 4)) ? selected.slice(0, 4) : years[0];
             const list = el('div', 'reports-period-list');
             list.append(el('span', 'reports-muted', '保存済み'));
-            for (const period of periods) {
-                const item = button(month(period), () => { if (selectPeriod(period))
+            const yearSelect = el('select', 'reports-year-select');
+            yearSelect.setAttribute('aria-label', '保存済みレポートの年');
+            for (const year of years) {
+                const count = periods.filter(period => period.startsWith(year + '-')).length;
+                yearSelect.append(new Option(`${year}年（${count}か月）`, year));
+            }
+            yearSelect.value = archiveYear;
+            yearSelect.addEventListener('change', () => {
+                archiveYear = yearSelect.value;
+                render();
+                container.querySelector('.reports-year-select')?.focus();
+            });
+            list.append(yearSelect);
+            const months = el('div', 'reports-year-months');
+            for (const period of periods.filter(period => period.startsWith(archiveYear + '-'))) {
+                const item = button(`${Number(period.slice(5))}月`, () => { if (selectPeriod(period))
                     void fetch(); }, 'reports-period-button' + (period === selected ? ' selected' : ''));
                 item.setAttribute('aria-pressed', String(period === selected));
-                list.append(item);
+                months.append(item);
             }
+            list.append(months);
             container.append(list);
         }
         const control = section(month(selected));

@@ -53,11 +53,11 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
   const root=document.getElementById('reports-content');if(!root)throw new Error('月次レポート画面がありません。');
   const container:HTMLElement=root;
   let selected=today();let loadedPeriod='';let archive:MonthlyReportDocument|null=null;
-  let periods:string[]=[];let busy=false;let saving=false;let message='';let draft='';let chosenRevision:string|null=null;
+  let periods:string[]=[];let archiveYear=today().slice(0,4);let busy=false;let saving=false;let message='';let draft='';let chosenRevision:string|null=null;
   let request=0;let changed=false;let loadFailed=false;let draftConflict=false;
   const drafts=new Map<string,{note:string;revision:string|null}>();
   const active=()=>deps.vault()?.unlocked===true;
-  function reset():void {++request;selected=today();loadedPeriod='';archive=null;periods=[];busy=false;saving=false;message='';draft='';changed=false;loadFailed=false;draftConflict=false;chosenRevision=null;drafts.clear();container.replaceChildren();}
+  function reset():void {++request;selected=today();archiveYear=selected.slice(0,4);loadedPeriod='';archive=null;periods=[];busy=false;saving=false;message='';draft='';changed=false;loadFailed=false;draftConflict=false;chosenRevision=null;drafts.clear();container.replaceChildren();}
   async function fetch():Promise<void>{
     const vault=deps.vault();if(!vault?.unlocked)return;
     const id=++request;busy=true;message='';loadFailed=false;showActivity('月次レポートを読み込み中…','working');render();
@@ -98,7 +98,7 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
     if(saving)return false;
     ++request;
     if(busy){busy=false;finishActivity('月次レポート');}
-    selected=period;loadedPeriod='';archive=null;draft='';chosenRevision=null;
+    selected=period;archiveYear=period.slice(0,4);loadedPeriod='';archive=null;draft='';chosenRevision=null;
     message='';loadFailed=false;draftConflict=false;changed=false;
     return true;
   }
@@ -117,9 +117,28 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
     if(loadFailed){const error=el('p','reports-feedback-error',message);error.setAttribute('role','alert');container.append(error);return;}
     if(loadedPeriod!==selected){void fetch();return;}
     if(periods.length){
-      const list=el('div','reports-period-list');list.append(el('span','reports-muted','保存済み'));
-      for(const period of periods){const item=button(month(period),()=>{if(selectPeriod(period))void fetch();},'reports-period-button'+(period===selected?' selected':''));item.setAttribute('aria-pressed',String(period===selected));list.append(item);}
-      container.append(list);
+      const years=[...new Set(periods.map(period=>period.slice(0,4)))].sort().reverse();
+      if(!years.includes(archiveYear))archiveYear=years.includes(selected.slice(0,4))?selected.slice(0,4):years[0]!;
+      const list=el('div','reports-period-list');
+      list.append(el('span','reports-muted','保存済み'));
+      const yearSelect=el('select','reports-year-select');
+      yearSelect.setAttribute('aria-label','保存済みレポートの年');
+      for(const year of years){
+        const count=periods.filter(period=>period.startsWith(year+'-')).length;
+        yearSelect.append(new Option(`${year}年（${count}か月）`,year));
+      }
+      yearSelect.value=archiveYear;
+      yearSelect.addEventListener('change',()=>{
+        archiveYear=yearSelect.value;render();
+        container.querySelector<HTMLSelectElement>('.reports-year-select')?.focus();
+      });
+      list.append(yearSelect);
+      const months=el('div','reports-year-months');
+      for(const period of periods.filter(period=>period.startsWith(archiveYear+'-'))){
+        const item=button(`${Number(period.slice(5))}月`,()=>{if(selectPeriod(period))void fetch();},'reports-period-button'+(period===selected?' selected':''));
+        item.setAttribute('aria-pressed',String(period===selected));months.append(item);
+      }
+      list.append(months);container.append(list);
     }
     const control=section(month(selected));
     if(message){const error=el('p','reports-feedback-error',message);error.setAttribute('role','alert');control.body.append(error);}

@@ -39,3 +39,9 @@
 /* Save/read errors remain next to the affected report until retry or navigation. */
 .reports-feedback-error{margin:0;padding:11px 13px;border:1px solid #d9979f;border-radius:var(--radius-control);background:#fff0f1;color:#93383f;font-size:12px;line-height:1.65;overflow-wrap:anywhere}
 [data-theme="dark"] .reports-feedback-error{background:#37262f;border-color:#81515f;color:#ffbec4}
+
+/* Years bound the archive month list to at most 12 buttons. */
+.reports-period-list{min-width:0}
+.reports-year-select{border:1px solid var(--line);border-radius:9px;min-height:37px;padding:7px 10px;background:var(--panel);color:var(--ink);font-size:12px}
+.reports-year-months{display:flex;gap:7px;flex-wrap:wrap;min-width:0;flex:1 1 100%}
+.reports-year-select:focus-visible,.reports-period-button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}

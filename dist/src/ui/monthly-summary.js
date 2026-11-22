@@ -392,7 +392,11 @@ export function initMonthlySummary(deps) {
         for (const item of report.categories) {
             const wrapper = element('div', 'monthly-bar-line');
             const head = element('div', 'monthly-bar-head');
-            head.append(element('span', '', `${item.name}（${item.count}件）`), element('strong', '', yen(item.amount)));
+            const categoryLink = element('button', 'monthly-link monthly-ranking-link', `${item.name}（${item.count}件）`);
+            categoryLink.type = 'button';
+            categoryLink.title = `${item.name}の明細と定期支出内訳を見る`;
+            categoryLink.addEventListener('click', () => deps.openDrilldown({ dimension: 'category', value: item.id, label: item.name, periods: [period] }));
+            head.append(categoryLink, element('strong', '', yen(item.amount)));
             const track = element('div', 'monthly-bar-track'), fill = element('div', 'monthly-bar-fill');
             fill.style.width = `${Math.max(0, item.amount) / largest * 100}%`;
             const color = PALETTE.find(p => p.id === item.color)?.hex;
@@ -418,8 +422,9 @@ export function initMonthlySummary(deps) {
         if (!report.merchants.length)
             empty(merchants.body, '対象となる利用先はありません。');
         else
-            for (const [index, item] of report.merchants.slice(0, 10).entries())
-                line(merchants.body, `${index + 1}. ${item.name}（${item.count}件）`, yen(item.amount));
+            for (const [index, item] of report.merchants.slice(0, 10).entries()) {
+                line(merchants.body, `${index + 1}. ${item.name}（${item.count}件）`, yen(item.amount), () => deps.openDrilldown({ dimension: 'merchant', value: item.name, label: item.name, periods: [period] }));
+            }
         const quality = section('データの確認');
         const problemCount = report.issues.filter(item => item.month === period).length;
         line(quality.body, '集計対象外の明細', `${problemCount}件`);

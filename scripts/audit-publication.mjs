@@ -156,6 +156,9 @@ const approvedVendor=(path)=>{
   return false;
 };
 const disallowedFilename=(path)=>{
+  // The only permitted Python source is the reviewed, synthetic-data,
+  // headless Chromium test. All other Python files remain prohibited.
+  if(path==='tests/e2e/run.py')return false;
   const lower=path.toLowerCase();
   const ext=extname(lower);
   if(blockedExt.has(ext))return true;

@@ -401,6 +401,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
         if(!details.childElementCount)details.append(make('p','','入出金の変動なし'));
       }else label.append(make('small','assets-balance-date','まず残高を登録してください。'));
       const reconciliation=reconciliationViews.get(account.id)!;
+      const reconciliationWasOpen=reconciliation.querySelector<HTMLDetailsElement>('details.assets-reconcile-card')?.open??false;
       reconciliation.replaceChildren();
       let match:BalanceReconciliation|null=null;
       try{match=reconcileBalance(data,account.id,records,available,data.payrollDepositAccount,payrollSynced,localDay(today));}
@@ -410,6 +411,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
         const gap=report.difference;
         const block=document.createElement('details');
         block.className=`assets-reconcile-card${gap!==0?' has-difference':' is-matched'}${report.valuationMayChange?' is-investment':''}`;
+        block.open=reconciliationWasOpen;
         const summary=make('summary','assets-reconcile-summary');
         const heading=make('span','assets-reconcile-title','前回確認残高からの再計算と今回実績');
         const text=make('strong','assets-reconcile-difference',gap===0?'再計算と一致':`${gap>0?'+':'−'}${yen(Math.abs(gap))}`);
