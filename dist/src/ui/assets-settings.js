@@ -484,6 +484,7 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             else
                 label.append(make('small', 'assets-balance-date', 'まず残高を登録してください。'));
             const reconciliation = reconciliationViews.get(account.id);
+            const reconciliationWasOpen = reconciliation.querySelector('details.assets-reconcile-card')?.open ?? false;
             reconciliation.replaceChildren();
             let match = null;
             try {
@@ -497,6 +498,7 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
                 const gap = report.difference;
                 const block = document.createElement('details');
                 block.className = `assets-reconcile-card${gap !== 0 ? ' has-difference' : ' is-matched'}${report.valuationMayChange ? ' is-investment' : ''}`;
+                block.open = reconciliationWasOpen;
                 const summary = make('summary', 'assets-reconcile-summary');
                 const heading = make('span', 'assets-reconcile-title', '前回確認残高からの再計算と今回実績');
                 const text = make('strong', 'assets-reconcile-difference', gap === 0 ? '再計算と一致' : `${gap > 0 ? '+' : '−'}${yen(Math.abs(gap))}`);

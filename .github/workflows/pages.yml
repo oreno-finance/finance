@@ -22,19 +22,19 @@ concurrency:
 jobs:
   security:
     name: security
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
       - name: Checkout complete Git history
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, reviewed on 2026-11-22
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, verified GitHub tag on 2026-11-22
         with:
           fetch-depth: 0
           persist-credentials: false
           # PR uses GitHub's synthetic merge ref, exercising the merged tree.
           # The scanner narrowly excludes only that synthetic commit's identity.
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5, verified GitHub tag on 2026-11-22
         with:
           node-version: '22'
       - name: Install dependencies from locked versions
@@ -72,6 +72,14 @@ jobs:
           npm test
           npm run verify:cloud
           npm run audit:tree
+      - name: Install pinned Playwright in an isolated Python environment
+        run: |
+          python3 -m venv "$RUNNER_TEMP/finance-playwright"
+          "$RUNNER_TEMP/finance-playwright/bin/python" -m pip install --disable-pip-version-check playwright==1.57.0
+          "$RUNNER_TEMP/finance-playwright/bin/python" -m playwright install --with-deps chromium
+      - name: Exercise real desktop and mobile interactions (headless Chromium)
+        run: |
+          "$RUNNER_TEMP/finance-playwright/bin/python" tests/e2e/run.py
       - name: Gitleaks scan of actual published build
         run: |
           docker run --rm -v "$PWD:/repo:ro" -w /repo \

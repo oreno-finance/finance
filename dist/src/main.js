@@ -1480,7 +1480,7 @@ function showView(view) {
     if (view !== 'import')
         closeImportAddDialog();
     $('manage-back-summary').classList.toggle('hidden', view !== 'manage' || !manageReturnToSummary);
-    $('manage-back-analysis').classList.toggle('hidden', view !== 'manage' || !activeAnalysisDrilldown || fromHome);
+    $('manage-back-analysis').classList.toggle('hidden', view !== 'manage' || !activeAnalysisDrilldown || fromHome || manageReturnToSummary);
     $('manage-back-home').classList.toggle('hidden', view !== 'manage' || returnToHome !== 'manage');
     $('import-back-home').classList.toggle('hidden', view !== 'import' || returnToHome !== 'import');
     $('assets-back-home').classList.toggle('hidden', view !== 'assets' || returnToHome !== 'assets');
@@ -2950,6 +2950,19 @@ function init() {
         source: homeSource,
         openReport: (period) => { reportsUi?.openPeriod(period); showView('reports'); },
         openRecurring: openRecurringForReview,
+        openDrilldown: (request) => {
+            if (!homeSource()) {
+                toast('先にOneDrive保管庫を解除してください。');
+                return;
+            }
+            summaryReturnPageY = window.scrollY;
+            const content = document.querySelector('.workspace > .content');
+            summaryReturnContentY = content?.scrollTop ?? 0;
+            activeAnalysisDrilldown = request;
+            manageReturnToSummary = true;
+            activeIndex = -1;
+            showView('manage');
+        },
         openRecord: (id) => {
             const index = statements.findIndex(s => savedIds.get(s) === id);
             if (index < 0) {

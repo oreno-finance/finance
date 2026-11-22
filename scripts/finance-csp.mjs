@@ -143,8 +143,14 @@ function readCspMeta(html){
       const {attrs,duplicates,malformed}=readMetaAttributes(tag.attrs);
       if(malformed){issues.push('HTML metaの属性構文が不正です');return {issues,value:null};}
       if(attrs.get('http-equiv')?.trim().toLowerCase()!=='content-security-policy'){
-        if(!policies.length&&!isSafeBeforeCspMeta(attrs,duplicates)){
-          issues.push('CSP適用前に未承認または危険なmeta要素があります');
+        // A meta refresh can navigate the page even *after* a valid CSP.
+        // No http-equiv other than the exact CSP is approved in either page.
+        if(attrs.has('http-equiv')){
+          issues.push('CSPの前後にかかわらず未承認のhttp-equiv属性があります');
+          return {issues,value:null};
+        }
+        if(duplicates.size || (!policies.length&&!isSafeBeforeCspMeta(attrs,duplicates))){
+          issues.push('未承認または危険なmeta要素があります');
           return {issues,value:null};
         }
         continue;
