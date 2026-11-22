@@ -40,7 +40,10 @@
 .future-chart-filter{appearance:none;flex:0 0 auto;border:1px solid var(--line);border-radius:20px;padding:7px 12px;background:var(--bg);color:var(--ink);font-size:11px;font-weight:700;cursor:pointer}
 .future-chart-filter[aria-pressed="true"]{background:var(--accent-bg);color:var(--accent);border-color:var(--accent)}
 .future-chart-filter:focus-visible,.future-chart-svg:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
-.future-chart-svg{touch-action:pan-y;cursor:crosshair;outline-offset:3px}
+/* Touch must not show the browser's default blue/grey rectangle. */
+.future-chart-svg{touch-action:pan-y;cursor:crosshair;outline:none;-webkit-tap-highlight-color:transparent;outline-offset:3px}
+.future-chart-svg *{-webkit-tap-highlight-color:transparent}
+.future-chart-svg:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .future-chart-guide{stroke:var(--muted);stroke-width:1.5;stroke-dasharray:4 4;pointer-events:none}
 .future-chart-dot{fill:var(--panel);stroke-width:4;pointer-events:none}
 .future-chart-dot-cash{stroke:var(--future-cash,#7f92af)}

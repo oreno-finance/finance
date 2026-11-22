@@ -33,13 +33,26 @@ function ageText(month, born) {
     const age = Number(month.slice(0, 4)) - Number(born.slice(0, 4)) - (Number(month.slice(5)) < Number(born.slice(5)) ? 1 : 0);
     return age >= 0 ? `（${age}歳）` : '';
 }
-/** Map a screen-space x coordinate to the monthly index, independent of screen density. */
-export function nearestProjectionIndex(clientX, left, width, count) {
-    if (count <= 1 || !Number.isFinite(clientX) || !Number.isFinite(width) || width <= 0)
+/** Map SVG viewBox x, not the CSS element width, to a month. */
+export function nearestProjectionIndexSvgX(x, count) {
+    if (count <= 1 || !Number.isFinite(x))
         return 0;
-    const relative = (clientX - left) / width;
-    const visibleX = Math.max(0, Math.min(1, (relative * 840 - 50) / (840 - 50 - 16)));
-    return Math.max(0, Math.min(count - 1, Math.round(visibleX * (count - 1))));
+    const relative = Math.max(0, Math.min(1, (x - 50) / (840 - 50 - 16)));
+    return Math.max(0, Math.min(count - 1, Math.round(relative * (count - 1))));
+}
+/** Kept for existing callers and tests that work with a simple 840-unit viewport. */
+export function nearestProjectionIndex(clientX, left, width, count) {
+    if (!Number.isFinite(width) || width <= 0)
+        return 0;
+    return nearestProjectionIndexSvgX((clientX - left) * 840 / width, count);
+}
+/** Invert the actual screen CTM, including SVG preserveAspectRatio letterboxing. */
+export function chartXFromScreenPoint(clientX, clientY, matrix) {
+    const determinant = matrix.a * matrix.d - matrix.b * matrix.c;
+    if (!Number.isFinite(determinant) || Math.abs(determinant) < 1e-12)
+        return null;
+    const x = (matrix.d * (clientX - matrix.e) - matrix.c * (clientY - matrix.f)) / determinant;
+    return Number.isFinite(x) ? x : null;
 }
 function drawChart(container, points, born, compare, filter, selectedMonth, onFilter, onSelect) {
     container.replaceChildren();
@@ -56,8 +69,18 @@ function drawChart(container, points, born, compare, filter, selectedMonth, onFi
     for (const [key, title] of options) {
         const button = el('button', 'future-chart-filter', title);
         button.type = 'button';
+        button.dataset.series = key;
         button.setAttribute('aria-pressed', String(filter === key));
-        button.addEventListener('click', () => onFilter(key));
+        button.addEventListener('click', () => {
+            const hadFocus = document.activeElement === button;
+            onFilter(key);
+            // Repaint replaces the control: restore keyboard focus to its successor.
+            if (hadFocus) {
+                const next = [...container.querySelectorAll('.future-chart-filter')]
+                    .find(candidate => candidate.dataset.series === key);
+                next?.focus({ preventScroll: true });
+            }
+        });
         buttons.append(button);
     }
     container.append(buttons);
@@ -136,8 +159,20 @@ function drawChart(container, points, born, compare, filter, selectedMonth, onFi
         detail.append(valuesList);
     };
     const atPointer = (event) => {
+        const ctm = svg.getScreenCTM();
+        const mapped = ctm ? chartXFromScreenPoint(event.clientX, event.clientY, ctm) : null;
+        if (mapped !== null) {
+            select(nearestProjectionIndexSvgX(mapped, points.length));
+            return;
+        }
+        // CTM may be unavailable for a detached SVG. Mirror the default
+        // preserveAspectRatio="xMidYMid meet" sizing rather than using its box width.
         const rect = svg.getBoundingClientRect();
-        select(nearestProjectionIndex(event.clientX, rect.left, rect.width, points.length));
+        const scale = Math.min(rect.width / w, rect.height / h);
+        if (!Number.isFinite(scale) || scale <= 0)
+            return;
+        const paintedLeft = rect.left + (rect.width - w * scale) / 2;
+        select(nearestProjectionIndexSvgX((event.clientX - paintedLeft) / scale, points.length));
     };
     let dragId = null;
     svg.addEventListener('pointerdown', event => {

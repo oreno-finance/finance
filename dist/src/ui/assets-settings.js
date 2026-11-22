@@ -498,18 +498,18 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
                 const block = document.createElement('details');
                 block.className = `assets-reconcile-card${gap !== 0 ? ' has-difference' : ' is-matched'}${report.valuationMayChange ? ' is-investment' : ''}`;
                 const summary = make('summary', 'assets-reconcile-summary');
-                const heading = make('span', 'assets-reconcile-title', '前回予測と今回実績');
-                const text = make('strong', 'assets-reconcile-difference', gap === 0 ? '予測と一致' : `${gap > 0 ? '+' : '−'}${yen(Math.abs(gap))}`);
+                const heading = make('span', 'assets-reconcile-title', '前回確認残高からの再計算と今回実績');
+                const text = make('strong', 'assets-reconcile-difference', gap === 0 ? '再計算と一致' : `${gap > 0 ? '+' : '−'}${yen(Math.abs(gap))}`);
                 summary.append(heading, text);
                 block.append(summary);
                 const body = make('div', 'assets-reconcile-body');
                 const pair = make('div', 'assets-reconcile-figures');
-                for (const [name, value] of [['前回の確認残高', report.previous.balance], ['今回の予測残高', report.predicted], ['今回の実際の残高', report.actual]]) {
+                for (const [name, value] of [['前回の確認残高', report.previous.balance], ['現在の設定による再計算残高', report.predicted], ['今回の実際の残高', report.actual]]) {
                     const cell = make('div', 'assets-reconcile-figure');
                     cell.append(make('span', '', name), make('strong', '', yen(value)));
                     pair.append(cell);
                 }
-                body.append(make('p', 'assets-reconcile-period', `${report.previousDay} → ${report.latestDay} の予測を照合`), pair);
+                body.append(make('p', 'assets-reconcile-period', `${report.previousDay} → ${report.latestDay} の入出金を現在の設定で再計算`), pair);
                 if (gap !== 0) {
                     body.append(make('p', 'assets-reconcile-advice', report.valuationMayChange
                         ? 'NISAの評価額には相場変動が含まれるため、差額は未記録の入出金を意味しません。'
@@ -547,7 +547,7 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
                         body.append(action);
                     }
                 }
-                body.append(make('p', 'assets-reconcile-footnote', '照合は日付単位の参考値です。確認当日の入出金や、後から変更した定期設定などは過去と一致しない場合があります。'));
+                body.append(make('p', 'assets-reconcile-footnote', '今回保存されている設定と記録で過去期間を再計算した参考値です。当時保存していた予測値ではありません。確認当日の入出金や設定変更で差額が生じる場合があり、使途不明金とは断定できません。'));
                 block.append(body);
                 reconciliation.append(block);
             }
