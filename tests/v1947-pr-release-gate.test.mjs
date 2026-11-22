@@ -84,8 +84,8 @@ test('PR CI tests merge result, and the audited artifact is the only deployed bu
   assert.match(workflow,/FINANCE_PR_HEAD_SHA:\s*\$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
   assert.match(workflow,/FINANCE_PR_BASE_SHA:\s*\$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
   assert.equal((workflow.match(/npm test/g)??[]).length,1,'the final build must not be rebuilt during deployment');
-  assert.equal((workflow.match(/actions\/upload-pages-artifact@v4/g)??[]).length,1);
-  assert.equal((workflow.match(/actions\/deploy-pages@v4/g)??[]).length,1);
+  assert.equal((workflow.match(/actions\/upload-pages-artifact@[0-9a-f]{40}/g)??[]).length,1);
+  assert.equal((workflow.match(/actions\/deploy-pages@[0-9a-f]{40}/g)??[]).length,1);
   assert.match(workflow,/Gitleaks scan of actual published build[\s\S]*?dir --redact --no-banner dist/);
   const deploy=workflow.slice(workflow.indexOf('\n  deploy:'));
   assert.doesNotMatch(deploy,/npm (?:ci|test|run build)|actions\/checkout@|upload-pages-artifact@/);

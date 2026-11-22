@@ -1,11 +1,39 @@
 /** Finance publication gate. Never prints the contents of suspected secrets. */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { extname } from 'node:path';
-import { validateFinanceCsp } from './finance-csp.mjs';
+import { fileURLToPath } from 'node:url';
+import { validateFinanceCsp, validateFinanceAuthCsp } from './finance-csp.mjs';
 
 const mode=process.argv[2];
+// CI must inspect EACH incoming commit, not only the final clean working tree.
+// Run the same --commit publication policy that the local pre-push hook uses.
+if(mode==='--range'){
+  const [base,head]=process.argv.slice(3);
+  const sha=/^[0-9a-f]{40}$/i;
+  if(process.argv.length!==5||!sha.test(base??'')||!sha.test(head??'')||/^0{40}$/.test(base)){
+    console.error('Usage: node scripts/audit-publication.mjs --range BASE_SHA HEAD_SHA');
+    process.exit(2);
+  }
+  try {
+    execFileSync('git',['cat-file','-e',`${base}^{commit}`],{stdio:'pipe'});
+    execFileSync('git',['cat-file','-e',`${head}^{commit}`],{stdio:'pipe'});
+    const commits=execFileSync('git',['rev-list','--reverse',`${base}..${head}`],{encoding:'utf8'})
+      .trim().split(/\r?\n/).filter(Boolean);
+    console.log(`[FINANCE] 受信コミット履歴監査: ${commits.length}コミット`);
+    for(const shaValue of commits){
+      const result=spawnSync(process.execPath,[fileURLToPath(import.meta.url),'--commit',shaValue],{
+        cwd:process.cwd(),env:process.env,stdio:'inherit',
+      });
+      if(result.error||result.status!==0)process.exit(result.status||1);
+    }
+  }catch{
+    console.error('[FINANCE] 履歴監査のコミット範囲を取得できません。');
+    process.exit(1);
+  }
+  process.exit(0);
+}
 const commitSha=process.argv[3];
 if(!['--staged','--tree','--commit'].includes(mode) || (mode==='--commit'&&!/^[0-9a-f]{40,64}$/i.test(commitSha??''))){
   console.error('Usage: node scripts/audit-publication.mjs --staged|--tree|--commit SHA');
@@ -53,9 +81,10 @@ try {
 }catch(error){errors.push('Git作成者・履歴を取得できません');}
 const names=mode==='--staged'
   ?splitNul(git('diff','--cached','--name-only','--diff-filter=ACMR','-z'))
-  :mode==='--commit'?splitNul(git('diff-tree','--root','--no-commit-id','-r','--diff-filter=ACMR','--name-only','-z',commitSha))
+  :mode==='--commit'?splitNul(git('diff-tree','--root','--no-commit-id','-m','-r','--diff-filter=ACMR','--name-only','-z',commitSha))
   :[...new Set(splitNul(git('ls-files','--cached','--others','--exclude-standard','-z')))].filter(existsSync);
 // This commit's MSAL vendor finding is only allowed while its exact bundle bytes match.
+const pinnedFaviconSha256 = '97167321d1dcd34af3b45b4803e7abe85cd0647469581e45d1c39b57e6ed1195';
 const pinnedMsalBundleSha256 = '148f7091b42d0ff43a50262325d48322596c582f859b2eed1f291ac62584b484';
 const pinnedMsalPath = 'dist/vendor/msal/msal-browser.bundle.js';
 if (((mode==='--staged'||mode==='--commit') && names.includes(pinnedMsalPath)) || (mode==='--tree' && existsSync(pinnedMsalPath))) {
@@ -153,7 +182,14 @@ for(const path of names){
     errors.push(`${path}: 公開禁止または未承認のファイル形式`);
     continue;
   }
-  if(path.endsWith('/favicon.ico'))continue;
+  if(path==='public/favicon.ico'||path==='dist/favicon.ico'){
+    const data=mode==='--staged'?git('show',`:${path}`)
+      :mode==='--commit'?git('show',`${commitSha}:${path}`):readFileSync(path);
+    if(createHash('sha256').update(data).digest('hex')!==pinnedFaviconSha256){
+      errors.push(`${path}: favicon.icoのSHA-256が承認済みファイルと一致しません`);
+    }
+    continue;
+  }
   const bytes=mode==='--staged'?git('show',`:${path}`)
     :mode==='--commit'?git('show',`${commitSha}:${path}`):readFileSync(path);
   const ext=extname(path.toLowerCase());
@@ -171,6 +207,9 @@ for(const path of names){
   const content=bytes.toString('utf8');
   if(path==='public/index.html'||path==='dist/index.html'){
     for(const issue of validateFinanceCsp(content))errors.push(`${path}: CSP ${issue}`);
+  }
+  if(path==='public/auth-bridge.html'||path==='dist/auth-bridge.html'){
+    for(const issue of validateFinanceAuthCsp(content))errors.push(`${path}: CSP ${issue}`);
   }
   if(path==='.gitleaksignore'){
     // Keep the only two explicitly reviewed historical findings; fail closed on broader exclusions.
