@@ -1345,6 +1345,15 @@ body{overflow:hidden}
 .settings-view #cloud-cleanup-snapshot-list .rules-check{min-width:0;align-items:flex-start;margin:0;padding:7px 3px;border-bottom:1px solid var(--line);overflow-wrap:anywhere;font-size:11px;font-weight:550;line-height:1.55}
 .settings-view #cloud-cleanup-snapshot-list .rules-check:last-child{border-bottom:0}
 .settings-view #cloud-cleanup-snapshot-list input[type="checkbox"]{flex:0 0 17px;margin-top:1px}
+/* Keep cleanup actions consistent with other OneDrive maintenance buttons. */
+.settings-view .cloud-cleanup-panel .cloud-button{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-width:0;max-width:100%;width:auto;min-height:40px;
+  margin-top:14px;text-align:center;white-space:normal;
+}
+@media(max-width:680px){
+  .settings-view .cloud-cleanup-panel .cloud-button{display:flex;width:100%}
+}
 
 /* SOURCE: layout-v145.css */
 /* Finance v1.4.5 — task-first settings layout and sortable management rows. */

@@ -578,7 +578,7 @@
             <div class="panel-heading"><div><h2 id="cloud-cleanup-title">暗号化データの整理</h2></div></div>
             <p class="cloud-help">明細の削除後も残っているPDF原本と、パスフレーズ変更前の暗号化世代を確認できます。調査だけでは削除しません。</p>
             <p class="cloud-help cloud-rotate-caution">削除後は以前のパスフレーズによる復旧に使用できなくなります。OneDriveのバックアップを必ず確認してください。OneDriveのごみ箱や過去バージョンにもデータが残る場合があります。完全消去する場合はOneDrive側でも削除してください。旧v1保管庫・バックアップスナップショットも整理できます。スナップショットは復旧手段なので、削除するものだけ個別に選択してください。</p>
-            <button type="button" id="cloud-cleanup-scan" class="secondary-action">不要データを調べる</button>
+            <button type="button" id="cloud-cleanup-scan" class="secondary-action cloud-button">不要データを調べる</button>
             <div id="cloud-cleanup-options" class="hidden">
               <label class="rules-check"><input type="checkbox" id="cloud-cleanup-originals"> 未参照PDF原本 <span id="cloud-cleanup-original-count"></span></label>
               <label class="rules-check"><input type="checkbox" id="cloud-cleanup-versions"> 旧暗号化世代 <span id="cloud-cleanup-version-count"></span></label>
@@ -586,7 +586,7 @@
               <label class="rules-check"><input type="checkbox" id="cloud-cleanup-v1"> 旧v1保管庫・移行済みPDF原本 <span id="cloud-cleanup-v1-count"></span></label>
               <div class="cloud-cleanup-snapshots"><p class="cloud-help">バックアップスナップショット（削除するものを個別選択）</p><div id="cloud-cleanup-snapshot-list"></div></div>
               <label class="rules-check"><input type="checkbox" id="cloud-cleanup-backup"> 削除前にバックアップを確認しました</label>
-              <button type="button" id="cloud-cleanup-delete" class="secondary-action" disabled>選択した不要データを削除</button>
+              <button type="button" id="cloud-cleanup-delete" class="secondary-action cloud-button" disabled>選択した不要データを削除</button>
             </div>
             <p id="cloud-cleanup-result" class="cloud-help" role="status" aria-live="polite"></p>
           </section>
