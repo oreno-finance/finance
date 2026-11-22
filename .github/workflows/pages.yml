@@ -78,7 +78,8 @@ jobs:
           "$RUNNER_TEMP/finance-playwright/bin/python" -m pip install --disable-pip-version-check playwright==1.57.0
           "$RUNNER_TEMP/finance-playwright/bin/python" -m playwright install --with-deps chromium
       - name: Exercise real desktop and mobile interactions (headless Chromium)
-        run: "$RUNNER_TEMP/finance-playwright/bin/python" tests/e2e/run.py
+        run: |
+          "$RUNNER_TEMP/finance-playwright/bin/python" tests/e2e/run.py
       - name: Gitleaks scan of actual published build
         run: |
           docker run --rm -v "$PWD:/repo:ro" -w /repo \
