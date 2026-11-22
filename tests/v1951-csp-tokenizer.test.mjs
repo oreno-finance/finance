@@ -69,7 +69,7 @@ test('broken and browser-ambiguous head syntax fails closed',()=>{
 });
 
 test('quoted angle brackets in harmless tag attributes do not terminate the tag',()=>{
-  const modified=main.replace('<meta charset="utf-8">','<meta name="other" content="a > b < c">');
+  const modified=main.replace(/<meta name="description"[^>]*>/,'<meta name="description" content="a > b < c">');
   assert.deepEqual(validateFinanceCsp(modified),[]);
 });
 

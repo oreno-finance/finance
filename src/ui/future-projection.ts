@@ -33,12 +33,26 @@ function ageText(month:string,born:string):string {
   return age>=0?`（${age}歳）`:'';
 }
 export type ProjectionSeriesFilter='all'|'cash'|'nisa'|'combined'|'combinedScenario';
-/** Map a screen-space x coordinate to the monthly index, independent of screen density. */
+/** Map SVG viewBox x, not the CSS element width, to a month. */
+export function nearestProjectionIndexSvgX(x:number,count:number):number {
+  if(count<=1||!Number.isFinite(x))return 0;
+  const relative=Math.max(0,Math.min(1,(x-50)/(840-50-16)));
+  return Math.max(0,Math.min(count-1,Math.round(relative*(count-1))));
+}
+/** Kept for existing callers and tests that work with a simple 840-unit viewport. */
 export function nearestProjectionIndex(clientX:number,left:number,width:number,count:number):number {
-  if(count<=1||!Number.isFinite(clientX)||!Number.isFinite(width)||width<=0)return 0;
-  const relative=(clientX-left)/width;
-  const visibleX=Math.max(0,Math.min(1,(relative*840-50)/(840-50-16)));
-  return Math.max(0,Math.min(count-1,Math.round(visibleX*(count-1))));
+  if(!Number.isFinite(width)||width<=0)return 0;
+  return nearestProjectionIndexSvgX((clientX-left)*840/width,count);
+}
+/** Invert the actual screen CTM, including SVG preserveAspectRatio letterboxing. */
+export function chartXFromScreenPoint(
+  clientX:number,clientY:number,
+  matrix:Pick<DOMMatrix,'a'|'b'|'c'|'d'|'e'|'f'>,
+):number|null {
+  const determinant=matrix.a*matrix.d-matrix.b*matrix.c;
+  if(!Number.isFinite(determinant)||Math.abs(determinant)<1e-12)return null;
+  const x=(matrix.d*(clientX-matrix.e)-matrix.c*(clientY-matrix.f))/determinant;
+  return Number.isFinite(x)?x:null;
 }
 function drawChart(
   container:HTMLElement,points:FuturePoint[],born:string,compare:boolean,
@@ -57,8 +71,17 @@ function drawChart(
   const options:[ProjectionSeriesFilter,string][]=[['all','すべて'],['cash','現金'],['nisa','NISA'],['combined','合計'],...(compare?[['combinedScenario','変更後'] as [ProjectionSeriesFilter,string]]:[])];
   for(const [key,title] of options){
     const button=el('button','future-chart-filter',title) as HTMLButtonElement;
-    button.type='button';button.setAttribute('aria-pressed',String(filter===key));
-    button.addEventListener('click',()=>onFilter(key));buttons.append(button);
+    button.type='button';button.dataset.series=key;button.setAttribute('aria-pressed',String(filter===key));
+    button.addEventListener('click',()=>{
+      const hadFocus=document.activeElement===button;
+      onFilter(key);
+      // Repaint replaces the control: restore keyboard focus to its successor.
+      if(hadFocus){
+        const next=[...container.querySelectorAll<HTMLButtonElement>('.future-chart-filter')]
+          .find(candidate=>candidate.dataset.series===key);
+        next?.focus({preventScroll:true});
+      }
+    });buttons.append(button);
   }
   container.append(buttons);
   const shown=filter==='all'?names:names.filter(([key])=>key===filter);
@@ -70,7 +93,7 @@ function drawChart(
   const y=(value:number)=>padTop+(max-value)/range*(h-padTop-padBottom);
   const svg=svgNode('svg',{viewBox:`0 0 ${w} ${h}`,role:'slider',tabindex:'0',
     'aria-label':'予測年月を選択','aria-valuemin':'0','aria-valuemax':String(points.length-1),
-    class:'future-chart-svg'});
+    class:'future-chart-svg'}) as SVGSVGElement;
   const description=svgNode('title',{});description.textContent='グラフをタップまたは左右矢印キーで年月を選択';svg.append(description);
   for(let i=0;i<=4;i++){
     const value=min+range*i/4;
@@ -122,8 +145,19 @@ function drawChart(
     detail.append(valuesList);
   };
   const atPointer=(event:PointerEvent)=>{
+    const ctm=svg.getScreenCTM();
+    const mapped=ctm?chartXFromScreenPoint(event.clientX,event.clientY,ctm):null;
+    if(mapped!==null){
+      select(nearestProjectionIndexSvgX(mapped,points.length));
+      return;
+    }
+    // CTM may be unavailable for a detached SVG. Mirror the default
+    // preserveAspectRatio="xMidYMid meet" sizing rather than using its box width.
     const rect=svg.getBoundingClientRect();
-    select(nearestProjectionIndex(event.clientX,rect.left,rect.width,points.length));
+    const scale=Math.min(rect.width/w,rect.height/h);
+    if(!Number.isFinite(scale)||scale<=0)return;
+    const paintedLeft=rect.left+(rect.width-w*scale)/2;
+    select(nearestProjectionIndexSvgX((event.clientX-paintedLeft)/scale,points.length));
   };
   let dragId:number|null=null;
   svg.addEventListener('pointerdown',event=>{

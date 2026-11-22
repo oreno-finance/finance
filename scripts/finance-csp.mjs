@@ -63,6 +63,25 @@ function readMetaAttributes(text){
   return {attrs,duplicates,malformed:false};
 }
 
+/**
+ * Before a meta CSP is processed, even a preloaded <link> or <base> can have
+ * an effect that the later policy cannot undo. Accept only reviewed metadata
+ * that cannot initiate network requests, document navigation, or execution.
+ */
+function isSafeBeforeCspMeta(attrs,duplicates){
+  if(duplicates.size||attrs.has('http-equiv'))return false;
+  if(attrs.size===1 && attrs.has('charset')){
+    return attrs.get('charset')?.trim().toLowerCase()==='utf-8';
+  }
+  if(attrs.size!==2||!attrs.has('name')||!attrs.has('content'))return false;
+  const name=attrs.get('name')?.trim().toLowerCase(),content=attrs.get('content');
+  if(typeof content!=='string')return false;
+  if(name==='viewport')return content==='width=device-width, initial-scale=1';
+  if(name==='theme-color')return /^#[0-9a-f]{6}$/i.test(content);
+  if(name==='description')return content.length>0&&content.length<=300&&!/[\x00-\x1f]/.test(content);
+  return false;
+}
+
 /** Find the actual closing tag of a raw-text head element on the original text. */
 function skipRawElement(source,offset,name){
   const closing=new RegExp(`</${name}(?=[\\s/>])`,'gi');
@@ -82,7 +101,7 @@ function skipRawElement(source,offset,name){
  */
 function readCspMeta(html){
   const issues=[],policies=[];
-  let cursor=0,inHead=false,sawHead=false,scriptBeforePolicy=false;
+  let cursor=0,inHead=false,sawHead=false;
   while(cursor<html.length){
     const next=html.indexOf('<',cursor);
     if(next<0){
@@ -117,21 +136,35 @@ function readCspMeta(html){
     if(tag.name==='head' && tag.closing){
       if(policies.length!==1)issues.push('CSP metaがちょうど1つではありません');
       if(policies.length!==1 || policies[0]==null)issues.push('有効なCSP content属性がありません');
-      if(scriptBeforePolicy)issues.push('CSP適用前にscript要素が存在します');
       return {issues,value:policies.length===1?(policies[0]??null):null};
     }
     if(tag.closing){issues.push('HTML headの未承認の閉じタグがあります');return {issues,value:null};}
     if(tag.name==='meta'){
       const {attrs,duplicates,malformed}=readMetaAttributes(tag.attrs);
       if(malformed){issues.push('HTML metaの属性構文が不正です');return {issues,value:null};}
-      if(attrs.get('http-equiv')?.trim().toLowerCase()!=='content-security-policy')continue;
+      if(attrs.get('http-equiv')?.trim().toLowerCase()!=='content-security-policy'){
+        if(!policies.length&&!isSafeBeforeCspMeta(attrs,duplicates)){
+          issues.push('CSP適用前に未承認または危険なmeta要素があります');
+          return {issues,value:null};
+        }
+        continue;
+      }
       if(duplicates.size)issues.push('CSP metaに重複属性があります');
       policies.push(attrs.get('content'));
       continue;
     }
-    if(tag.name==='link'||tag.name==='base')continue;
+    if(tag.name==='link'||tag.name==='base'){
+      if(!policies.length){
+        issues.push(`CSP適用前に${tag.name}要素があります`);
+        return {issues,value:null};
+      }
+      continue;
+    }
     if(['script','style','title','textarea'].includes(tag.name)){
-      if(tag.name==='script' && policies.length===0)scriptBeforePolicy=true;
+      if(!policies.length){
+        issues.push(`CSP適用前に${tag.name}要素があります`);
+        return {issues,value:null};
+      }
       const end=skipRawElement(html,cursor,tag.name);
       if(end===null){issues.push(`${tag.name}要素が閉じられていません`);return {issues,value:null};}
       cursor=end;
