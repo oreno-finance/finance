@@ -6,7 +6,7 @@ import { CloudWriteUncertainError, type LiveVault } from '../cloud/live-vault.js
 import {monthNavigator} from './period-navigator.js';
 import { pointBenefitsSection } from './point-benefits.js';
 
-export interface MonthlyReportsUi { render():void; openPeriod(period:string):void; reset():void }
+export interface MonthlyReportsUi { render():void; openPeriod(period:string):void; reset():void; isBusy():boolean; isDirty():boolean }
 export interface MonthlyReportsDeps { source():MonthlySource|null; vault():LiveVault|null; openMonth(period:string):void }
 const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;};
 const yen=(x:number|null)=>x===null?'未取得':`${x.toLocaleString('ja-JP')}円`;
@@ -154,5 +154,7 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
     if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))return;
     selected=period;loadedPeriod='';archive=null;draft='';++request;
   }
-  return {render:()=>{render();if(archive&&!busy)void compareSource();},openPeriod,reset};
+  return {render:()=>{render();if(archive&&!busy)void compareSource();},openPeriod,reset,
+    isBusy:()=>busy,isDirty:()=>[...drafts].some(([period,entry])=>
+      entry.note!==((period===selected&&loadedPeriod===selected)?archive?.current.note??'':''))};
 }

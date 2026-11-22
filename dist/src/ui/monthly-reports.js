@@ -308,5 +308,6 @@ export function initMonthlyReports(deps) {
         ++request;
     }
     return { render: () => { render(); if (archive && !busy)
-            void compareSource(); }, openPeriod, reset };
+            void compareSource(); }, openPeriod, reset,
+        isBusy: () => busy, isDirty: () => [...drafts].some(([period, entry]) => entry.note !== ((period === selected && loadedPeriod === selected) ? archive?.current.note ?? '' : '')) };
 }

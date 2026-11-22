@@ -103,3 +103,29 @@ test('Large encrypted vault uploads via chunked session without sending bearer t
   assert.ok(chunks >= 2);
   assert.equal(offset,new TextEncoder().encode(big).byteLength);
 });
+
+test('cleanup enumeration matches exact root names and requires valid snapshot metadata',async()=>{
+  const known=snapshotName(new Date('2026-11-19T01:00:00Z'),'11111111-1111-4111-8111-111111111111');
+  const api=new OneDriveTestClient('TOKEN',async (url)=>{
+    if(url.endsWith('/approot'))return Response.json({id:'root'});
+    if(url.includes('/children?'))return Response.json({value:[
+      {id:'v1',name:'finance-v1-vault.enc',eTag:'v1'},
+      {id:'v1orig',name:'finance-v1-originals',folder:{},eTag:'orig'},
+      {id:'s1',name:known,eTag:'s1',size:500,createdDateTime:'2026-11-19T01:00:00Z'},
+      {id:'other',name:'finance-v1-vault.enc.bak',eTag:'e3'},
+      {id:'unrelated',name:'payroll-vault.enc',eTag:'e4'},
+    ]});
+    throw new Error('unrecognized path '+url);
+  });
+  const found=await api.listRetiredRootData();
+  assert.deepEqual(found.legacyV1.map(item=>item.id),['v1','v1orig']);
+  assert.deepEqual(found.snapshots.map(item=>item.id),['s1']);
+});
+
+test('cleanup rejects incomplete root enumeration and malformed snapshot metadata',async()=>{
+  const known=snapshotName(new Date('2026-11-19T01:00:00Z'),'11111111-1111-4111-8111-111111111111');
+  const create=(value)=>new OneDriveTestClient('TOKEN',async url=>
+    url.endsWith('/approot')?Response.json({id:'root'}):Response.json(value));
+  await assert.rejects(create({value:[], '@odata.nextLink':'https://graph.microsoft.com/next'}).listRetiredRootData(),/全件確認/);
+  await assert.rejects(create({value:[{id:'s1',name:known,eTag:'one'}]}).listRetiredRootData(),/メタデータ/);
+});

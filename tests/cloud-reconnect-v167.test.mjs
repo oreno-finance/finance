@@ -11,8 +11,10 @@ const css=readFileSync(new URL('public/styles/ui-v167.css',root),'utf8');
 test('reconnect button remains available with a cached account and allows account selection',()=>{
   assert.match(cloud,/cloud-login'\)\.toggleAttribute\('disabled',busy\)/);
   assert.match(cloud,/Microsoftアカウントを再接続/);
-  const handler=cloud.split("$('cloud-login').addEventListener('click'")[1]?.split("$('cloud-logout').addEventListener('click'")[0]??'';
-  assert.match(handler,/loginRedirect\(\{scopes:SCOPES,prompt:'select_account'\}\)/);
+  const handler=cloud.split("$('cloud-login').addEventListener('click'")[1]?.split("$('cloud-switch-account').addEventListener('click'")[0]??'';
+  assert.match(handler,/await graphClientWithoutRedirect\(\)/);
+  assert.match(handler,/loginRedirect\(\{scopes:SCOPES,\.\.\./);
+  assert.doesNotMatch(handler,/prompt:'select_account'/);
   assert.doesNotMatch(handler,/if\(!reauthenticationRequired\)return/);
 });
 

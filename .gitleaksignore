@@ -1,6 +1,8 @@
 # Exact historical Gitleaks false positives only. Keep default detection enabled.
 # 1. Dedicated dummy passphrase in cloud write outcome tests.
 # 2. Bundled third-party MSAL JavaScript in the initial release.
+# The third entry is an exact staged MSAL vendor finding and is SHA-256-pinned in the publication audit.
 # Do not add wildcard paths, disabled rules, or entire commits here.
 667644e138623d9606c25f7d559d9476e38459a5:tests/write-outcome-v1612.test.mjs:generic-api-key:8
 fdb7f28954406964f35ec11c89169098e7d9f36b:dist/vendor/msal/msal-browser.bundle.js:generic-api-key:1
+dist/vendor/msal/msal-browser.bundle.js:generic-api-key:1

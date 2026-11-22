@@ -19,7 +19,7 @@ test('初期描画前に保存済み開閉設定を復元し、初期値は折�
 
 test('ホバー展開は340msで、収納時もワークスペース幅を変えない',()=>{
   assert.match(main,/desktopMenuPeekTimer=window\.setTimeout\([\s\S]*?},340\)/);
-  assert.match(main,/wasPeeking\)shell\?\.classList\.add\('nav-peek-resetting'\)/);
+  assert.match(main,/wasPeeking&&!preserveManualTransition\)shell\?\.classList\.add\('nav-peek-resetting'\)/);
   assert.match(main,/else shell\?\.classList\.remove\('nav-peek-resetting'\)/);
   assert.match(css,/\.app-shell\.nav-collapsed\.nav-peeking #finance-sidebar\.sidebar\{[\s\S]*?position:sticky!important/);
   assert.match(css,/margin-right:-172px!important/);

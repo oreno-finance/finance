@@ -1,12 +1,14 @@
 {
   "name": "finance-importer-starter",
-  "version": "1.9.11",
+  "version": "1.9.43",
   "private": true,
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
+    "build:meta": "node scripts/stamp-app-meta.mjs",
+    "release:patch": "npm version patch --no-git-tag-version && npm run build",
     "build:styles": "node scripts/build-styles.mjs",
-    "build": "npm run build:styles && node scripts/clean-dist.mjs && tsc && node scripts/copy-static.mjs && node scripts/build-msal.mjs",
+    "build": "npm run build:meta && npm run build:styles && node scripts/clean-dist.mjs && tsc && node scripts/copy-static.mjs && node scripts/build-msal.mjs",
     "test": "npm run build && node --test tests/*.test.mjs",
     "verify:cloud": "node scripts/check-cloud-asset.mjs",
     "audit:staged": "node scripts/audit-publication.mjs --staged",
@@ -14,10 +16,10 @@
   },
   "devDependencies": {
     "typescript": "5.9.3",
-    "esbuild": "0.25.12"
+    "esbuild": "0.28.2"
   },
   "dependencies": {
-    "pdfjs-dist": "4.10.38",
-    "@azure/msal-browser": "5.29.0"
+    "pdfjs-dist": "6.5.438",
+    "@azure/msal-browser": "5.30.0"
   }
 }

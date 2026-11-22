@@ -14,6 +14,11 @@ try {
   await Promise.all(['cmaps', 'standard_fonts'].map(folder =>
     cp(join('node_modules/pdfjs-dist', folder), join(target, folder), { recursive: true, force: true })
   ));
+  // PDF.js 6 uses bundled WebAssembly for some image decoders. Keep it same-version.
+  try {
+    await access('node_modules/pdfjs-dist/wasm');
+    await cp('node_modules/pdfjs-dist/wasm', join(target, 'wasm'), { recursive: true, force: true });
+  } catch { /* Older releases may not ship a wasm directory. */ }
   console.log('PDF.js: self-hosted vendor copied into dist/vendor/pdfjs');
 } catch {
   console.warn('PDF.js package unavailable. Run npm install and npm run build before opening PDFs.');

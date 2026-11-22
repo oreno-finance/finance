@@ -42,7 +42,7 @@ test('strict totals, format and unsupported brand are rejected',()=>{
   assert.throws(()=>parse(csv('未知カード')),/対応していない/);
   assert.throws(()=>parse(csv(),'statement.csv'),/ファイル名/);
   assert.throws(()=>parse(csv().replace('2026/10/3','2026/13/3')),/利用日/);
-  assert.throws(()=>parse(csv().replace('1200,1,1,1200','1200,1,1,1200,extra')),/列数/);
+  assert.throws(()=>parse(csv().replace('1200,1,1,1200','1200,1,1,1200,備考,未知の追加列')),/列数/);
   assert.throws(()=>decodeCardCsv(new ArrayBuffer(0)),/サイズ/);
 });
 test('sixth column is payable amount, even for installment rows',()=>{

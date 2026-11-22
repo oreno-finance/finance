@@ -14,7 +14,7 @@ test('sidebar has a delayed, temporary mouse peek, with hover-only animation and
  assert.match(source,/event\.pointerType==='mouse'/);
  assert.match(source,/pointerleave',\(\)=>\{closeDesktopMenuPeek\(\);\}/);
  assert.match(source,/function showView\(view: FinanceView\): void \{[\s\S]*?if\(document\.querySelector\('\.app-shell\.nav-peeking'\)\)closeDesktopMenuPeek\(\)/);
- assert.match(source,/function clearDesktopMenuPeek\(\):void[\s\S]*?classList\.remove\('nav-peeking','nav-peek-closing'\)/);
+ assert.match(source,/function clearDesktopMenuPeek\(preserveManualTransition=false\):void[\s\S]*?classList\.remove\('nav-peeking','nav-peek-closing'\)/);
  assert.match(css,/\.app-shell\.nav-collapsed/);
  assert.match(css,/transition:width 320ms/);
  assert.match(file('public/styles/layout-v1911.css'),/@keyframes finance-peek-open/);

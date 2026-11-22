@@ -57,8 +57,10 @@ test('independent recovery script remains available when main application fails 
   assert.equal(doc.body.children.length,1);
   const panel=doc.body.children[0];
   assert.equal(panel.id,'startup-recovery');
-  const [settings,copy,reload]=panel.children[2].children;
+  const [reload,settings,copy]=panel.children[2].children;
   assert.equal(settings.textContent,'設定を表示');
   assert.equal(copy.textContent,'起動診断をコピー');
   assert.equal(reload.textContent,'再読み込み');
+  assert.equal(reload.className,'startup-recovery-reload');
+  assert.equal(panel.children[0].className,'startup-recovery-header');
 });

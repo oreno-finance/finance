@@ -29,10 +29,18 @@
       if(ready()||document.getElementById('startup-recovery'))return;
       const panel=document.createElement('section');
       panel.id='startup-recovery';panel.setAttribute('role','alert');
+      const header=document.createElement('div');header.className='startup-recovery-header';
+      const symbol=document.createElement('span');symbol.className='startup-recovery-symbol';
+      symbol.setAttribute('aria-hidden','true');symbol.textContent='!';
+      const headingGroup=document.createElement('div');headingGroup.className='startup-recovery-heading';
       const heading=document.createElement('strong');heading.textContent='Financeを起動できませんでした';
+      const description=document.createElement('p');description.className='startup-recovery-description';
+      description.textContent='再読み込みして復旧を試してください。';
+      headingGroup.append(heading,description);header.append(symbol,headingGroup);
       const note=document.createElement('p');note.className='startup-recovery-note';
       note.textContent='';
       const actions=document.createElement('div');actions.className='startup-recovery-actions';
+      const reload=document.createElement('button');reload.type='button';reload.className='startup-recovery-reload';reload.textContent='再読み込み';reload.addEventListener('click',()=>location.reload());
       const settings=document.createElement('button');settings.type='button';settings.textContent='設定を表示';settings.addEventListener('click',showSettings);
       const copy=document.createElement('button');copy.type='button';copy.textContent='起動診断をコピー';
       copy.addEventListener('click',async()=>{
@@ -41,8 +49,7 @@
         try{await navigator.clipboard.writeText(report);copy.textContent='コピーしました';}
         catch{note.textContent=report;}
       });
-      const reload=document.createElement('button');reload.type='button';reload.textContent='再読み込み';reload.addEventListener('click',()=>location.reload());
-      actions.append(settings,copy,reload);panel.append(heading,note,actions);document.body.append(panel);
+      actions.append(reload,settings,copy);panel.append(header,note,actions);document.body.append(panel);
     },9000);
   });
 })();

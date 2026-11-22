@@ -102,8 +102,8 @@ test('screen includes separate analysis-only actions, and tracks new navigation'
   const js=readFileSync(new URL('../dist/src/ui/subscriptions.js',import.meta.url),'utf8');
   assert.match(js,/今回は対象外/);assert.match(js,/カード払い/);
   const main=readFileSync(new URL('../src/main.ts',import.meta.url),'utf8');
-  assert.match(main,/onLock:[\s\S]*?subscriptionsUi\?\.isBusy\(\)/);
-  assert.match(main,/beforeunload[\s\S]*?subscriptionsUi\?\.isBusy\(\)/);
+  assert.match(main,/function interruptionState\(\)[\s\S]*?subscriptionsUi\?\.isBusy\(\)/);
+  assert.match(main,/beforeunload[\s\S]*?hasInterruptionRisk\(state\)/);
 });
 
 test('encrypted decisions survive fresh vault unlock and passphrase rotation without plaintext leakage',async()=>{

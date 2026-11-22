@@ -6,7 +6,6 @@
   <meta name="theme-color" content="#101b30">
   <meta name="description" content="カード請求明細をOneDriveへ暗号化保存し、ブラウザで解析・照合する個人用アプリ">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://graph.microsoft.com https://login.microsoftonline.com https://*.1drv.com https://*.sharepoint.com https://*.onedrive.com https://my.microsoftpersonalcontent.com; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; frame-src 'self' https://login.microsoftonline.com; form-action 'self' https://login.microsoftonline.com">
-  <!-- Finance v1.9.4: card points, simplified settings and monthly reports -->
   <title>Finance / ホーム</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="alternate icon" href="./favicon.ico" type="image/x-icon">
@@ -56,7 +55,7 @@
             </svg>
           </button>
         </div>
-        <div class="sidebar-meta"><span>Finance v1.9.11</span><time id="app-updated-at" datetime="2026-11-19">更新 2026/11/19 JST</time></div>
+        <div class="sidebar-meta"><span>Finance v1.9.43</span><time id="app-updated-at" datetime="2026-11-22">更新 2026/11/22 JST</time></div>
       </div>
       </div>
     </aside>
@@ -68,10 +67,10 @@
           <div id="home-content" class="home-content" aria-live="polite"></div>
         </section>
         <div id="import-view">
-          <header class="finance-page-heading"><div class="eyebrow">STATEMENT IMPORT</div><h1>明細インポート<span class="accent-dot">.</span></h1></header>
+          <header class="finance-page-heading import-page-heading"><div><div class="eyebrow">STATEMENT IMPORT</div><h1>明細インポート<span class="accent-dot">.</span></h1></div><button type="button" id="import-add-open" class="secondary-action import-add-open hidden">＋ 明細を追加</button></header>
           <div class="home-return-bar"><button type="button" id="import-back-home" class="secondary-action hidden">← ホームへ戻る</button></div>
-        <details id="entry-accordion" open><summary>明細を追加する</summary>
-        <section class="panel import-panel" aria-label="明細の取り込み">
+        <div id="import-inline-entry" class="import-inline-entry">
+        <section id="import-upload-panel" class="panel import-panel" aria-label="明細の取り込み">
           <div class="panel-heading"><div><div class="step">STEP 01</div><h2>明細の取り込み</h2></div><span class="pill neutral">端末内で処理</span></div>
           <div class="import-methods">
             <div id="pdf-pane" class="import-method" role="group" aria-label="CSV・PDFファイルの取り込み">
@@ -87,8 +86,11 @@
               <p class="hint">長い明細は入力欄の中だけスクロールできます。HTML形式も解析に利用します。</p></div>
             </details>
           </div>
+          <div class="import-upload-feedback hidden" id="import-upload-feedback" role="alert"></div>
+          <button type="button" id="import-clear-errors" class="text-button import-clear-errors hidden">解析失敗をクリア</button>
         </section>
-        </details>
+        </div>
+        <p id="import-compact-empty" class="import-compact-empty hidden">取込待ちの明細はありません。</p>
 
         <section class="results-grid" aria-label="解析結果">
           <div class="panel preview-panel statement-index-panel">
@@ -139,6 +141,10 @@
           <div class="import-batch-actions"><button type="button" id="import-payment-settings" class="secondary-action hidden">引落日を設定</button><button type="button" id="batch-import" class="save-action" disabled>明細を一括取り込む</button></div>
         </div>
         </div>
+        <dialog id="import-add-dialog" class="import-add-dialog" aria-labelledby="import-add-title">
+          <div class="import-add-head"><h2 id="import-add-title">明細を追加</h2><button id="import-add-close" type="button" aria-label="閉じる" class="import-add-close">×</button></div>
+          <div id="import-dialog-content" class="import-add-body"></div>
+        </dialog>
         <dialog id="import-revision-dialog" class="import-revision-dialog" aria-labelledby="import-revision-title">
           <div class="import-revision-inner">
             <h2 id="import-revision-title">既存明細との差分確認</h2>
@@ -512,16 +518,31 @@
               <div class="cloud-status-cell">
                 <p id="cloud-live-status" class="cloud-probe-result" role="status">未接続</p>
                 <p id="cloud-account" class="cloud-account">未接続</p>
+                <p id="cloud-auth-state" class="cloud-auth-state" role="status">Microsoftアカウントが未接続</p>
               </div>
             </div>
             <p id="cloud-status" class="cloud-status hidden" role="status" aria-live="polite"></p>
-            <div class="cloud-primary-actions">
+            <div class="cloud-primary-actions" aria-label="接続・保管庫の操作">
               <button type="button" id="cloud-login" class="save-action">Microsoftアカウントで接続</button>
               <button type="button" id="cloud-live-refresh" class="secondary-action">最新データを取得</button>
+              <button type="button" id="cloud-live-lock" class="secondary-action">保管庫をロック</button>
               <button type="button" id="cloud-resume-batch" class="secondary-action hidden">保存を再開</button>
               <button type="button" id="cloud-new-vault" class="secondary-action hidden">新しい保管庫を作成</button>
-              <button type="button" id="cloud-live-lock" class="secondary-action">保管庫をロック</button>
+            </div>
+            <div class="cloud-account-actions" role="group" aria-label="Microsoftアカウントの操作">
+              <button type="button" id="cloud-switch-account" class="cloud-link-action">別のアカウントに切り替える</button>
               <button type="button" id="cloud-logout" class="cloud-link-action">サインアウト</button>
+            </div>
+            <div class="cloud-remember-controls">
+              <div class="cloud-remember-copy">
+                <strong>次回からのパスフレーズ入力</strong>
+                <p id="cloud-remember-status" role="status" aria-live="polite">状態を確認しています…</p>
+                <small>自分専用のブラウザだけで利用してください。金融データはOneDriveに保存されます。</small>
+              </div>
+              <div class="cloud-remember-actions">
+                <button type="button" id="cloud-remember-register" class="secondary-action hidden" disabled>このブラウザを記憶する</button>
+                <button type="button" id="cloud-remember-forget" class="cloud-link-action hidden" disabled>このブラウザの記憶を解除</button>
+              </div>
             </div>
           </section>
 
@@ -553,6 +574,22 @@
             <p id="cloud-rotate-status" class="cloud-status" role="status" aria-live="polite"></p>
           </section>
 
+          <section class="panel cloud-panel cloud-cleanup-panel" aria-labelledby="cloud-cleanup-title">
+            <div class="panel-heading"><div><h2 id="cloud-cleanup-title">暗号化データの整理</h2></div></div>
+            <p class="cloud-help">明細の削除後も残っているPDF原本と、パスフレーズ変更前の暗号化世代を確認できます。調査だけでは削除しません。</p>
+            <p class="cloud-help cloud-rotate-caution">削除後は以前のパスフレーズによる復旧に使用できなくなります。OneDriveのバックアップを必ず確認してください。OneDriveのごみ箱や過去バージョンにもデータが残る場合があります。完全消去する場合はOneDrive側でも削除してください。旧v1保管庫・バックアップスナップショットも整理できます。スナップショットは復旧手段なので、削除するものだけ個別に選択してください。</p>
+            <button type="button" id="cloud-cleanup-scan" class="secondary-action">不要データを調べる</button>
+            <div id="cloud-cleanup-options" class="hidden">
+              <label class="rules-check"><input type="checkbox" id="cloud-cleanup-originals"> 未参照PDF原本 <span id="cloud-cleanup-original-count"></span></label>
+              <label class="rules-check"><input type="checkbox" id="cloud-cleanup-versions"> 旧暗号化世代 <span id="cloud-cleanup-version-count"></span></label>
+              <label class="rules-check"><input type="checkbox" id="cloud-cleanup-legacy"> 切替前の旧保存領域 <span id="cloud-cleanup-legacy-count"></span></label>
+              <label class="rules-check"><input type="checkbox" id="cloud-cleanup-v1"> 旧v1保管庫・移行済みPDF原本 <span id="cloud-cleanup-v1-count"></span></label>
+              <div class="cloud-cleanup-snapshots"><p class="cloud-help">バックアップスナップショット（削除するものを個別選択）</p><div id="cloud-cleanup-snapshot-list"></div></div>
+              <label class="rules-check"><input type="checkbox" id="cloud-cleanup-backup"> 削除前にバックアップを確認しました</label>
+              <button type="button" id="cloud-cleanup-delete" class="secondary-action" disabled>選択した不要データを削除</button>
+            </div>
+            <p id="cloud-cleanup-result" class="cloud-help" role="status" aria-live="polite"></p>
+          </section>
 
         </section>
             <details class="panel settings-nisa-panel settings-disclosure" id="settings-nisa-panel" aria-label="NISA連携設定">
@@ -608,6 +645,7 @@
                   <h3 class="assets-payroll-history-title">同期状況</h3>
                   <div class="assets-payroll-summary-body">
                   <div class="assets-payroll-metrics"><div><small>取得した給与明細</small><strong id="assets-payroll-count">0件</strong></div><div><small>最終同期</small><strong id="assets-payroll-last">未同期</strong></div></div>
+                  <label id="assets-payroll-stale" class="assets-payroll-stale hidden"><input id="assets-payroll-use-stale" type="checkbox"> 古い給与データを残高・収支予測に使用する（このタブのみ）</label>
                 </div>
               </section>
               </div>
@@ -741,10 +779,18 @@
           <button type="button" class="password-visibility-toggle" data-password-toggle="vault-passphrase-confirm" data-password-label="確認用パスフレーズ" aria-controls="vault-passphrase-confirm" aria-label="確認用パスフレーズを表示" aria-pressed="false">表示</button>
         </div>
       </div>
-      <label id="vault-tab-option" class="vault-tab-option hidden" for="vault-tab-keep">
-        <input id="vault-tab-keep" type="checkbox">
-        <span><strong>このタブでは再読み込み後も解除状態を維持</strong><small>選択時のみ復号鍵をタブのセッション領域に最大2時間保存。自分専用の端末で使ってください。明示的にロック・サインアウトすると消去します。</small></span>
-      </label>
+      <fieldset id="vault-retention-options" class="vault-retention-options hidden">
+        <legend>次回からのパスフレーズ入力</legend>
+        <label id="vault-always-option" class="vault-tab-option" for="vault-retention-every-time">
+          <input id="vault-retention-every-time" type="radio" name="vault-retention" value="always" checked>
+          <span><strong>毎回パスフレーズを入力する</strong><small>以前のブラウザ記憶も解除します</small></span>
+        </label>
+        <label id="vault-browser-option" class="vault-tab-option" for="vault-browser-keep">
+          <input id="vault-browser-keep" type="radio" name="vault-retention" value="browser">
+          <span><strong>このブラウザを記憶する</strong><small>次回から自動で開く。自分専用の端末向け</small></span>
+        </label>
+        <p class="vault-retention-help">「記憶する」は設定から解除できます。手動ロック後は再入力が必要です。</p>
+      </fieldset>
       <p id="vault-error" class="vault-error" role="alert"></p>
       <div class="vault-form-actions"><button type="button" id="vault-cancel" class="secondary-action">キャンセル</button><button type="submit" id="vault-submit" class="save-action">解除する</button></div>
     </form>

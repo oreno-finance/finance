@@ -3,6 +3,7 @@ import { PROBE_FILE_NAME } from './test-envelope.js';
 import { FINANCE_DIR, PAYROLL_DIR, checkBucket, checkOriginalMonth, originalParts } from './layout.js';
 import { asSnapshots, isSnapshotName, MAX_SNAPSHOT_BYTES, snapshotName, validateBackupText } from './vault-snapshots.js';
 const GRAPH = 'https://graph.microsoft.com/v1.0';
+const GENERATION_NAME = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 export class GraphError extends Error {
     status;
     code;
@@ -13,8 +14,9 @@ export class GraphError extends Error {
     }
 }
 export class OneDriveTestClient {
-    token;
+    tokenSource;
     http;
+    onUnauthorized;
     // Resolve Graph folder IDs once per client session. These are non-secret IDs,
     // retained only in memory; a new sign-in/client receives a fresh cache.
     appRoot = null;
@@ -26,7 +28,7 @@ export class OneDriveTestClient {
         this.dataSetId = id;
     }
     forVaultDataSet(id) {
-        const stage = new OneDriveTestClient(this.token, this.http);
+        const stage = new OneDriveTestClient(this.tokenSource, this.http, this.onUnauthorized);
         stage.setVaultDataSet(id);
         return stage;
     }
@@ -44,9 +46,10 @@ export class OneDriveTestClient {
     // `Failed to execute 'fetch' on 'Window': Illegal invocation`.
     // Call it through globalThis so the native receiver is preserved. Custom
     // HTTP functions can still be injected by tests.
-    constructor(token, http = (input, init) => globalThis.fetch(input, init)) {
-        this.token = token;
+    constructor(tokenSource, http = (input, init) => globalThis.fetch(input, init), onUnauthorized) {
+        this.tokenSource = tokenSource;
         this.http = http;
+        this.onUnauthorized = onUnauthorized;
     }
     /** A single read deadline covers headers and the entire response body.
      * Writes are never aborted here because their committed state may be uncertain. */
@@ -98,6 +101,14 @@ export class OneDriveTestClient {
                 chunks.push(value);
             }
         }
+        catch (error) {
+            // Stop the network stream immediately if the limit or read fails.
+            try {
+                await reader.cancel();
+            }
+            catch { /* Preserve the original validation error. */ }
+            throw error;
+        }
         finally {
             reader.releaseLock();
         }
@@ -122,11 +133,26 @@ export class OneDriveTestClient {
         });
     }
     async graph(path, init = {}, allowNotModified = false) {
-        const response = await this.httpWithReadTimeout(GRAPH + path, {
-            ...init,
-            headers: { Authorization: `Bearer ${this.token}`, ...init.headers },
-            redirect: 'error',
-        });
+        const method = (init.method ?? 'GET').toUpperCase();
+        const request = async (forceRefresh = false) => {
+            // An old client remains usable after the access token expires; MSAL owns
+            // every token's lifetime. Never hold a bearer token inside this client.
+            const token = typeof this.tokenSource === 'string'
+                ? this.tokenSource : await this.tokenSource(forceRefresh);
+            return this.httpWithReadTimeout(GRAPH + path, {
+                ...init,
+                headers: { ...init.headers, Authorization: `Bearer ${token}` },
+                redirect: 'error',
+            });
+        };
+        let response = await request();
+        // One read-only 401 recovery is safe. Never replay writes, upload-session
+        // creation, chunk uploads, or any uncertain operation after a 401.
+        if (response.status === 401 && method === 'GET' && typeof this.tokenSource !== 'string') {
+            response = await request(true);
+        }
+        if (response.status === 401)
+            this.onUnauthorized?.();
         if (!response.ok && !(allowNotModified && response.status === 304)) {
             let code = '';
             try {
@@ -675,6 +701,80 @@ export class OneDriveTestClient {
     }
     /** Pre-create the namespace reserved for Payroll, without writing any payroll data. */
     async ensurePayrollNamespace() { await this.folderPath([PAYROLL_DIR], true); }
+    /** Strict, complete listings only. Never clean up a truncated folder or unexpected file. */
+    async listCleanupFolder(parts) {
+        const parent = await this.folderPath(parts, false);
+        if (!parent)
+            return [];
+        const response = await this.graph(`/me/drive/items/${encodeURIComponent(parent)}/children?$select=id,name,eTag,folder,size,createdDateTime&$top=400`);
+        const page = await response.json();
+        if (page['@odata.nextLink'] || !Array.isArray(page.value))
+            throw new Error('削除対象の全件確認ができません。安全のため中止しました。');
+        if (page.value.some(x => !x.id || !x.name || !x.eTag))
+            throw new Error('OneDriveのファイル情報を確認できません。削除を中止しました。');
+        if (new Set(page.value.map(x => x.name)).size !== page.value.length || new Set(page.value.map(x => x.id)).size !== page.value.length)
+            throw new Error('ファイル識別子が重複しています。削除を中止しました。');
+        return page.value;
+    }
+    /** Only exact names at the Finance app root are eligible. Never match arbitrary backup files. */
+    async listRetiredRootData() {
+        const root = await this.listCleanupFolder([]);
+        const legacy = root.filter(item => (!item.folder && item.name === 'finance-v1-vault.enc') ||
+            (item.folder && item.name === 'finance-v1-originals'));
+        if (legacy.length > 2)
+            throw new Error('旧v1保管庫が重複しています。削除できません。');
+        const snapshots = root.filter(item => !item.folder && isSnapshotName(item.name));
+        for (const item of snapshots) {
+            if (!Number.isSafeInteger(item.size) || item.size <= 0 || item.size > MAX_SNAPSHOT_BYTES ||
+                typeof item.createdDateTime !== 'string' || !Number.isFinite(Date.parse(item.createdDateTime)))
+                throw new Error('スナップショットのメタデータが不正です。削除を中止しました。');
+        }
+        return {
+            legacyV1: legacy.map(item => ({ id: item.id, name: item.name, etag: item.eTag })),
+            snapshots: snapshots.map(item => ({ id: item.id, name: item.name, etag: item.eTag, size: item.size, createdDateTime: item.createdDateTime }))
+                .sort((a, b) => b.createdDateTime.localeCompare(a.createdDateTime) || b.name.localeCompare(a.name)),
+        };
+    }
+    /** Only directories directly under finance/versions are candidates. */
+    async listOldVaultGenerations() {
+        const items = await this.listCleanupFolder([FINANCE_DIR, 'versions']);
+        return items.filter(x => x.folder && GENERATION_NAME.test(x.name))
+            .map(x => ({ id: x.id, name: x.name, etag: x.eTag }));
+    }
+    /** Versioned vaults never read these old unversioned paths. Never include index.enc or versions. */
+    async listUnversionedFinanceFolders() {
+        const candidates = new Set(['statements', 'originals', 'settings', 'rules', 'reports']);
+        return (await this.listCleanupFolder([FINANCE_DIR]))
+            .filter(item => item.folder && candidates.has(item.name))
+            .map(item => ({ id: item.id, name: item.name, etag: item.eTag }));
+    }
+    /** Enumerate originals under finance/originals/YYYY/MM without following other namespaces. */
+    async listDatedOriginals() {
+        const result = [];
+        const years = await this.listCleanupFolder(this.financeDataPath('originals'));
+        for (const year of years) {
+            if (!year.folder || !(/^(19|20|21)\d{2}$|^undated$/).test(year.name))
+                continue;
+            const months = await this.listCleanupFolder(this.financeDataPath('originals', year.name));
+            for (const month of months) {
+                if (!month.folder || !(/^(0[1-9]|1[0-2])$/.test(month.name) || (year.name === 'undated' && month.name === '00')))
+                    continue;
+                const files = await this.listCleanupFolder(this.financeDataPath('originals', year.name, month.name));
+                for (const file of files) {
+                    if (file.folder || !GENERATION_NAME.test((file.name ?? '').slice(0, -4)) || !file.name.endsWith('.enc'))
+                        continue;
+                    result.push({ id: file.id, name: file.name, etag: file.eTag, year: year.name, month: month.name });
+                }
+            }
+        }
+        return result;
+    }
+    /** Graph DELETE puts the item in OneDrive recycle bin. Require a matching ETag. */
+    async deleteCleanupItem(file) {
+        if (!file.id || !file.etag || !file.name)
+            throw new Error('削除対象の識別情報が不正です。');
+        await this.graph(`/me/drive/items/${encodeURIComponent(file.id)}`, { method: 'DELETE', headers: { 'If-Match': file.etag } });
+    }
     async appFolderId() {
         if (!this.appRoot) {
             this.appRoot = (async () => {
@@ -714,14 +814,14 @@ export class OneDriveTestClient {
         if (!downloadUrl || new URL(downloadUrl).protocol !== 'https:')
             throw new Error('安全なダウンロードURLを取得できませんでした。');
         // The preauthenticated URL MUST NOT receive a Bearer token. Avoid /content's CORS-hostile 302.
-        const file = await this.http(downloadUrl, { method: 'GET', credentials: 'omit' });
-        if (!file.ok)
-            throw new Error(`暗号化テストファイルの取得に失敗しました (HTTP ${file.status})。`);
-        if (Number(file.headers.get('Content-Length') ?? 0) > 24000)
-            throw new Error('取得したファイルが大きすぎます。');
-        const text = await file.text();
-        if (text.length > 24000)
-            throw new Error('取得したファイルが大きすぎます。');
-        return text;
+        return this.withReadDeadline(downloadUrl, { method: 'GET', credentials: 'omit' }, async (response) => {
+            if (!response.ok)
+                throw new Error(`暗号化テストファイルの取得に失敗しました (HTTP ${response.status})。`);
+            // Enforce the limit while streaming; a missing or dishonest Content-Length is not trusted.
+            if (!response.body)
+                throw new Error('安全なストリーム受信ができません。');
+            const bytes = await this.readResponseBytes(response, 24000);
+            return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        });
     }
 }

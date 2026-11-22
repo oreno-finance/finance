@@ -20,32 +20,18 @@
 #manage-view .manage-editor .transaction-table .col-note{width:145px}
 #manage-view .manage-editor .transaction-table .col-operation{width:64px}
 #manage-view .manage-editor .transaction-table td[data-label="利用日"] input{width:116px;max-width:100%;box-sizing:border-box}
-/* Expanded import workspace has exactly one vertical viewport and independent column scrolling. */
-#entry-accordion{flex:0 0 auto;min-width:0;position:relative}
-#entry-accordion>.import-panel{min-height:0!important;padding:13px 17px 12px!important;margin-bottom:12px}
-#entry-accordion .import-method .dropzone{height:92px;min-height:92px;padding:8px 12px}
-#entry-accordion .import-method .drop-icon{width:27px;height:27px;font-size:18px;margin:0}
-#entry-accordion .import-method .hint{font-size:10px;line-height:1.45;min-height:0;margin-top:5px}
-@media(max-width:800px){#entry-accordion>.import-panel{padding:15px!important}}
-#entry-accordion>summary{display:none}
+#manage-view .manage-editor .transaction-table input[type="date"]{min-width:0;max-width:100%;box-sizing:border-box}
+/* Drafts remain in the review workspace. The uploader is a separate native
+   dialog, never an absolutely positioned accordion above financial rows. */
 #import-view.has-import-drafts:not(.hidden){height:100%!important;min-height:0!important;display:flex!important;flex-direction:column!important;overflow:hidden!important}
 .workspace .content:has(#import-view.has-import-drafts:not(.hidden)){overflow:hidden!important;padding-bottom:12px!important}
-#import-view.has-import-drafts>#entry-accordion{order:1!important;margin-bottom:10px}
-#import-view.has-import-drafts #entry-accordion>summary{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--panel);border:1px solid var(--line);border-radius:10px;cursor:pointer;font-size:12px;font-weight:700;list-style:none;color:var(--ink)}
-#import-view.has-import-drafts #entry-accordion>summary::-webkit-details-marker{display:none}
-#import-view.has-import-drafts #entry-accordion>summary::after{content:'⌄';font-size:19px;line-height:1;color:var(--muted);transition:transform .15s}
-#import-view.has-import-drafts #entry-accordion[open]>summary::after{transform:rotate(180deg)}
-#import-view.has-import-drafts #entry-accordion[open]>.import-panel{
- position:absolute;z-index:5;top:calc(100% + 6px);left:0;right:0;
- max-height:min(480px,62dvh);min-height:0!important;overflow:auto!important;
- margin:0!important;box-shadow:0 12px 32px #09182b33
-}
 #import-view.has-import-drafts>.results-grid{order:2!important;flex:1 1 auto!important;min-height:0!important;max-height:100%!important;height:auto!important;overflow:hidden!important;align-items:stretch!important}
 #import-view.has-import-drafts .results-grid>.statement-index-panel,
 #import-view.has-import-drafts .results-grid>.detail-panel{display:flex!important;flex-direction:column!important;align-self:stretch!important;min-height:0!important;height:100%!important;overflow:hidden!important}
 #import-view.has-import-drafts .statement-index-panel>.statement-list{flex:1 1 auto!important;min-height:0!important;height:auto!important;max-height:none!important;overflow-y:auto!important;overscroll-behavior:contain!important}
 #import-view.has-import-drafts .detail-panel #preview-content:not(.hidden){display:flex!important;flex:1 1 auto!important;flex-direction:column!important;min-height:0!important;height:100%!important;overflow:hidden!important}
-#import-view.has-import-drafts .detail-panel .detail-summary-block{flex:0 1 auto;max-height:48%;overflow:auto;scrollbar-gutter:stable}
+/* Statement facts never become an independent scroll pane. Only transaction rows scroll. */
+#import-view.has-import-drafts .detail-panel .detail-summary-block{flex:0 0 auto;max-height:none;overflow:visible}
 #import-view.has-import-drafts .detail-panel .transactions-panel-inner{display:flex!important;flex-direction:column!important;flex:1 1 auto!important;min-height:0!important;height:100%!important;overflow:hidden!important}
 #import-view.has-import-drafts .transactions-panel-inner>.table-scroll{display:block!important;flex:1 1 0!important;min-height:0!important;height:auto!important;max-height:none!important;overflow:auto!important;overscroll-behavior:contain;scrollbar-gutter:stable}
 #import-view.has-import-drafts .transactions-panel-inner .transaction-table thead{position:sticky;top:0;z-index:1;background:var(--panel)}
@@ -59,26 +45,36 @@
  #import-view.has-import-drafts>.results-grid{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,35fr) minmax(0,65fr);gap:10px}
  #import-view.has-import-drafts .results-grid>.statement-index-panel,#import-view.has-import-drafts .results-grid>.detail-panel{min-height:0!important}
 }
+/* Tablet widths keep the desktop sidebar, but the stacked review panes need
+   content-height layout. Otherwise the summary crushes the transaction scroller. */
+@media(min-width:801px) and (max-width:980px){
+ .workspace .content:has(#import-view.has-import-drafts:not(.hidden)){overflow-y:auto!important;overflow-x:hidden!important}
+ #import-view.has-import-drafts:not(.hidden){height:auto!important;min-height:0!important;overflow:visible!important}
+ #import-view.has-import-drafts>.results-grid{flex:0 0 auto!important;height:auto!important;max-height:none!important;overflow:visible!important;grid-template-rows:auto auto!important}
+ #import-view.has-import-drafts .results-grid>.statement-index-panel,
+ #import-view.has-import-drafts .results-grid>.detail-panel{height:auto!important;min-height:0!important;overflow:visible!important}
+ #import-view.has-import-drafts .statement-index-panel>.statement-list{flex:0 1 auto!important;height:auto!important;max-height:250px!important;overflow-y:auto!important}
+ #import-view.has-import-drafts .detail-panel #preview-content:not(.hidden){height:auto!important;overflow:visible!important}
+ #import-view.has-import-drafts .detail-panel .transactions-panel-inner{height:auto!important;overflow:visible!important}
+ #import-view.has-import-drafts .transactions-panel-inner>.table-scroll{flex:0 0 auto!important;height:clamp(220px,35dvh,380px)!important;max-height:380px!important;overflow:auto!important}
+}
+/* On narrow screens the document must scroll. A rigid 100dvh/35:65 split
+   cropped the amount summary and left only a few rows of the preview visible. */
 @media(max-width:800px){
- body:has(#import-view.has-import-drafts:not(.hidden)){height:100dvh!important;overflow:hidden!important}
- .app-shell:has(#import-view.has-import-drafts:not(.hidden)){height:100dvh!important;display:flex!important;flex-direction:column!important;overflow:hidden!important}
- #finance-sidebar.sidebar{flex:0 0 auto!important;min-height:0!important;height:auto!important}
- .workspace:has(#import-view.has-import-drafts:not(.hidden)){height:auto!important;flex:1 1 0!important;min-height:0!important;overflow:hidden!important}
- .workspace .content:has(#import-view.has-import-drafts:not(.hidden)){height:100%!important;flex:1 1 0!important;min-height:0!important;overflow:hidden!important}
- #import-view.has-import-drafts:not(.hidden){height:100%!important;min-height:0!important}
+ body:has(#import-view.has-import-drafts:not(.hidden)){height:auto!important;overflow-x:hidden!important;overflow-y:auto!important}
+ .app-shell:has(#import-view.has-import-drafts:not(.hidden)){height:auto!important;min-height:100dvh!important;display:block!important;overflow:visible!important}
+ #finance-sidebar.sidebar{min-height:0!important;height:auto!important}
+ .workspace:has(#import-view.has-import-drafts:not(.hidden)){height:auto!important;min-height:0!important;overflow:visible!important}
+ .workspace .content:has(#import-view.has-import-drafts:not(.hidden)){height:auto!important;min-height:0!important;overflow:visible!important;padding-bottom:22px!important}
+ #import-view.has-import-drafts:not(.hidden){height:auto!important;min-height:0!important;display:flex!important;overflow:visible!important}
+ #import-view.has-import-drafts>.results-grid{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto;gap:12px;flex:0 0 auto!important;height:auto!important;max-height:none!important;overflow:visible!important}
+ #import-view.has-import-drafts .results-grid>.statement-index-panel,
+ #import-view.has-import-drafts .results-grid>.detail-panel{height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important}
+ #import-view.has-import-drafts .statement-index-panel>.statement-list{flex:0 1 auto!important;height:auto!important;min-height:0!important;max-height:260px!important;overflow-y:auto!important}
+ #import-view.has-import-drafts .detail-panel #preview-content:not(.hidden){display:flex!important;height:auto!important;overflow:visible!important}
+ #import-view.has-import-drafts .detail-panel .detail-summary-block{flex:0 0 auto!important;max-height:none!important;overflow:visible!important;padding:13px}
+ #import-view.has-import-drafts .detail-panel .transactions-panel-inner{flex:0 0 auto!important;height:auto!important;overflow:visible!important}
+ #import-view.has-import-drafts .transactions-panel-inner>.table-scroll{flex:0 0 auto!important;height:min(380px,46dvh)!important;min-height:190px!important;max-height:380px!important;overflow:auto!important}
+ #import-view.has-import-drafts .batch-bar{flex-wrap:wrap;flex:0 0 auto!important}
  .workspace:has(#import-view.has-import-drafts:not(.hidden)) footer{display:none!important}
- #import-view.has-import-drafts>.results-grid{grid-template-rows:minmax(0,35fr) minmax(0,65fr)}
- #import-view.has-import-drafts .detail-summary-block{padding:13px}
- #import-view.has-import-drafts .batch-bar{flex-wrap:wrap}
-}
-
-/* A native date picker needs room for its calendar icon. The ledger scrolls. */
-#manage-view .manage-editor .transaction-table{min-width:720px}
-#manage-view .manage-editor .transaction-table .col-date{width:162px}
-#manage-view .manage-editor .transaction-table td[data-label="利用日"] input[type="date"]{
-  width:146px;min-width:0;max-width:100%;box-sizing:border-box;
-  color:var(--ink);color-scheme:light;
-}
-:root[data-theme="dark"] #manage-view .manage-editor .transaction-table td[data-label="利用日"] input[type="date"]{
-  color-scheme:dark;
 }

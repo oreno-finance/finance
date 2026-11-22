@@ -39,7 +39,8 @@ test('connect invitation follows account status, not a generic network error',()
 test('manual sign-in does not ask a redundant confirmation unless there are unsaved edits',()=>{
   assert.match(cloud,/handlers\.hasUnsavedChanges\(\) && !window\.confirm/);
   assert.doesNotMatch(cloud,/Microsoftログインへ移動します。未保存の編集がある場合は破棄されます/);
-  assert.match(main,/hasUnsavedChanges:\(\)=>Boolean\(pending\(\)\.length/);
+  assert.match(main,/hasUnsavedChanges:\(\)=>\{const state=interruptionState\(\)/);
+  assert.match(main,/canNavigate:\(\)=>confirmInterruption/);
 });
 
 test('modal has mobile-sized button layout',()=>{

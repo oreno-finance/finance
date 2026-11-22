@@ -1,4 +1,4 @@
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, stat, copyFile } from 'node:fs/promises';
 const isInstalled = async (p) => { try { await stat(p); return true; } catch { return false; } };
 const msalPresent = await isInstalled('node_modules/@azure/msal-browser/package.json');
 const esbuildPresent = await isInstalled('node_modules/esbuild/package.json');
@@ -13,5 +13,8 @@ if (!msalPresent || !esbuildPresent) {
     format: 'esm', platform:'browser', bundle:true, minify:true, target:'es2022',
     legalComments: 'none',
   });
-  console.log('MSAL: dist/vendor/msal/msal-browser.bundle.js を生成しました。');
+  // Ship the official MSAL v5 redirect bridge UMD bundle unmodified.
+  await copyFile('node_modules/@azure/msal-browser/lib/redirect-bridge/msal-redirect-bridge.min.js',
+    'dist/vendor/msal/msal-redirect-bridge.min.js');
+  console.log('MSAL: library + dedicated redirect bridge bundles generated.');
 }

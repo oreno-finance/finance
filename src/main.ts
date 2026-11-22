@@ -7,9 +7,10 @@ import { prepareStatementRevision, type RevisionDiff } from './importers/revisio
 import { planStatementImport, statementSignature } from './importers/import-policy.js';
 import { hasVault, unlockVault, readStatements, readOriginal, exportEncryptedBackup, deleteLegacyVault, lockVault, type LocalSource } from './storage/encrypted-vault.js';
 import { verifyLegacyMigration, verifyDownloadedBackup } from './storage/legacy-cleanup.js';
-import { graphClientWithoutRedirect, initCloudSettings, cloudConnectPrompt, type CloudConnectPrompt } from './cloud/cloud-settings.js';
-import { LiveVault, CloudWriteUncertainError } from './cloud/live-vault.js';
-import { clearTabSession, readTabSession, saveTabSession } from './cloud/tab-session.js';
+import { graphClientWithoutRedirect, initCloudSettings, cloudConnectPrompt, activeMicrosoftAccountId, type CloudConnectPrompt } from './cloud/cloud-settings.js';
+import { LiveVault, CloudWriteUncertainError, BrowserKeyGenerationChangedError } from './cloud/live-vault.js';
+import { GraphError } from './cloud/onedrive-api.js';
+import { readBrowserKey, rememberBrowserKey, forgetBrowserKey, applyBrowserRetentionChoice, isBrowserRemembered, InvalidRememberedBrowserKeyError, isManuallyLocked, setManualLock, clearManualLock, notifyOtherFinanceTabs, CROSS_TAB_LOCK_KEY, type BrowserKeyContext } from './cloud/remembered-browser.js';
 import type { CloudRecord } from './cloud/merge.js';
 import { displayMerchant, matchingRule, sortedRules, normalizeMerchant, PALETTE, type CategoryDefinition, type MerchantRule, type MatchMode, type CategoryId, type PaletteId } from './cloud/merchant-rules.js';
 import { importErrors, importDisplayErrors, cardSelectionPending, duplicateMonths } from './importers/batch-policy.js';
@@ -32,6 +33,7 @@ import { initSubscriptions, type SubscriptionsUi } from './ui/subscriptions.js';
 import { initCardSettings, type CardSettingsUi } from './ui/card-settings.js';
 import { showActivity, simpleActivity, finishActivity } from './ui/activity-feedback.js';
 import { statementPoints } from './summary/point-benefits.js';
+import { hasInterruptionRisk, shouldRefreshOnFocus, type InterruptionSnapshot } from './ui/safety-policy.js';
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const node = document.getElementById(id);
@@ -41,6 +43,9 @@ const $ = <T extends HTMLElement>(id: string): T => {
 const yen = (n: number | null): string => n === null ? '未取得' : `${n.toLocaleString('ja-JP')}円`;
 const statements: ParsedStatement[] = [];
 const failedImports: string[] = [];
+// Errors attached to the active uploader attempt only. Historical failures stay
+// in the import queue until explicitly dismissed, not in a newly opened dialog.
+const currentUploadFailures: string[] = [];
 // Keep the original import fingerprint so editing a row does not change duplicate detection.
 const importedSignatures = new WeakMap<ParsedStatement, string>();
 const savedIds = new WeakMap<ParsedStatement, string>();
@@ -53,6 +58,7 @@ const pendingSources = new WeakMap<ParsedStatement, LocalSource>();
 const originalSaved = new WeakSet<ParsedStatement>();
 const dirty = new WeakSet<ParsedStatement>();
 let liveVault: LiveVault | null = null;
+let liveVaultRememberContext:BrowserKeyContext|null=null;
 let assetsUi: AssetsUi | null = null;
 let futureUi: FutureProjectionUi | null = null;
 let summaryUi: MonthlySummaryUi | null = null;
@@ -63,12 +69,16 @@ let subscriptionsUi: SubscriptionsUi | null = null;
 let cardSettingsUi: CardSettingsUi | null = null;
 let currentModal: 'create' | 'unlock' | 'migrate' | null = null;
 let cloudStartupRunning = false;
+let lockSequence=0;
+let cleanupBusy=false;
 let vaultDiscoveryCompleted = false;
 let modalResolve: ((success: boolean) => void) | null = null;
 let activeIndex = -1;
 let clipboardHtml = '';
 let batchBusy = false;
 let filesBusy = false;
+let importUploadFeedback = '';
+let hasImportedInThisSession = false;
 let revisionBusy = false;
 let previewSort: PreviewSort | null = null;
 let manageSort: PreviewSort | null = null; /* finance-v145 */
@@ -91,6 +101,45 @@ let rulesBusy = false;
 let categoryDraft: CategoryDefinition[] | null = null;
 let categoryBaseline: CategoryDefinition[] = [];
 let categorySaving = false;
+let cloudRefreshing = false;
+let lastCloudCheckAt = 0;
+
+/** A single source of truth for operations that must not be interrupted. */
+function interruptionState():InterruptionSnapshot {
+  const busy:string[]=[];const unsaved:string[]=[];
+  if(batchBusy)busy.push('カード明細の保存');
+  if(filesBusy)busy.push('ファイルの解析');
+  if(revisionBusy)busy.push('明細の差し替え確認');
+  if(rulesBusy||categorySaving)busy.push('ルール・カテゴリーの保存');
+  if(assetsUi?.isBusy())busy.push('口座・Payroll処理');
+  if(cardSettingsUi?.isBusy())busy.push('カード設定の保存');
+  if(subscriptionsUi?.isBusy())busy.push('定期支出の保存');
+  if(reportsUi?.isBusy())busy.push('月次レポートの処理');
+  if(cleanupBusy)busy.push('暗号化データの整理');
+  if(liveVault?.isRotating)busy.push('パスフレーズの変更');
+  if(liveVault?.hasPendingYearBatch)busy.push('明細の保存結果の確認');
+  if(cloudRefreshing)busy.push('OneDriveの更新');
+  if(cloudStartupRunning&&liveVault?.unlocked)busy.push('OneDriveの接続確認');
+  if(pending().length||failedImports.length)unsaved.push('カード明細');
+  if(assetsUi?.isDirty())unsaved.push('口座設定');
+  if(cardSettingsUi?.isDirty())unsaved.push('カード設定');
+  if(reportsUi?.isDirty())unsaved.push('月次レポートのメモ');
+  if(categoryDraft){try{if(categoryBatchChanged(categoryPlan()))unsaved.push('カテゴリー編集');}
+    catch{unsaved.push('カテゴリー編集');}}
+  if(ruleFormHasChanges())unsaved.push('利用先ルール');
+  return {busy,unsaved};
+}
+function assertRefreshSafe():void {
+  const state=interruptionState();
+  if(state.busy.length)throw new Error(`${state.busy.join('・')}が完了してから更新してください。`);
+  if(state.unsaved.length)throw new Error(`未保存の${state.unsaved.join('・')}があります。保存または破棄してから更新してください。`);
+}
+function confirmInterruption(label:string):boolean {
+  const state=interruptionState();
+  if(state.busy.length){operationResult(`${state.busy.join('・')}が進行中です。${label}はできません。`,'warn');return false;}
+  return !state.unsaved.length||window.confirm(`未保存の${state.unsaved.join('・')}があります。破棄して${label}しますか？`);
+}
+
 const ruleModes:Record<MatchMode,string>={exact:'完全一致',prefix:'前方一致',contains:'部分一致'};
 function rules():MerchantRule[]{return liveVault?.unlocked ? liveVault.merchantRules():[];}
 function categories():CategoryDefinition[]{return liveVault?.unlocked?liveVault.merchantCategories():[];}
@@ -198,11 +247,80 @@ function operationResult(message: string, kind: 'good' | 'working' | 'bad' | 'wa
 function sessionStorageSafe(): Storage | null {
   try { return window.sessionStorage; } catch { return null; }
 }
-function clearRememberedKey(): void {
-  const store = sessionStorageSafe();
-  if (store) try { clearTabSession(store); } catch { /* Session storage may be disabled. */ }
+/** One-time cleanup of the obsolete raw AES key. Never read or restore it. */
+function purgeLegacyTabKey():void {
+  const store=sessionStorageSafe();
+  if(store)try{store.removeItem('finance-vault-tab-key-v1');}
+  catch{/* Private browsing may disable sessionStorage. No key is ever consumed. */}
 }
 function clientIdForTab(): string { return $<HTMLInputElement>('cloud-client-id').value.trim(); }
+function localStorageSafe():Storage|null {try{return window.localStorage;}catch{return null;}}
+function browserKeyContext():BrowserKeyContext|null {
+  const homeAccountId=activeMicrosoftAccountId();
+  if(!homeAccountId)return null;
+  const current={clientId:clientIdForTab(),homeAccountId};
+  // Never bind a key to a newly selected account while the vault client still
+  // belongs to its prior MSAL login.
+  if(liveVault&&liveVaultRememberContext&&
+      (liveVaultRememberContext.clientId!==current.clientId||liveVaultRememberContext.homeAccountId!==current.homeAccountId))return null;
+  return current;
+}
+/** Current tab remains unlocked when notifying other tabs of a completed rotation. */
+function broadcastVaultLock():void {
+  const storage=localStorageSafe();
+  if(!storage)throw new Error('他のタブへロックを通知できません。ブラウザのサイトデータ設定を確認してください。');
+  setManualLock(storage);
+  notifyOtherFinanceTabs(storage);
+}
+/** Force-close sensitive views on a lock from this tab or another one. */
+function clearUnlockedFinanceViews():void {
+  lockSequence++;
+  activeAnalysisDrilldown=null;drilldownRows.clear();liveVault?.lock();
+  if(currentModal!==null)modalClose(false);
+  resetRuleEditor();categoryDraft=null;categoryBaseline=[];
+  const categoriesDialog=document.getElementById('categories-dialog') as HTMLDialogElement|null;
+  if(categoriesDialog?.open)categoriesDialog.close();
+  summaryUi?.reset();futureUi?.reset();homeUi?.reset();analysisUi?.reset();reportsUi?.reset();subscriptionsUi?.reset();
+  statements.splice(0);failedImports.splice(0);activeIndex=-1;
+  render();renderRules();assetsUi?.reset();cardSettingsUi?.reset();updateCloudStatus();
+  void updateBrowserRememberStatus();
+}
+function resumeManualAutoUnlock():void {
+  const storage=localStorageSafe();
+  if(storage)try{clearManualLock(storage);}catch{/* This is a preference, not a vault write. */}
+}
+async function updateBrowserRememberStatus():Promise<void> {
+  const status=$('cloud-remember-status');
+  const register=$<HTMLButtonElement>('cloud-remember-register');
+  const forget=$<HTMLButtonElement>('cloud-remember-forget');
+  const context=browserKeyContext();
+  // Show only the action that is meaningful right now, never two disabled controls.
+  register.classList.add('hidden');register.disabled=true;
+  forget.classList.add('hidden');forget.disabled=true;
+  if(!context){status.textContent='Microsoftアカウントに接続すると状態を確認できます。';return;}
+  try {
+    const remembered=await isBrowserRemembered(context);
+    const local=localStorageSafe();
+    const locked=!local||isManuallyLocked(local);
+    if(remembered){
+      status.textContent=locked
+        ? '記憶済み・手動ロック中。次回も自動解除するには、解除時に「このブラウザを記憶する」を選んでください。'
+        : '記憶済み。次回からパスフレーズを入力せずに開けます。';
+      forget.classList.remove('hidden');forget.disabled=false;
+    }else if(liveVault?.unlocked&&!liveVault.isRotating){
+      status.textContent='未設定。次回はパスフレーズの入力が必要です。';
+      register.classList.remove('hidden');register.disabled=false;
+    }else{
+      status.textContent='未設定。保管庫の解除時に「このブラウザを記憶する」を選べます。';
+    }
+  }catch(error){
+    status.textContent=error instanceof InvalidRememberedBrowserKeyError
+      ? '記憶情報が壊れています。「記憶を解除」してから登録し直してください。'
+      : '記憶状態を確認できません。通常のパスフレーズ解除は利用できます。';
+    // Allow explicitly clearing a broken key; never silently destroy one.
+    forget.classList.remove('hidden');forget.disabled=false;
+  }
+}
 
 function div(className: string, content?: string): HTMLDivElement {
   const node = document.createElement('div'); node.className = className;
@@ -256,11 +374,61 @@ function createStatementEntry(index: number, withDelete: boolean): HTMLElement {
   return entry;
 }
 
+/** The same uploader DOM is used inline on first visit and inside the modal later. */
+function updateImportUploadFeedback():void {
+  const node=$('import-upload-feedback');
+  const messages=[...currentUploadFailures, ...(importUploadFeedback?[importUploadFeedback]:[])];
+  node.textContent=messages.join('\n');
+  node.classList.toggle('hidden',messages.length===0);
+  $('import-clear-errors').classList.toggle('hidden',currentUploadFailures.length===0);
+}
+function openImportAddDialog():void {
+  if(filesBusy||revisionBusy||batchBusy)return;
+  if(!$('import-view').classList.contains('import-compact'))return;
+  const dialog=$<HTMLDialogElement>('import-add-dialog');
+  if(dialog.open||document.querySelector('dialog[open]'))return;
+  // Opening an uploader is a new attempt. Previous parsing failures remain
+  // visible in the pending list, but are not errors with this new operation.
+  currentUploadFailures.splice(0);
+  importUploadFeedback='';
+  updateImportUploadFeedback();
+  $('import-dialog-content').append($('import-upload-panel'));
+  dialog.showModal();
+  $('dropzone').focus();
+}
+function closeImportAddDialog():void {
+  const dialog=$<HTMLDialogElement>('import-add-dialog');
+  if(dialog.open)dialog.close();
+  // Return the single uploader synchronously; do not leave a queued close
+  // event able to empty a dialog that the user has already reopened.
+  releaseImportAddDialog();
+}
+function releaseImportAddDialog():void {
+  $('import-inline-entry').append($('import-upload-panel'));
+  $<HTMLTextAreaElement>('paste-input').value='';
+  $<HTMLInputElement>('file-input').value='';
+  $<HTMLDetailsElement>('paste-pane').open=false;
+  clipboardHtml='';
+  importUploadFeedback='';
+  currentUploadFailures.splice(0);
+  updateImportUploadFeedback();
+}
 function buildStatementList(): void {
-  // A completed import is an empty workspace, not a second statement archive.
-  const hasDrafts=importQueue().length>0 || failedImports.length>0;
+  // Every new browser session starts with the inline uploader, even if cloud
+  // statements already exist. After the first successful import in this session,
+  // additional files use the small header action and modal.
+  // Failed-only imports keep the inline uploader available for immediate retry.
+  const hasDrafts=importQueue().length>0;
+  const compact=hasDrafts||hasImportedInThisSession;
   $('import-view').classList.toggle('has-import-drafts',hasDrafts);
-  if(!hasDrafts)$<HTMLDetailsElement>('entry-accordion').open=true;
+  $('import-view').classList.toggle('import-compact',compact);
+  $('import-inline-entry').classList.toggle('hidden',compact);
+  $('import-add-open').classList.toggle('hidden',!compact);
+  $('import-compact-empty').classList.toggle('hidden',!compact||hasDrafts);
+  $('import-compact-empty').textContent=failedImports.length
+    ? '解析に失敗したファイルが残っています。取込待ち一覧から確認できます。'
+    : '取込待ちの明細はありません。';
+  updateImportUploadFeedback();
   list.closest('.statement-index-panel')?.classList.toggle('is-empty', !importQueue().length && !failedImports.length);
   $('list-count').textContent = `${importQueue().length + failedImports.length}件`;
   list.replaceChildren();
@@ -271,7 +439,12 @@ function buildStatementList(): void {
     const remove = document.createElement('button');
     remove.type = 'button'; remove.className = 'statement-remove'; remove.textContent = '×';
     remove.title = '失敗した項目を一覧から除外'; remove.setAttribute('aria-label','失敗した取込を除外');
-    remove.addEventListener('click', () => { failedImports.splice(index, 1); render(); });
+    remove.addEventListener('click', () => {
+      failedImports.splice(index, 1);
+      const currentIndex=currentUploadFailures.indexOf(message);
+      if(currentIndex>=0)currentUploadFailures.splice(currentIndex,1);
+      render();
+    });
     entry.append(card, remove); list.append(entry);
   }
   for (const index of prioritizedIndices(statements, s => needsReview(s) ? 0 : s.confirmation === 'provisional' ? 1 : 2)) {
@@ -607,7 +780,14 @@ function updateCloudStatus(message?:string):void {
   const state=!liveVault?'未接続':liveVault.unlocked?'接続済み':!vaultDiscoveryCompleted?'確認中':liveVault.exists?'ロック中':'保管庫なし';
   // New vault creation is an explicit action, never a side effect of refresh.
   $('cloud-new-vault').classList.toggle('hidden',!liveVault||!vaultDiscoveryCompleted||liveVault.exists||liveVault.unlocked);
-  label.textContent=state;
+  const connectionIssue=message
+    ? /Microsoftアカウントが未接続/.test(message)?'未接続'
+      : /再認証/.test(message)?'Microsoftアカウントの再認証が必要'
+      : /アクセス権限/.test(message)?'OneDriveへのアクセス権限がありません'
+      : /接続してください|失敗|エラー|一時的に/.test(message)?'一時的に接続できない'
+      : null
+    : null;
+  label.textContent=connectionIssue??state;
   // Keep the global bar quiet when connected. Only missing access or an error needs attention.
   const failure=message && /失敗|エラー|不備|接続してください|未保存|更新確認/.test(message);
   bar.textContent='';
@@ -656,6 +836,7 @@ function showCloudConnectDialog(mode:CloudConnectPrompt):void {
 async function startCloud():Promise<void> {
   if(cloudStartupRunning||liveVault?.unlocked)return;
   cloudStartupRunning=true;
+  const startedWithLockSequence=lockSequence;
   vaultDiscoveryCompleted=false;
   // Connecting is a background task. It must not block navigation or silently redirect.
   $('cloud-live-status').textContent='接続中';
@@ -667,6 +848,8 @@ async function startCloud():Promise<void> {
   try {
     const client=await graphClientWithoutRedirect();
     liveVault=new LiveVault(client);
+    const authAccountId=activeMicrosoftAccountId();
+    liveVaultRememberContext=authAccountId?{clientId:clientIdForTab(),homeAccountId:authAccountId}:null;
     liveVault.setAssetConflictResolver((collisions,details=[])=>confirmCloudConflicts('資産設定に同時編集があります',
       collisions.map((item,i)=>({label:details[i]?.label??item.itemId,field:item.field,
         local:details[i]?.localValue??'変更あり',remote:details[i]?.remoteValue??'別端末で変更あり'}))));
@@ -682,23 +865,35 @@ async function startCloud():Promise<void> {
     finishActivity('OneDrive');
     updateCloudStatus();
     if(exists) {
-      const store=sessionStorageSafe();
-      const saved=store ? readTabSession(store, clientIdForTab()) : null;
+      const browserContext=browserKeyContext();
+      const local=localStorageSafe();
+      // Fail closed when the manual-lock preference cannot be inspected.
+      const allowAutomatic=!!local&&!isManuallyLocked(local);
       let restored=false;
-      if(saved){
+      if(allowAutomatic&&browserContext){
         try {
-          await liveVault.unlockTab(saved.salt,saved.key,saved.dataSetId??null);
-          appendCloudRecordsKeepingDrafts(liveVault.records());
-          renderRules();
-          assetsUi?.render();futureUi?.render();cardSettingsUi?.render();
-          void assetsUi?.refreshPayroll();
-          updateCloudStatus();
-          operationResult(`このタブの一時鍵で自動復号しました（${liveVault.records().length}件）。`);
-          restored=true;
-        }catch {
-          clearRememberedKey();
+          const remembered=await readBrowserKey(browserContext);
+          if(remembered){
+            await liveVault.unlockBrowserKey(remembered);
+            if(lockSequence!==startedWithLockSequence||isManuallyLocked(local!)){liveVault.lock();return;}
+            appendCloudRecordsKeepingDrafts(liveVault.records());lastCloudCheckAt=Date.now();
+            renderRules();assetsUi?.render();futureUi?.render();cardSettingsUi?.render();
+            void assetsUi?.refreshPayroll();updateCloudStatus();
+            operationResult(`このブラウザの保存鍵で自動復号しました（${liveVault.records().length}件）。`);
+            restored=true;
+          }
+        }catch(error){
+          // Only proven generation changes or corrupt local records invalidate a
+          // remembered key. Network/auth failures must leave it intact.
+          if(error instanceof BrowserKeyGenerationChangedError||error instanceof InvalidRememberedBrowserKeyError){
+            try{await forgetBrowserKey(browserContext);}catch{/* Best effort; future attempts still validate the index. */}
+          }
+          if(error instanceof BrowserKeyGenerationChangedError||error instanceof InvalidRememberedBrowserKeyError)
+            operationResult('ブラウザの保存鍵を利用できません。パスフレーズで解除してください。','warn');
+          else operationResult('ブラウザの自動解除を確認できません。パスフレーズで解除してください。','warn');
         }
       }
+      await updateBrowserRememberStatus();
       if(!restored)await askVault('unlock');
     }
     else {
@@ -707,11 +902,16 @@ async function startCloud():Promise<void> {
     }
   } catch(error) {
     finishActivity('OneDrive');
-    updateCloudStatus(`OneDriveに接続してください：${error instanceof Error?error.message:'接続エラー'}`);
+    const issue=error instanceof GraphError
+      ? error.status===401?'Microsoftアカウントの再認証が必要です。':error.status===403?'OneDriveへのアクセス権限がありません。':
+        [429,500,502,503,504].includes(error.status)?'OneDriveに一時的に接続できません。時間をおいて再試行してください。':error.message
+      : error instanceof Error?error.message:'接続エラー';
+    updateCloudStatus(`OneDriveに接続してください：${issue}`);
     showCloudConnectDialog(cloudConnectPrompt());
   } finally {clearTimeout(slowNotice);cloudStartupRunning=false;}
 }
 async function refreshCloud():Promise<void> {
+  assertRefreshSafe();
   if(!liveVault||!vaultDiscoveryCompleted)await startCloud();
   if(!liveVault||!vaultDiscoveryCompleted)throw new Error('Microsoftアカウントの認証と保管庫の確認を完了してください。');
   if(!liveVault.exists)throw new Error('このMicrosoftアカウントのアプリ領域に保管庫がありません。接続先アカウントとClient IDを確認してください。新規作成は実行していません。');
@@ -719,13 +919,20 @@ async function refreshCloud():Promise<void> {
     if(!await askVault('unlock'))throw new Error('既存保管庫のロック解除をキャンセルしました。');
     return;
   }
-  if(subscriptionsUi?.isBusy())throw new Error('定期支出の保存が完了してから更新してください。');
-  if(pending().length||failedImports.length)throw new Error('未保存の明細があります。保存または破棄してから更新してください。');
-  replaceCloudRecords(await liveVault.refresh());
-  renderRules();
-  assetsUi?.render();futureUi?.render();
-  void assetsUi?.refreshPayroll();
-  updateCloudStatus('OneDriveから最新の明細を取得しました。');
+  assertRefreshSafe();
+  cloudRefreshing=true;
+  try {
+    const current=liveVault;
+    const fresh=await current.refresh();
+    // Never overwrite local state if a different vault has been connected.
+    if(current!==liveVault||!current.unlocked)throw new Error('更新中に保管庫が変更されました。');
+    replaceCloudRecords(fresh);
+    renderRules();
+    assetsUi?.render();futureUi?.render();
+    lastCloudCheckAt=Date.now();
+    void assetsUi?.refreshPayroll();
+    updateCloudStatus('OneDriveから最新の明細を取得しました。');
+  } finally { cloudRefreshing=false; }
 }
 async function migrateLegacy():Promise<void> {
   if(!liveVault)await startCloud();
@@ -761,10 +968,9 @@ function initLegacyCleanup():void {
     fileLabel.classList.add('hidden');backupInput.value='';secretInput.value='';report('');
   };
   const assertSafe=()=>{
-    if(!liveVault?.unlocked||!vaultDiscoveryCompleted||liveVault.isRotating||liveVault.hasPendingYearBatch)
-      throw new Error('OneDrive保管庫を解除して、保存を完了してください。');
-    if(pending().length||failedImports.length||assetsUi?.isDirty()||assetsUi?.isBusy()||subscriptionsUi?.isBusy()||cardSettingsUi?.isDirty()||cardSettingsUi?.isBusy()||rulesBusy||categorySaving||batchBusy||filesBusy||statements.some(s=>hasUnsavedChanges(s)))
-      throw new Error('未保存の変更があります。保存または破棄してからお試しください。');
+    if(!liveVault?.unlocked||!vaultDiscoveryCompleted)
+      throw new Error('OneDrive保管庫を解除してからお試しください。');
+    assertRefreshSafe();
   };
   const compare=async()=>{
     assertSafe();
@@ -831,23 +1037,51 @@ function initLegacyCleanup():void {
 let desktopMenuPeekTimer:number|null=null;
 let desktopMenuCloseTimer:number|null=null;
 let desktopMenuResetTimer:number|null=null;
+/**
+ * A hover-open sidebar can synthesize pointerenter/pointerleave when its
+ * overlay closes. After navigation, suppress peek until the pointer *moves*
+ * beyond the original 244px-wide drawer region. Never clear this guard from
+ * pointerleave: a layout change can trigger it without physical mouse motion.
+ */
+let desktopMenuNavigationHoverBlock:{left:number;top:number;right:number;bottom:number}|null=null;
+function blockDesktopMenuHoverUntilExit(sidebar:HTMLElement):void {
+  const shell=document.querySelector('.app-shell');
+  if(!shell?.classList.contains('nav-collapsed')||!shell.classList.contains('nav-peeking'))return;
+  const bounds=sidebar.getBoundingClientRect();
+  const expandedWidth=244; // Explicit CSS drawer width; never use the shrinking rail width.
+  desktopMenuNavigationHoverBlock={
+    left:Math.min(0,bounds.left),top:0,
+    right:Math.max(expandedWidth,bounds.right),bottom:window.innerHeight,
+  };
+  // There may already be a pending dwell timer from an earlier pointerenter.
+  if(desktopMenuPeekTimer!==null){window.clearTimeout(desktopMenuPeekTimer);desktopMenuPeekTimer=null;}
+  hideSidebarTooltip();
+}
+function releaseDesktopMenuHoverOnMove(x:number,y:number):void {
+  const bounds=desktopMenuNavigationHoverBlock;
+  if(bounds&&(x<bounds.left||x>=bounds.right||y<bounds.top||y>=bounds.bottom))
+    desktopMenuNavigationHoverBlock=null;
+}
 function hideSidebarTooltip():void {
   const tip=document.getElementById('sidebar-tooltip');
   if(tip)tip.hidden=true;
 }
-function clearDesktopMenuPeek():void {
+function clearDesktopMenuPeek(preserveManualTransition=false):void {
   hideSidebarTooltip();
   if(desktopMenuPeekTimer!==null){window.clearTimeout(desktopMenuPeekTimer);desktopMenuPeekTimer=null;}
   if(desktopMenuCloseTimer!==null){window.clearTimeout(desktopMenuCloseTimer);desktopMenuCloseTimer=null;}
   const shell=document.querySelector('.app-shell');
   const wasPeeking=shell?.classList.contains('nav-peeking')??false;
   if(desktopMenuResetTimer!==null){window.clearTimeout(desktopMenuResetTimer);desktopMenuResetTimer=null;}
-  if(wasPeeking)shell?.classList.add('nav-peek-resetting');
+  // Hover-only teardown must not animate the 244px overlay into its 72px slot.
+  // The explicit pin/unpin button, however, needs its own transition, even
+  // when it was clicked during the hover preview or its short reset window.
+  if(wasPeeking&&!preserveManualTransition)shell?.classList.add('nav-peek-resetting');
   else shell?.classList.remove('nav-peek-resetting');
   shell?.classList.remove('nav-peeking','nav-peek-closing');
   // Prevent the 244px overlay from tweening back into the 72px flex slot.
   // Normal button-initiated width transitions remain unchanged.
-  if(wasPeeking)desktopMenuResetTimer=window.setTimeout(()=>{
+  if(wasPeeking&&!preserveManualTransition)desktopMenuResetTimer=window.setTimeout(()=>{
     shell?.classList.remove('nav-peek-resetting');desktopMenuResetTimer=null;
   },40);
 }
@@ -866,7 +1100,10 @@ function closeDesktopMenuPeek():void {
 
 /** Desktop compact sidebar preference contains no financial data. */
 function setDesktopMenuCollapsed(collapsed:boolean):void {
-  clearDesktopMenuPeek();
+  // A deliberate pin/unpin cancels any post-navigation hover suppression.
+  desktopMenuNavigationHoverBlock=null;
+  // Keep the manual animation active when pinning an already-hovered menu.
+  clearDesktopMenuPeek(true);
   const shell=document.querySelector('.app-shell');
   const button=document.getElementById('sidebar-collapse-toggle');
   shell?.classList.toggle('nav-collapsed',collapsed);
@@ -883,7 +1120,7 @@ function setDesktopMenuCollapsed(collapsed:boolean):void {
 /** Only mouse hover, and only after a deliberate dwell, temporarily expands the menu. */
 function scheduleDesktopMenuPeek():void {
   const shell=document.querySelector('.app-shell');
-  if(!shell?.classList.contains('nav-collapsed')||window.matchMedia('(max-width: 800px)').matches)return;
+  if(desktopMenuNavigationHoverBlock||!shell?.classList.contains('nav-collapsed')||window.matchMedia('(max-width: 800px)').matches)return;
   if(shell.classList.contains('nav-peek-closing')){
     if(desktopMenuCloseTimer!==null){window.clearTimeout(desktopMenuCloseTimer);desktopMenuCloseTimer=null;}
     shell.classList.remove('nav-peek-closing');
@@ -893,7 +1130,7 @@ function scheduleDesktopMenuPeek():void {
   desktopMenuPeekTimer=window.setTimeout(()=>{
     desktopMenuPeekTimer=null;
     const shell=document.querySelector('.app-shell');
-    if(!shell?.classList.contains('nav-collapsed'))return;
+    if(desktopMenuNavigationHoverBlock||!shell?.classList.contains('nav-collapsed'))return;
     hideSidebarTooltip();
     shell.classList.add('nav-peeking');
   },340);
@@ -919,6 +1156,10 @@ function setMobileMenuOpen(requested:boolean):void {
 }
 
 function showView(view: FinanceView): void {
+  // Acquire the guard before any rerender or retract, even for routes that
+  // bypass the sidebar click listener. This is navigation, not a manual pin.
+  const sidebar=document.getElementById('finance-sidebar');
+  if(sidebar)blockDesktopMenuHoverUntilExit(sidebar);
   // Client-side navigation keeps the sidebar in the DOM, so let hover reveal
   // retract before removing its overlay. Explicit toggle actions stay separate.
   if(document.querySelector('.app-shell.nav-peeking'))closeDesktopMenuPeek();
@@ -929,6 +1170,7 @@ function showView(view: FinanceView): void {
   setMobileMenuOpen(false);
   if (view !== 'manage') manageReturnToSummary = false;
   if(view!=='manage'){activeAnalysisDrilldown=null;drilldownRows.clear();}
+  if(view!=='import')closeImportAddDialog();
   $('manage-back-summary').classList.toggle('hidden', view !== 'manage' || !manageReturnToSummary);
   $('manage-back-analysis').classList.toggle('hidden', view !== 'manage' || !activeAnalysisDrilldown || fromHome);
   $('manage-back-home').classList.toggle('hidden',view!=='manage'||returnToHome!=='manage');
@@ -1256,6 +1498,13 @@ function addRulePatternAlternative():void {
   renderRulePatternAlternatives([...existing.map(item=>item.value),'']);
   const latest=rulePatternInputs();latest[latest.length-1]?.focus();
 }
+let ruleEditorBaseline:string|null=null;
+function ruleFormFingerprint():string {
+  const form=$<HTMLFormElement>('rules-form');
+  return JSON.stringify([...form.querySelectorAll<HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement>('input,select,textarea')]
+    .map((field,index)=>[field.id||field.name||String(index),field instanceof HTMLInputElement&&(field.type==='checkbox'||field.type==='radio')?field.checked:field.value]));
+}
+function ruleFormHasChanges():boolean {return ruleEditorBaseline!==null&&ruleFormFingerprint()!==ruleEditorBaseline;}
 function resetRuleEditor():void {
   editingRuleId=null;
   $('rules-editor-title').textContent='新しいルール';
@@ -1267,6 +1516,7 @@ function resetRuleEditor():void {
   $<HTMLInputElement>('rule-priority').value='100';
   $<HTMLInputElement>('rule-enabled').checked=true;
   $<HTMLButtonElement>('rule-save').textContent='保存';
+  ruleEditorBaseline=ruleFormFingerprint();
 
 }
 function populateRuleEditor(rule:MerchantRule):void {
@@ -1284,6 +1534,7 @@ function populateRuleEditor(rule:MerchantRule):void {
   $<HTMLInputElement>('rule-priority').value=String(rule.priority);
   $<HTMLInputElement>('rule-enabled').checked=rule.enabled;
   $<HTMLButtonElement>('rule-save').textContent='保存';
+  ruleEditorBaseline=ruleFormFingerprint();
 
   $<HTMLInputElement>('rule-pattern').focus();
   $('rules-form').scrollIntoView({behavior:'smooth',block:'nearest'});
@@ -1541,8 +1792,8 @@ function askVault(mode:'create'|'unlock'|'migrate'):Promise<boolean> {
     modalResolve=resolve;currentModal=mode;
     $('vault-error').textContent='';
     $('vault-confirm-group').classList.toggle('hidden',mode!=='create');
-    $('vault-tab-option').classList.toggle('hidden',mode==='migrate');
-    $<HTMLInputElement>('vault-tab-keep').checked=false;
+    $('vault-retention-options').classList.toggle('hidden',mode==='migrate');
+    $<HTMLInputElement>('vault-retention-every-time').checked=true;
     const pass=$<HTMLInputElement>('vault-passphrase');
     pass.minLength=mode==='create'?12:1;
     pass.autocomplete=mode==='create'?'new-password':'current-password';
@@ -1571,15 +1822,15 @@ async function downloadManagedOriginal():Promise<void> {
   const s=active();const id=s?savedIds.get(s):undefined;
   if(!s||!id||!liveVault?.unlocked){toast('保存済みのPDF原本を選択してください。');return;}
   const button=$<HTMLButtonElement>('manage-original-download');
-  if(button.disabled)return;
-  button.disabled=true;
+  if(button.disabled||filesBusy||cloudRefreshing)return;
+  filesBusy=true;button.disabled=true;
   try {
     const bytes=await liveVault.original(id);
     if(!bytes)throw new Error('この明細のPDF原本は保存されていません。');
     downloadFile(new Uint8Array(bytes).buffer,'application/pdf',canonicalStatementFilename(s,id));
     toast('暗号化PDF原本を復号し、統一ファイル名でダウンロードしました。');
   }catch(error){toast(`PDF原本の取得に失敗しました：${error instanceof Error?error.message:'不明なエラー'}`);}
-  finally{button.disabled=false;}
+  finally{button.disabled=false;filesBusy=false;}
 }
 
 async function saveEditedStatement(s:ParsedStatement, manual=false):Promise<void> {
@@ -1750,27 +2001,29 @@ function cardsMissingCsvPayment():string[] {
     .map(s=>s.cardId!))];
 }
 
-async function acceptStatement(s: ParsedStatement, source?: LocalSource): Promise<void> {
-  if (batchBusy || revisionBusy) { toast('別の処理中は明細を追加できません。'); return; }
+async function acceptStatement(s: ParsedStatement, source?: LocalSource): Promise<boolean> {
+  if (batchBusy || revisionBusy) { toast('別の処理中は明細を追加できません。'); return false; }
   const decision=planStatementImport(statements,s,existing=>importedSignatures.get(existing)??statementSignature(existing));
   const replacingSameContent=decision.kind==='duplicate'&&s.sourceKind==='csv'&&
     statements[decision.index]!.sourceKind!=='csv';
   if(decision.kind==='duplicate'&&!replacingSameContent){
     activeIndex=importStaged.has(statements[decision.index]!)?decision.index:-1;render();
-    toast('同一内容の明細はすでに登録されています。重複保存しません。');return;
+    importUploadFeedback='同一内容の明細はすでに登録されています。';
+    updateImportUploadFeedback();
+    toast('同一内容の明細はすでに登録されています。重複保存しません。');return false;
   }
   if(decision.kind==='revision'||replacingSameContent){
     const index=decision.index;
     const existing=statements[index]!;
     if(hasUnsavedChanges(existing)&&!importStaged.has(existing)){
-      toast('同じ月に未保存の編集があります。先に明細の管理で保存してください。');return;
+      toast('同じ月に未保存の編集があります。先に明細の管理で保存してください。');return false;
     }
     const prepared=prepareStatementRevision(existing,s);
     const baseline=statementWorkingFingerprint(existing);
     revisionBusy=true;render();
     try{
       if(!await confirmStatementRevision(existing,prepared.statement,prepared.diff)){
-        toast('差し替えを取り消しました。保存済みの明細はそのままです。');return;
+        toast('差し替えを取り消しました。保存済みの明細はそのままです。');return false;
       }
       // A cloud refresh or local edit while the dialog was open must not retarget the replacement.
       if(statements[index]!==existing||statementWorkingFingerprint(existing)!==baseline)
@@ -1789,47 +2042,64 @@ async function acceptStatement(s: ParsedStatement, source?: LocalSource): Promis
       attachSource(revised,source);
       importedSignatures.set(revised,statementSignature(s));
       importStaged.add(revised);
-      $<HTMLDetailsElement>('entry-accordion').open=false;
-      activeIndex=index;render();
+      hasImportedInThisSession=true;activeIndex=index;render();
       toast(`${cardDisplayName(s.cardId)??'カード'}の${s.billingMonth}分を差し替え待ちにしました。まだOneDriveには保存していません。`);
     }finally{revisionBusy=false;render();}
-    return;
+    return true;
   }
   importedSignatures.set(s,statementSignature(s));
   attachSource(s,source);importStaged.add(s);
-  statements.unshift(s);activeIndex=0;
-  $<HTMLDetailsElement>('entry-accordion').open=false;
+  statements.unshift(s);activeIndex=0;hasImportedInThisSession=true;
   render();
   toast(`${cardDisplayName(s.cardId)??providerLabel(s.provider)}の明細を解析しました（${s.rows.length}件）。`);
+  return true;
+}
+
+/** A successful upload closes the dialog only when nothing still needs attention. */
+function importBatchIsClean(accepted:number,rejected:number,failed:number):boolean {
+  return accepted>0 && rejected===0 && failed===0 && currentUploadFailures.length===0 && !importUploadFeedback;
 }
 
 async function handleFiles(files: FileList | File[]): Promise<void> {
   if(filesBusy||batchBusy||revisionBusy){toast('別の取込処理が完了してから追加してください。');return;}
-  filesBusy=true;updateBatchStatus();
+  const chosen=Array.from(files);if(!chosen.length)return;
+  filesBusy=true;importUploadFeedback='';currentUploadFailures.splice(0);updateImportUploadFeedback();updateBatchStatus();
   showActivity('明細を読み込み中…','working');
+  let accepted=0,rejected=0,failed=0;
   try{
-    for(const file of Array.from(files)){
+    for(const file of chosen){
       const name=file.name.toLowerCase();
       if(!name.endsWith('.pdf')&&!name.endsWith('.csv')){
-        failedImports.push(`${file.name}: CSVまたはPDF形式ではありません。`);
-        render();continue;
+        const reason=`${file.name}: CSVまたはPDF形式ではありません。`;
+        failedImports.push(reason);currentUploadFailures.push(reason);
+        failed++;render();continue;
       }
       try{
+        let result=false;
         if(name.endsWith('.csv')){
           const text=decodeCardCsv(await file.arrayBuffer());
           const meta=identifyCardCsv(text,file.name);
           const date=csvPaymentDate(meta.cardId,meta.billingMonth);
-          await acceptStatement(parseCardCsv(text,file.name,date));
+          result=await acceptStatement(parseCardCsv(text,file.name,date));
         }else{
           const parsed=await parsePdfFile(file);
-          await acceptStatement(parsed,{bytes:new Uint8Array(await file.arrayBuffer()),mime:'application/pdf'});
+          result=await acceptStatement(parsed,{bytes:new Uint8Array(await file.arrayBuffer()),mime:'application/pdf'});
         }
+        if(result)accepted++;else rejected++;
       }catch(error){
         const reason=`${file.name}: ${error instanceof Error?error.message:'読み込みに失敗しました。'}`;
-        failedImports.push(reason);toast(reason);render();
+        failedImports.push(reason);currentUploadFailures.push(reason);failed++;toast(reason);render();
       }
     }
-  }finally{filesBusy=false;finishActivity('明細を読み込み中');render();}
+  }finally{
+    filesBusy=false;finishActivity('明細を読み込み中');render();
+    // A clean successful batch returns to the review list. Failed/duplicate
+    // batches remain open so the user can see what happened and retry.
+    if(importBatchIsClean(accepted,rejected,failed))closeImportAddDialog();
+    else if(accepted===0 && rejected>0 && failed===0 && !importUploadFeedback)
+      importUploadFeedback='追加できる新しい明細はありませんでした。';
+    updateImportUploadFeedback();
+  }
 }
 
 type ThemeMode = 'light' | 'dark';
@@ -1864,6 +2134,7 @@ function initTheme(): void {
 }
 
 function init(): void {
+  purgeLegacyTabKey();
   // Register navigation before complex initializers. A failure later must not
   // prevent opening Settings to investigate the startup problem.
   $('brand-home').addEventListener('click',()=>showView('home'));
@@ -1883,6 +2154,14 @@ function init(): void {
   $('nav-settings').addEventListener('click',()=>showView('settings'));
   $('import-payment-settings').addEventListener('click',()=>showView('settings'));
   initCloudActionControls();
+  // storage events fire only in *other* tabs of this origin, never the sender.
+  window.addEventListener('storage',event=>{
+    if(event.key!==CROSS_TAB_LOCK_KEY||!event.newValue)return;
+    const storage=localStorageSafe();
+    if(storage)try{setManualLock(storage);}catch{/* Automatic unlock fails closed without storage. */}
+    clearUnlockedFinanceViews();
+    operationResult('別のFinanceタブで保管庫がロック・切り替えされました。このタブもロックしました。未保存の作業は破棄されています。','warn');
+  });
   initPasswordFields();
   initTheme();
   let sidebarCollapsed=false;
@@ -1893,12 +2172,23 @@ function init(): void {
     setDesktopMenuCollapsed(!document.querySelector('.app-shell')?.classList.contains('nav-collapsed'));
   });
   const desktopSidebar=document.getElementById('finance-sidebar');
+  // Capture before individual navigation handlers call showView()/retract the
+  // drawer. Do not suppress keyboard activation or non-mouse navigation.
+  desktopSidebar?.addEventListener('click',event=>{
+    if(event.detail>0&&event.target instanceof Element&&event.target.closest('.nav-entry'))
+      blockDesktopMenuHoverUntilExit(desktopSidebar);
+  },true);
+  // Pointerleave generated by a shrinking fixed drawer is NOT a physical
+  // exit. Release only when the mouse actually moves beyond its old bounds.
+  document.addEventListener('pointermove',event=>{
+    if(event.pointerType==='mouse')releaseDesktopMenuHoverOnMove(event.clientX,event.clientY);
+  });
   desktopSidebar?.addEventListener('pointerenter',event=>{
     if(event.pointerType==='mouse')scheduleDesktopMenuPeek();
   });
   desktopSidebar?.addEventListener('pointerleave',()=>{closeDesktopMenuPeek();});
   desktopSidebar?.addEventListener('pointerover',event=>{
-    if(event.pointerType!=='mouse'||!document.querySelector('.app-shell.nav-collapsed:not(.nav-peeking)'))return;
+    if(desktopMenuNavigationHoverBlock||event.pointerType!=='mouse'||!document.querySelector('.app-shell.nav-collapsed:not(.nav-peeking)'))return;
     const target=event.target instanceof Element?event.target.closest<HTMLElement>('[data-nav-label]'):null;
     const tip=document.getElementById('sidebar-tooltip');
     if(!tip||!target||!desktopSidebar.contains(target))return;
@@ -2018,25 +2308,77 @@ function init(): void {
     }catch(error){operationResult(`保管庫の確認に失敗しました：${error instanceof Error?error.message:'通信エラー'}`,'bad');}
   })();});
   initLegacyCleanup();
+  $('cloud-remember-register').addEventListener('click',()=>{void (async()=>{
+    try{
+      const context=browserKeyContext();
+      if(!context||!liveVault?.unlocked)throw new Error('Microsoftアカウントと保管庫を解除してください。');
+      await rememberBrowserKey(context,liveVault.verifiedBrowserKey());
+      resumeManualAutoUnlock();
+      operationResult('このブラウザを記憶しました。次回から自動復号します。');
+    }catch(error){operationResult(error instanceof Error?error.message:'ブラウザに鍵を保存できません。','bad');}
+    finally{await updateBrowserRememberStatus();}
+  })();});
+  $('cloud-remember-forget').addEventListener('click',()=>{void (async()=>{
+    try{
+      const context=browserKeyContext();
+      if(!context)throw new Error('Microsoftアカウントを接続してください。');
+      await forgetBrowserKey(context);
+
+      const local=localStorageSafe();if(local)setManualLock(local);
+      operationResult('このブラウザの記憶を解除しました。次回の解除にはパスフレーズが必要です。');
+    }catch(error){operationResult(error instanceof Error?error.message:'ブラウザの記憶を解除できません。','bad');}
+    finally{await updateBrowserRememberStatus();}
+  })();});
   initCloudSettings({
-    hasUnsavedChanges:()=>Boolean(pending().length||failedImports.length||assetsUi?.isDirty()||assetsUi?.isBusy()||subscriptionsUi?.isBusy()||cardSettingsUi?.isDirty()||cardSettingsUi?.isBusy()||rulesBusy||categorySaving||batchBusy||filesBusy),
+    hasUnsavedChanges:()=>{const state=interruptionState();return !!(state.busy.length||state.unsaved.length);},
+    canNavigate:()=>confirmInterruption('認証画面へ移動'),
     onChangePassphrase: async (current,next,onProgress) => {
       if(!liveVault?.unlocked)throw new Error('先にOneDrive保管庫をロック解除してください。');
-      if(pending().length||failedImports.length||assetsUi?.isBusy()||assetsUi?.isDirty()||subscriptionsUi?.isBusy()||cardSettingsUi?.isBusy()||cardSettingsUi?.isDirty()||statements.some(s=>hasUnsavedChanges(s))||rulesBusy||categorySaving||batchBusy||filesBusy)
-        throw new Error('未保存の明細・編集中のデータがあります。保存または破棄してから変更してください。');
+      assertRefreshSafe();
+      const rememberedContext=browserKeyContext();
       await liveVault.changePassphrase(current,next,onProgress);
-      clearRememberedKey();
-      replaceCloudRecords(liveVault.records());
+      // Other open tabs retain the old in-memory key until explicitly notified.
+      try{broadcastVaultLock();}catch{operationResult('パスフレーズは変更済みですが、他のタブへロックを通知できません。すべてのFinanceタブを閉じてください。','warn');}
+      // Only after an acknowledged generation switch: never delete on a
+      // temporary Graph/authentication failure before publication.
+      if(rememberedContext){
+        try{await forgetBrowserKey(rememberedContext);}
+        catch{showActivity('新しいパスフレーズへの変更は完了しましたが、旧ブラウザ鍵を削除できませんでした。ブラウザのサイトデータを確認してください。','bad');}
+      }
+
+      void updateBrowserRememberStatus();
+      replaceCloudRecords(liveVault.records());lastCloudCheckAt=Date.now();
       renderRules();assetsUi?.render();futureUi?.render();cardSettingsUi?.render();
       updateCloudStatus('OneDrive：新しい暗号化パスフレーズに更新しました。');
       operationResult('暗号化パスフレーズを変更しました。すべての有効データを新しい鍵で再暗号化しました。');
     },
+    onCleanupPreview:async()=>{
+      assertRefreshSafe();
+      if(!liveVault?.unlocked)throw new Error('保管庫を解除してから調べてください。');
+      return liveVault.previewCleanup();
+    },
+    onCleanupDelete:async(which,onProgress)=>{
+      assertRefreshSafe();
+      if(!liveVault?.unlocked)throw new Error('保管庫を解除してください。');
+      cleanupBusy=true;
+      try{
+        // Lock other open tabs before deleting a previewed generation/orphan.
+        broadcastVaultLock();
+        const result=await liveVault.deletePreviewedCleanup(which,onProgress);
+        operationResult(`${result}件の暗号化ファイルを整理しました。`);
+        return result;
+      }finally{cleanupBusy=false;}
+    },
     onRefresh:refreshCloud,
     onMigration:migrateLegacy,
     onLock:()=>{
-      if(liveVault?.isRotating||assetsUi?.isBusy()||subscriptionsUi?.isBusy()||cardSettingsUi?.isBusy())return false;
-      if((pending().length||assetsUi?.isDirty()||cardSettingsUi?.isDirty())&&!window.confirm('未保存の編集があります。破棄してロックしますか？'))return false;
-      clearRememberedKey();activeAnalysisDrilldown=null;drilldownRows.clear();liveVault?.lock();summaryUi?.reset();futureUi?.reset();homeUi?.reset();analysisUi?.reset();reportsUi?.reset();subscriptionsUi?.reset();statements.splice(0);failedImports.splice(0);activeIndex=-1;render();renderRules();assetsUi?.reset();cardSettingsUi?.reset();updateCloudStatus();
+      if(!confirmInterruption('ロック'))return false;
+      try{broadcastVaultLock();}
+      catch{
+        // Even without localStorage, this tab must always be lockable.
+        operationResult('他のタブへのロック通知に失敗しました。他のFinanceタブも手動で閉じてください。','warn');
+      }
+      clearUnlockedFinanceViews();
       return true;
     },
   });
@@ -2119,14 +2461,29 @@ function init(): void {
       catch(error){$('rules-sync-status').textContent=`更新失敗：${error instanceof Error?error.message:'通信エラー'}`;}
     })();
   });
+  $('import-add-open').addEventListener('click',openImportAddDialog);
+  $('import-add-close').addEventListener('click',()=>{if(!filesBusy&&!revisionBusy)closeImportAddDialog();});
+  $('import-add-dialog').addEventListener('cancel',event=>{if(filesBusy||revisionBusy)event.preventDefault();});
+  $('import-add-dialog').addEventListener('close',()=>{
+    if(!$<HTMLDialogElement>('import-add-dialog').open)releaseImportAddDialog();
+  });
+  $('import-add-dialog').addEventListener('click',event=>{
+    if(event.target===$('import-add-dialog')&&!filesBusy&&!revisionBusy)closeImportAddDialog();
+  });
+  $('import-clear-errors').addEventListener('click',()=>{
+    if(filesBusy)return;
+    failedImports.splice(0);currentUploadFailures.splice(0);importUploadFeedback='';render();
+  });
   $('batch-import').addEventListener('click', () => { void saveAllPending(); });
   $('manage-save').addEventListener('click',()=>{const s=active();if(s){if(savedIds.has(s)){void saveEditedStatement(s,true);}else void saveAllPending();}});
   $('manage-delete').addEventListener('click', () => { if (activeIndex >= 0) void deleteStatement(activeIndex); });
   $('manage-add-row').addEventListener('click', () => { const s = active(); if (!s) return; s.rows.push({id: crypto.randomUUID(), usedOn: new Date().toISOString().slice(0,10),merchant:'',amount:0}); markDirty(s); });
   $<HTMLInputElement>('file-input').addEventListener('change', event => {
     const input = event.target as HTMLInputElement;
-    if (input.files) void handleFiles(input.files);
+    // Copy the FileList before resetting the input; some browsers expose a live list.
+    const chosen=Array.from(input.files??[]);
     input.value = '';
+    if(chosen.length)void handleFiles(chosen);
   });
   const dropzone = $('dropzone');
   dropzone.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); $<HTMLInputElement>('file-input').click(); } });
@@ -2155,11 +2512,25 @@ function init(): void {
     markDirty(s);
   });
   $('parse-paste').addEventListener('click', () => {
-    if (!pasteInput.value.trim()) { toast('明細を貼り付けてください。'); return; }
-    const s = parseStatementText(pasteInput.value, 'paste', 'Web明細の貼り付け', clipboardHtml);
-    void acceptStatement(s).catch(error=>toast(error instanceof Error?error.message:'差し替えを確認できませんでした。')); // Raw pasted text is never stored.
-    // Remove unnecessary copies from the textarea; the parsed draft lives only in memory.
-    pasteInput.value = ''; clipboardHtml = '';
+    if (!pasteInput.value.trim()) {
+      importUploadFeedback='明細を貼り付けてください。';
+      updateImportUploadFeedback();toast(importUploadFeedback);return;
+    }
+    importUploadFeedback='';currentUploadFailures.splice(0);updateImportUploadFeedback();
+    try{
+      const s=parseStatementText(pasteInput.value,'paste','Web明細の貼り付け',clipboardHtml);
+      void acceptStatement(s).then(added=>{
+        if(added && importBatchIsClean(1,0,0))closeImportAddDialog();
+      }).catch(error=>{
+        importUploadFeedback=error instanceof Error?error.message:'解析できませんでした。';
+        updateImportUploadFeedback();toast(importUploadFeedback);
+      });
+      // Only the parsed draft lives in memory; raw HTML is discarded.
+      pasteInput.value='';clipboardHtml='';
+    }catch(error){
+      importUploadFeedback=error instanceof Error?error.message:'解析できませんでした。';
+      updateImportUploadFeedback();toast(importUploadFeedback);
+    }
   });
   $<HTMLSelectElement>('manage-card').addEventListener('change', event => {
     const s = active(); if (!s) return;
@@ -2174,7 +2545,7 @@ function init(): void {
     if (!drafts.length && !failedImports.length) { toast('破棄できる取込待ちの明細はありません。'); return; }
     if (!window.confirm(`取込待ちの明細${drafts.length}件と解析失敗${failedImports.length}件を破棄しますか？\nOneDriveに保存済みの明細は削除されません。`)) return;
     for (const draft of drafts) discardImportDraft(statements.indexOf(draft), false);
-    failedImports.splice(0);
+    failedImports.splice(0);currentUploadFailures.splice(0);importUploadFeedback='';
     activeIndex = -1;
     render(); toast('未保存の明細を破棄しました。');
   });
@@ -2185,9 +2556,10 @@ function init(): void {
     void (async () => {
       const mode = currentModal;
       if (!mode) return;
+      const startedWithLockSequence=lockSequence;
       const pass = $<HTMLInputElement>('vault-passphrase').value;
       const confirmPass = $<HTMLInputElement>('vault-passphrase-confirm').value;
-      const keepTab = mode !== 'migrate' && $<HTMLInputElement>('vault-tab-keep').checked;
+      const rememberBrowser=mode!=='migrate'&&$<HTMLInputElement>('vault-browser-keep').checked;
       const submit = $<HTMLButtonElement>('vault-submit');
       $('vault-error').textContent = '';
       if (mode === 'create' && pass !== confirmPass) { $('vault-error').textContent = '確認用パスフレーズが一致しません。'; return; }
@@ -2197,8 +2569,17 @@ function init(): void {
       const vaultDialog=$<HTMLDialogElement>('vault-dialog');
       if(vaultDialog.open)vaultDialog.close();
       try {
+        let browserSaveFailure:string|null=null;
         if(!liveVault)throw new Error('Microsoftアカウントへの接続が必要です。');
-        if(mode==='create')await liveVault.create(pass,keepTab);
+        // Revoke an obsolete browser key before creating a new cloud vault.
+        // An IndexedDB failure must not leave a successfully created vault behind
+        // while the dialog reports that creation failed.
+        if(mode==='create'&&!rememberBrowser){
+          const newContext=browserKeyContext();
+          if(!newContext)throw new Error('Microsoftアカウントを確認できません。');
+          await applyBrowserRetentionChoice(newContext,false);
+        }
+        if(mode==='create')await liveVault.create(pass);
         else if(mode==='migrate') {
           await unlockVault(pass);
           const legacy=await readStatements();
@@ -2216,24 +2597,51 @@ function init(): void {
           toast(`旧明細${data.length}件中、${unimported.length}件をOneDriveへ移行しました。旧データは削除していません。`);
         } else {
           const layoutMigration=liveVault.needsLayoutMigration;
-          await liveVault.unlock(pass,keepTab);
+          await liveVault.unlock(pass);
           if(layoutMigration)toast('旧OneDrive保管庫を年別構造へ移行しました。旧ファイルも保持しています。');
         }
-        if(keepTab) {
-          const store=sessionStorageSafe();
-          if(!store)throw new Error('このブラウザではタブ内セッション保存を利用できません。チェックを外して解除してください。');
-          const exported=await liveVault.exportTabKey();
-          try{saveTabSession(store,clientIdForTab(),exported.salt,exported.key,Date.now(),exported.dataSetId);}
-          catch{throw new Error('タブ内セッションを保存できませんでした。チェックを外してもう一度解除してください。');}
-        }else clearRememberedKey();
+        if(lockSequence!==startedWithLockSequence){liveVault.lock();throw new Error('別のタブで保管庫がロックされました。解除操作を中止しました。');}
+        const context=browserKeyContext();
+        if(rememberBrowser){
+          // Browser memory is opt-in. Never export raw AES key bytes.
+          try{
+            if(!context)throw new Error('Microsoftアカウントを確認できません。');
+            await applyBrowserRetentionChoice(context,true,liveVault.verifiedBrowserKey());
+          }catch(error){
+            browserSaveFailure=`保管庫は解除できましたが、このブラウザを記憶できませんでした：${error instanceof Error?error.message:'保存エラー'}`;
+          }
+        }else if(mode!=='create'){
+          // "毎回入力する" explicitly revokes an older remembered key.
+          // If deletion cannot be verified, keep the vault locked and the dialog open.
+          try{
+            if(!context)throw new Error('Microsoftアカウントを確認できません。');
+            await applyBrowserRetentionChoice(context,false);
+          }catch(error){
+            liveVault.lock();
+            throw new Error(`以前のブラウザ記憶を解除できませんでした。再試行してください：${error instanceof Error?error.message:'保存エラー'}`);
+          }
+        }
+        if(lockSequence!==startedWithLockSequence){
+          liveVault.lock();
+          if(rememberBrowser&&context)try{await forgetBrowserKey(context);}catch{/* Manual-lock preference remains active. */}
+          throw new Error('別のタブで保管庫がロックされました。再度解除してください。');
+        }
+        await updateBrowserRememberStatus();
+        if(lockSequence!==startedWithLockSequence){
+          liveVault.lock();
+          throw new Error('別のタブで保管庫がロックされました。再度解除してください。');
+        }
+        resumeManualAutoUnlock();
+        if(browserSaveFailure)$('cloud-remember-status').textContent=browserSaveFailure;
         modalClose(true);
-        appendCloudRecordsKeepingDrafts(liveVault.records());
+        appendCloudRecordsKeepingDrafts(liveVault.records());lastCloudCheckAt=Date.now();
         renderRules();
         assetsUi?.render();futureUi?.render();cardSettingsUi?.render();
         void assetsUi?.refreshPayroll();
         updateCloudStatus();
         await refreshVaultControls();
-        if(mode==='unlock')toast(`OneDriveから${liveVault.records().length}件を復号しました。`);
+        if(browserSaveFailure)operationResult(browserSaveFailure,'bad');
+        else if(mode==='unlock')toast(`OneDriveから${liveVault.records().length}件を復号しました。`);
       } catch (error) {
         $('vault-error').textContent = error instanceof Error ? error.message : '認証できませんでした。';
         // Keep the original askVault promise active so the user can retry.
@@ -2241,15 +2649,21 @@ function init(): void {
       } finally { submit.disabled = false; }
     })();
   });
+  ruleEditorBaseline=ruleFormFingerprint();
   // Every fresh app load starts on Home, regardless of the prior tab route.
   showView('home');
   void refreshVaultControls();
   render();
   document.documentElement.dataset.financeReady='true';
   void startCloud();
-  window.addEventListener('focus',()=>{if(liveVault?.unlocked&&!liveVault.isRotating&&!pending().length&&!batchBusy&&!subscriptionsUi?.isBusy())void refreshCloud().catch(error=>updateCloudStatus(`更新確認失敗：${error instanceof Error?error.message:'通信エラー'}`));});
+  window.addEventListener('focus',()=>{
+    if(!shouldRefreshOnFocus(Date.now(),lastCloudCheckAt,!!liveVault?.unlocked,document.hidden,interruptionState()))return;
+    lastCloudCheckAt=Date.now(); // Throttle retries even when the network is down.
+    void refreshCloud().catch(error=>updateCloudStatus(`更新確認失敗：${error instanceof Error?error.message:'通信エラー'}`));
+  });
   window.addEventListener('beforeunload',event=>{
-    if(batchBusy||pending().some(s=>!importStaged.has(s))||liveVault?.isRotating||subscriptionsUi?.isBusy()||assetsUi?.isBusy()||assetsUi?.isDirty()||subscriptionsUi?.isBusy()||cardSettingsUi?.isBusy()||cardSettingsUi?.isDirty()){event.preventDefault();event.returnValue='';}
+    const state=interruptionState();
+    if(hasInterruptionRisk(state)){event.preventDefault();event.returnValue='';}
   });
 
 }

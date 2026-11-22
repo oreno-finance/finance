@@ -6,6 +6,17 @@
 import { parseStatementText } from './statement-parser.js';
 import type { ParsedStatement } from '../models/types.js';
 
+export const MAX_PDF_BYTES = 15 * 1024 * 1024;
+export const MAX_PDF_PAGES = 80;
+/** Limits protect the device before parsing, and prevent an unbounded page walk. */
+export function assertPdfLimits(size:number,pages?:number):void {
+  if(!Number.isSafeInteger(size)||size<1||size>MAX_PDF_BYTES)
+    throw new Error(`PDFは15MB以下のファイルを選択してください。`);
+  if(pages!==undefined&&(!Number.isSafeInteger(pages)||pages<1||pages>MAX_PDF_PAGES))
+    throw new Error(`PDFは80ページ以下のファイルを選択してください。`);
+}
+
+
 interface PdfTextItem {
   str: string;
   width?: number;
@@ -16,7 +27,7 @@ interface PdfPage { getTextContent(options?: Record<string, unknown>): Promise<P
 interface PdfDocument { numPages: number; getPage(pageNumber: number): Promise<PdfPage>; destroy(): Promise<void> }
 interface PdfLibrary {
   GlobalWorkerOptions: { workerSrc: string };
-  getDocument(params: { data: Uint8Array; useSystemFonts?: boolean; cMapUrl?: string; cMapPacked?: boolean; standardFontDataUrl?: string }): { promise: Promise<PdfDocument> };
+  getDocument(params: { data: Uint8Array; isEvalSupported?: boolean; useSystemFonts?: boolean; cMapUrl?: string; cMapPacked?: boolean; standardFontDataUrl?: string; wasmUrl?: string }): { promise: Promise<PdfDocument> };
 }
 
 function joinPageItems(items: PdfTextContent['items']): string[] {
@@ -43,6 +54,7 @@ function joinPageItems(items: PdfTextContent['items']): string[] {
 }
 
 export async function parsePdfFile(file: File): Promise<ParsedStatement> {
+  assertPdfLimits(file.size);
   let lib: PdfLibrary;
   try {
     // Keep PDF.js and its worker the same pinned version, hosted in this project.
@@ -54,13 +66,16 @@ export async function parsePdfFile(file: File): Promise<ParsedStatement> {
   lib.GlobalWorkerOptions.workerSrc = new URL('../../vendor/pdfjs/pdf.worker.mjs', import.meta.url).href;
   const task = lib.getDocument({
     data: new Uint8Array(await file.arrayBuffer()),
+    isEvalSupported: false,
     useSystemFonts: true,
     cMapUrl: new URL('../../vendor/pdfjs/cmaps/', import.meta.url).href,
     cMapPacked: true,
     standardFontDataUrl: new URL('../../vendor/pdfjs/standard_fonts/', import.meta.url).href,
+    wasmUrl: new URL('../../vendor/pdfjs/wasm/', import.meta.url).href,
   });
   const pdf = await task.promise;
   try {
+    assertPdfLimits(file.size,pdf.numPages);
     const pages: string[] = [];
     for (let page = 1; page <= pdf.numPages; page++) {
       const text = await (await pdf.getPage(page)).getTextContent();

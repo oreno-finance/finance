@@ -608,11 +608,14 @@ body{overflow:hidden}
 .cloud-status-cell>span{display:block;color:var(--muted);font-size:11px;font-weight:670;margin-bottom:8px}
 .cloud-status-cell .cloud-account,.cloud-status-cell .cloud-probe-result{margin:0;background:none;border:0;border-radius:0;padding:0;min-width:0;color:var(--ink);font-size:13px;font-weight:740;line-height:1.7}
 .cloud-overview .cloud-status{margin:0 0 18px;padding:10px 13px;border-radius:8px;font-size:11px}
-.cloud-primary-actions{display:flex;flex-wrap:wrap;align-items:center;gap:9px}
-.cloud-primary-actions button{padding:10px 15px;min-height:41px;border-radius:9px;font-size:12px}
-.cloud-primary-actions .cloud-link-action{margin-left:auto;border:0;background:none;color:var(--muted);font:inherit;font-size:11px;font-weight:650;cursor:pointer}
-.cloud-primary-actions .cloud-link-action:hover{color:var(--ink);text-decoration:underline}
-.cloud-primary-actions .cloud-link-action:disabled{opacity:.42;cursor:default;text-decoration:none}
+/* Frequent actions are a predictable grid; account changes live on a separate row. */
+.cloud-primary-actions{display:grid;grid-template-columns:minmax(0,1.5fr) repeat(2,minmax(0,1fr));gap:9px;align-items:stretch}
+.cloud-primary-actions button{min-width:0;width:100%;min-height:41px;padding:10px 12px;border-radius:9px;font-size:12px;white-space:normal;overflow-wrap:anywhere;line-height:1.45}
+.cloud-account-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px 18px;flex-wrap:wrap;padding:6px 0 0;margin-top:7px}
+.cloud-account-actions .cloud-link-action{appearance:none;border:0;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:650;line-height:1.5;padding:5px 0;cursor:pointer}
+.cloud-account-actions .cloud-link-action:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
+.cloud-account-actions .cloud-link-action:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:3px}
+.cloud-account-actions .cloud-link-action:disabled{opacity:.42;cursor:default;text-decoration:none}
 .cloud-explainer{display:flex;align-items:flex-start;gap:10px;padding:16px 5px;margin:3px 0 18px;color:var(--muted)}
 .cloud-explainer>span{font-size:19px;line-height:1.4;color:var(--accent)}
 .cloud-explainer p{margin:0;font-size:12px;line-height:1.75}
@@ -647,13 +650,19 @@ body{overflow:hidden}
   .cloud-overview-label{font-size:10px}
   .cloud-overview-info{grid-template-columns:1fr;gap:10px}
   .cloud-status-cell{padding:12px 14px}
-  .cloud-primary-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
-  .cloud-primary-actions button{min-width:0;width:100%;margin:0}
-  .cloud-primary-actions .cloud-link-action{grid-column:1/-1;width:auto;text-align:center}
+  .cloud-primary-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cloud-primary-actions #cloud-login{grid-column:1/-1}
+  .cloud-account-actions{justify-content:flex-start}
+  .cloud-account-actions .cloud-link-action{min-height:40px;padding:9px 0}
   .cloud-advanced>summary{padding:15px 13px}
   .cloud-advanced-content{padding:3px 11px 13px}
   .cloud-advanced-content .cloud-panel{padding:16px}
   .cloud-advanced .cloud-button{min-width:0;width:100%}
+}
+
+@media(min-width:681px) and (max-width:1150px){
+  .cloud-primary-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cloud-primary-actions #cloud-login{grid-column:1/-1}
 }
 
 /* Blank import state: no 550px archival list when everything is committed. */
@@ -1037,6 +1046,50 @@ body{overflow:hidden}
 .assets-payroll-auto-option strong{display:block;font-size:12px}
 .assets-payroll-auto-option small{display:block;margin-top:4px;color:var(--muted);font-size:10.5px;line-height:1.6}
 
+/* Opt-in browser key: one choice during unlock, one contextual action in settings. */
+.vault-retention-options{border:0;padding:0;margin:14px 0 6px;min-width:0}
+.vault-retention-options legend{font-size:12px;font-weight:750;color:var(--ink);margin-bottom:8px;padding:0}
+.vault-retention-options .vault-tab-option{margin:0 0 7px;padding:10px 12px;align-items:center}
+.vault-retention-options .vault-tab-option:has(input:checked){border-color:var(--accent);background:var(--accent-bg)}
+.vault-retention-options .vault-tab-option:focus-within{outline:2px solid var(--accent);outline-offset:1px}
+.vault-retention-options .vault-tab-option strong{font-size:12px}
+.vault-retention-options .vault-tab-option small{font-size:11px}
+.vault-retention-help{font-size:11px;line-height:1.55;color:var(--muted);margin:7px 0 0}
+.cloud-remember-controls{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:14px 0 0;border-top:1px solid var(--border,rgba(115,133,160,.24));margin-top:14px}
+.cloud-remember-copy{flex:1 1 270px;min-width:0}
+.cloud-remember-controls strong{font-size:13px}
+.cloud-remember-controls p{margin:5px 0 0;font-size:12px;line-height:1.6;color:var(--ink)}
+.cloud-remember-copy small{display:block;margin-top:5px;font-size:11px;line-height:1.5;color:var(--muted)}
+.cloud-remember-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+/* The shared cloud-link-action rules only apply inside .cloud-primary-actions.
+   This settings control must be fully styled in *both* remembered states. */
+.cloud-remember-actions button{
+  appearance:none;display:inline-flex;align-items:center;justify-content:center;
+  width:auto;min-height:40px;max-width:100%;padding:9px 15px;
+  border:1px solid var(--line);border-radius:9px;background:var(--panel);
+  color:var(--ink);font:inherit;font-size:12px;font-weight:700;line-height:1.45;
+  text-align:center;white-space:normal;cursor:pointer;
+  transition:background-color 150ms ease,border-color 150ms ease,color 150ms ease;
+}
+.cloud-remember-actions #cloud-remember-register{
+  color:var(--accent);background:var(--accent-bg);border-color:var(--accent);
+}
+.cloud-remember-actions #cloud-remember-register:hover{background:var(--panel);border-color:var(--accent)}
+.cloud-remember-actions #cloud-remember-forget:hover{background:var(--bg);border-color:var(--muted)}
+.cloud-remember-actions button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.cloud-remember-actions button:disabled{opacity:.5;cursor:not-allowed}
+@media(max-width:600px){.cloud-remember-actions{width:100%}.cloud-remember-actions button{width:100%}}
+@media(prefers-reduced-motion:reduce){.cloud-remember-actions button{transition:none}}
+
+/* Finance MSAL status: kept separate from financial-vault lock state. */
+.cloud-auth-state{margin:5px 0 0;font-size:12px;color:var(--muted);font-weight:650}
+.cloud-auth-state[data-state="reauth"]{color:var(--warning,#b7791f)}
+.cloud-auth-state[data-state="temporary"]{color:var(--warning,#b7791f)}
+
+/* Finance v1.9.31: stale Payroll preview is never silently treated as current. */
+.assets-payroll-stale {display:flex;align-items:flex-start;gap:.55rem;margin-top:.7rem;font-size:.9rem;line-height:1.5;}
+.assets-payroll-stale input {flex:none;margin-top:.3rem;}
+
 /* SOURCE: monthly-summary.css */
 /* Finance monthly report, aligned with the existing sidebar and panel palette. */
 .monthly-view{max-width:1350px;margin:0 auto;min-width:0}
@@ -1059,6 +1112,8 @@ body{overflow:hidden}
 .monthly-alert p{font-size:11px;margin:4px 0 0;color:var(--muted)}
 .monthly-paired{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
 .monthly-panel{margin:0 0 17px;padding:20px}
+/* The shared points panel is not a monthly-panel; retain the same gap before the next card. */
+#monthly-content > .points-benefits{margin:0 0 17px}
 .monthly-section-heading{font-size:16px;margin:0 0 17px;color:var(--ink)}
 .monthly-section-body{min-width:0}
 .monthly-line{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:11px 0;border-top:1px solid var(--line);font-size:13px;line-height:1.5}
@@ -1119,26 +1174,49 @@ body{overflow:hidden}
 .import-revision-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:9px}
 @media(max-width:500px){.import-revision-inner{padding:15px}.import-revision-actions button{flex:1}}
 
-/* No drafts: the file selector is the entire workflow, not an empty editor. */
+/* A full-width uploader before parsing, a quiet entry point afterwards. */
+.import-inline-entry{width:100%;min-width:0}
+.import-inline-entry>.import-panel{width:100%;min-height:0!important;margin:0!important}
 #import-view:not(.has-import-drafts)>.results-grid,
 #import-view:not(.has-import-drafts)>.batch-bar{display:none!important}
-#import-view:not(.has-import-drafts) #entry-accordion{
-  width:100%;max-width:660px;margin:0 auto;
+#import-view:not(.has-import-drafts) .import-inline-entry .dropzone{min-height:156px!important;height:auto!important;padding:22px 18px}
+#import-view:not(.has-import-drafts):not(.hidden){min-height:0!important;height:auto!important;display:block!important}
+.import-page-heading{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:10px}
+.import-page-heading .import-add-open{width:auto;flex:0 0 auto;min-height:33px;margin:0;padding:7px 12px;font-size:12px;font-weight:700;white-space:nowrap;border-radius:9px}
+.import-page-heading .import-add-open.hidden{display:none!important}
+/* Reuse the established Finance native-dialog visual language. */
+.import-add-dialog{width:min(650px,calc(100vw - 28px));max-height:min(85dvh,740px);padding:0;
+  border:1px solid var(--line);border-radius:16px;background:var(--panel);color:var(--ink);
+  box-shadow:0 24px 90px #0005;overflow:hidden}
+.import-add-dialog[open]{display:flex;flex-direction:column}
+.import-add-dialog::backdrop{background:#102135a8;backdrop-filter:blur(3px)}
+.import-add-head{flex:0 0 auto;padding:19px 22px 15px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line)}
+.import-add-head h2{font-size:18px;letter-spacing:-.3px;margin:0}
+.import-add-close{width:35px;height:35px;flex:0 0 auto;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:9px;cursor:pointer;font-size:21px}
+.import-add-close:hover{background:var(--bg);border-color:var(--accent)}
+.import-add-close:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.import-add-body{padding:20px 22px 23px;overflow-y:auto;min-height:0;overscroll-behavior:contain}
+.import-add-body>.import-panel{padding:0!important;min-height:0!important;border:0!important;box-shadow:none!important;margin:0!important;overflow:visible}
+.import-add-body>.import-panel>.panel-heading{display:none}
+.import-add-body .dropzone{min-height:165px!important;height:auto!important;padding:22px 12px}
+.import-upload-feedback{border:1px solid color-mix(in srgb,#c45b5b 25%,var(--line));border-radius:9px;padding:10px 12px;
+  background:color-mix(in srgb,#c45b5b 8%,var(--panel));color:var(--ink);font-size:12px;line-height:1.6;
+  white-space:pre-line;overflow-wrap:anywhere;margin-top:12px}
+.import-upload-feedback.hidden,.import-clear-errors.hidden{display:none!important}
+.import-clear-errors{margin:9px 0 0;min-height:32px;cursor:pointer}
+@media(max-width:630px){
+  .import-page-heading{align-items:center}
+  .import-page-heading .import-add-open{min-height:32px;padding:6px 10px;font-size:11px}
+  .import-add-dialog{width:calc(100vw - 20px);max-height:calc(100dvh - 24px);border-radius:14px}
+  .import-add-head{padding:14px 16px 12px}
+  .import-add-body{padding:15px 16px 18px}
+  .import-add-body .dropzone{min-height:145px!important}
 }
-#import-view:not(.has-import-drafts) #entry-accordion>.import-panel{
-  min-height:0!important;margin-bottom:0!important;
-}
-@media(min-width:981px){
-  #import-view:not(.has-import-drafts):not(.hidden){
-    min-height:0!important;height:auto!important;display:block!important;
-  }
-}
-@media(max-width:800px){
-  #import-view:not(.has-import-drafts):not(.hidden){
-    min-height:0!important;height:auto!important;overflow:visible!important;
-  }
-  #import-view:not(.has-import-drafts) #entry-accordion{max-width:540px}
-}
+
+/* After the first import, an empty queue remains a quiet workspace, not an onboarding wizard. */
+.import-compact-empty{margin:10px 0;padding:20px 16px;border:1px solid var(--line);border-radius:12px;
+  background:var(--panel);color:var(--muted);font-size:12px;text-align:center}
+.import-compact-empty.hidden{display:none!important}
 
 /* SOURCE: future-projection.css */
 /* Finance v1.4.3: read-only savings outlook */
@@ -1237,6 +1315,13 @@ body{overflow:hidden}
   .cloud-connect-dialog .vault-form-actions{flex-direction:column-reverse;align-items:stretch}
   .cloud-connect-dialog .vault-form-actions button{width:100%}
 }
+
+/* Retired encrypted backups: readable on phones without a page-long list. */
+.settings-view .cloud-cleanup-snapshots{max-width:100%;min-width:0;margin:10px 0 12px}
+.settings-view #cloud-cleanup-snapshot-list{display:grid;gap:4px;max-height:260px;overflow-y:auto;overscroll-behavior:contain;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--bg);font-size:12px;color:var(--muted)}
+.settings-view #cloud-cleanup-snapshot-list .rules-check{min-width:0;align-items:flex-start;margin:0;padding:7px 3px;border-bottom:1px solid var(--line);overflow-wrap:anywhere;font-size:11px;font-weight:550;line-height:1.55}
+.settings-view #cloud-cleanup-snapshot-list .rules-check:last-child{border-bottom:0}
+.settings-view #cloud-cleanup-snapshot-list input[type="checkbox"]{flex:0 0 17px;margin-top:1px}
 
 /* SOURCE: layout-v145.css */
 /* Finance v1.4.5 — task-first settings layout and sortable management rows. */
@@ -3273,17 +3358,72 @@ html.assets-once-page-locked,html.assets-once-page-locked body{overflow:hidden!i
 }
 
 /* SOURCE: startup-recovery.css */
-/* Independent startup failure controls remain reachable if the app module fails. */
-#startup-recovery{position:fixed;z-index:9999;bottom:18px;right:18px;width:min(470px,calc(100vw - 36px));box-sizing:border-box;
-  padding:18px 20px;border:1px solid #f0ba67;border-radius:14px;background:#fff9ed;color:#352912;box-shadow:0 12px 45px #0004;font:14px/1.6 system-ui,-apple-system,sans-serif}
-#startup-recovery strong{display:block;font-size:16px;margin-bottom:6px}
-#startup-recovery p{margin:0 0 12px}
-.startup-recovery-actions{display:flex;flex-wrap:wrap;gap:8px}
-.startup-recovery-actions button{border:1px solid #b68b52;border-radius:7px;background:#fff;color:#352912;padding:7px 10px;cursor:pointer;font:inherit}
-.startup-recovery-actions button:focus-visible{outline:3px solid #8f5e24;outline-offset:2px}
-@media(max-width:800px){#startup-recovery{bottom:10px;right:10px;width:calc(100vw - 20px);padding:13px 15px}}
-
-.startup-recovery-note:empty{display:none}
+/* Standalone startup-recovery surface: it must remain legible even when main.js fails. */
+#startup-recovery {
+  position:fixed;z-index:9999;right:20px;bottom:20px;
+  box-sizing:border-box;width:min(440px,calc(100vw - 32px));max-height:calc(100dvh - 32px);
+  overflow-y:auto;overscroll-behavior:contain;
+  padding:18px;border:1px solid #dce5ec;border-radius:16px;
+  background:#fff;color:#17283b;
+  box-shadow:0 20px 60px rgba(16,27,48,.16),0 2px 8px rgba(16,27,48,.06);
+  font:13px/1.55 -apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+  animation:finance-startup-appear 240ms cubic-bezier(.2,.75,.25,1) both;
+}
+#startup-recovery .startup-recovery-header {display:flex;align-items:flex-start;gap:12px;min-width:0}
+#startup-recovery .startup-recovery-symbol {
+  flex:0 0 34px;display:grid;place-items:center;width:34px;height:34px;
+  border:1px solid #e5ebf2;border-radius:10px;background:#f2f6f9;color:#48627b;
+  font-size:18px;font-weight:750;line-height:1;
+}
+#startup-recovery .startup-recovery-heading {flex:1;min-width:0;padding-top:1px}
+#startup-recovery strong {display:block;margin:0;font-size:14px;line-height:1.5;font-weight:750;letter-spacing:-.02em;color:inherit}
+#startup-recovery .startup-recovery-description {margin:4px 0 0;color:#66788a;font-size:12px;line-height:1.6}
+#startup-recovery .startup-recovery-actions {
+  display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:8px;
+  margin-top:17px;padding-top:14px;border-top:1px solid #edf0f4;
+}
+#startup-recovery .startup-recovery-actions button {
+  box-sizing:border-box;min-width:0;min-height:38px;padding:8px 12px;
+  border:1px solid transparent;border-radius:9px;background:transparent;
+  color:#566b80;font:inherit;font-size:12px;font-weight:700;
+  line-height:1.45;text-align:center;white-space:nowrap;cursor:pointer;
+  transition:background-color 140ms ease,border-color 140ms ease,color 140ms ease;
+}
+#startup-recovery .startup-recovery-actions button:hover {background:#f2f6f8;color:#233c51}
+#startup-recovery .startup-recovery-actions .startup-recovery-reload {
+  border-color:#297a70;background:#297a70;color:#fff;
+}
+#startup-recovery .startup-recovery-actions .startup-recovery-reload:hover {border-color:#21675e;background:#21675e;color:#fff}
+#startup-recovery .startup-recovery-actions button:focus-visible {outline:3px solid #69baab;outline-offset:2px}
+#startup-recovery .startup-recovery-note {
+  margin:12px 0 0;padding:9px 11px;border:1px solid #e6ebf0;border-radius:9px;
+  background:#f7f9fb;color:#596e80;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;
+  white-space:pre-wrap;overflow-wrap:anywhere;
+}
+#startup-recovery .startup-recovery-note:empty {display:none}
+:root[data-theme="dark"] #startup-recovery {
+  border-color:#3a4b60;background:#1c293b;color:#f1f5f9;
+  box-shadow:0 20px 60px rgba(0,0,0,.36),0 2px 8px rgba(0,0,0,.14);
+}
+:root[data-theme="dark"] #startup-recovery .startup-recovery-symbol {border-color:#3b5164;background:#2a3b4d;color:#b5d5df}
+:root[data-theme="dark"] #startup-recovery .startup-recovery-description {color:#a5b6c6}
+:root[data-theme="dark"] #startup-recovery .startup-recovery-actions {border-color:#38485a}
+:root[data-theme="dark"] #startup-recovery .startup-recovery-actions button {color:#c5d3e1}
+:root[data-theme="dark"] #startup-recovery .startup-recovery-actions button:hover {background:#314256;color:#fff}
+:root[data-theme="dark"] #startup-recovery .startup-recovery-actions .startup-recovery-reload {border-color:#319383;background:#319383;color:#fff}
+:root[data-theme="dark"] #startup-recovery .startup-recovery-actions .startup-recovery-reload:hover {border-color:#3aa595;background:#3aa595}
+:root[data-theme="dark"] #startup-recovery .startup-recovery-note {border-color:#3a4c60;background:#253448;color:#c7d7e5}
+@media (max-width:520px) {
+  #startup-recovery {right:12px;bottom:12px;width:calc(100vw - 24px);max-height:calc(100dvh - 24px);padding:16px}
+  #startup-recovery .startup-recovery-actions {grid-template-columns:repeat(2,minmax(0,1fr))}
+  #startup-recovery .startup-recovery-actions .startup-recovery-reload {grid-column:1/-1}
+  #startup-recovery .startup-recovery-actions button {white-space:normal}
+}
+@keyframes finance-startup-appear {from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:translateY(0)}}
+@media (prefers-reduced-motion:reduce) {
+  #startup-recovery {animation:none}
+  #startup-recovery .startup-recovery-actions button {transition:none}
+}
 
 /* SOURCE: ui-v1615.css */
 /* Finance 1.6.15: settings ownership and consistent input affordances. */
@@ -4088,32 +4228,18 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 #manage-view .manage-editor .transaction-table .col-note{width:145px}
 #manage-view .manage-editor .transaction-table .col-operation{width:64px}
 #manage-view .manage-editor .transaction-table td[data-label="利用日"] input{width:116px;max-width:100%;box-sizing:border-box}
-/* Expanded import workspace has exactly one vertical viewport and independent column scrolling. */
-#entry-accordion{flex:0 0 auto;min-width:0;position:relative}
-#entry-accordion>.import-panel{min-height:0!important;padding:13px 17px 12px!important;margin-bottom:12px}
-#entry-accordion .import-method .dropzone{height:92px;min-height:92px;padding:8px 12px}
-#entry-accordion .import-method .drop-icon{width:27px;height:27px;font-size:18px;margin:0}
-#entry-accordion .import-method .hint{font-size:10px;line-height:1.45;min-height:0;margin-top:5px}
-@media(max-width:800px){#entry-accordion>.import-panel{padding:15px!important}}
-#entry-accordion>summary{display:none}
+#manage-view .manage-editor .transaction-table input[type="date"]{min-width:0;max-width:100%;box-sizing:border-box}
+/* Drafts remain in the review workspace. The uploader is a separate native
+   dialog, never an absolutely positioned accordion above financial rows. */
 #import-view.has-import-drafts:not(.hidden){height:100%!important;min-height:0!important;display:flex!important;flex-direction:column!important;overflow:hidden!important}
 .workspace .content:has(#import-view.has-import-drafts:not(.hidden)){overflow:hidden!important;padding-bottom:12px!important}
-#import-view.has-import-drafts>#entry-accordion{order:1!important;margin-bottom:10px}
-#import-view.has-import-drafts #entry-accordion>summary{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--panel);border:1px solid var(--line);border-radius:10px;cursor:pointer;font-size:12px;font-weight:700;list-style:none;color:var(--ink)}
-#import-view.has-import-drafts #entry-accordion>summary::-webkit-details-marker{display:none}
-#import-view.has-import-drafts #entry-accordion>summary::after{content:'⌄';font-size:19px;line-height:1;color:var(--muted);transition:transform .15s}
-#import-view.has-import-drafts #entry-accordion[open]>summary::after{transform:rotate(180deg)}
-#import-view.has-import-drafts #entry-accordion[open]>.import-panel{
- position:absolute;z-index:5;top:calc(100% + 6px);left:0;right:0;
- max-height:min(480px,62dvh);min-height:0!important;overflow:auto!important;
- margin:0!important;box-shadow:0 12px 32px #09182b33
-}
 #import-view.has-import-drafts>.results-grid{order:2!important;flex:1 1 auto!important;min-height:0!important;max-height:100%!important;height:auto!important;overflow:hidden!important;align-items:stretch!important}
 #import-view.has-import-drafts .results-grid>.statement-index-panel,
 #import-view.has-import-drafts .results-grid>.detail-panel{display:flex!important;flex-direction:column!important;align-self:stretch!important;min-height:0!important;height:100%!important;overflow:hidden!important}
 #import-view.has-import-drafts .statement-index-panel>.statement-list{flex:1 1 auto!important;min-height:0!important;height:auto!important;max-height:none!important;overflow-y:auto!important;overscroll-behavior:contain!important}
 #import-view.has-import-drafts .detail-panel #preview-content:not(.hidden){display:flex!important;flex:1 1 auto!important;flex-direction:column!important;min-height:0!important;height:100%!important;overflow:hidden!important}
-#import-view.has-import-drafts .detail-panel .detail-summary-block{flex:0 1 auto;max-height:48%;overflow:auto;scrollbar-gutter:stable}
+/* Statement facts never become an independent scroll pane. Only transaction rows scroll. */
+#import-view.has-import-drafts .detail-panel .detail-summary-block{flex:0 0 auto;max-height:none;overflow:visible}
 #import-view.has-import-drafts .detail-panel .transactions-panel-inner{display:flex!important;flex-direction:column!important;flex:1 1 auto!important;min-height:0!important;height:100%!important;overflow:hidden!important}
 #import-view.has-import-drafts .transactions-panel-inner>.table-scroll{display:block!important;flex:1 1 0!important;min-height:0!important;height:auto!important;max-height:none!important;overflow:auto!important;overscroll-behavior:contain;scrollbar-gutter:stable}
 #import-view.has-import-drafts .transactions-panel-inner .transaction-table thead{position:sticky;top:0;z-index:1;background:var(--panel)}
@@ -4127,39 +4253,51 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
  #import-view.has-import-drafts>.results-grid{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,35fr) minmax(0,65fr);gap:10px}
  #import-view.has-import-drafts .results-grid>.statement-index-panel,#import-view.has-import-drafts .results-grid>.detail-panel{min-height:0!important}
 }
+/* Tablet widths keep the desktop sidebar, but the stacked review panes need
+   content-height layout. Otherwise the summary crushes the transaction scroller. */
+@media(min-width:801px) and (max-width:980px){
+ .workspace .content:has(#import-view.has-import-drafts:not(.hidden)){overflow-y:auto!important;overflow-x:hidden!important}
+ #import-view.has-import-drafts:not(.hidden){height:auto!important;min-height:0!important;overflow:visible!important}
+ #import-view.has-import-drafts>.results-grid{flex:0 0 auto!important;height:auto!important;max-height:none!important;overflow:visible!important;grid-template-rows:auto auto!important}
+ #import-view.has-import-drafts .results-grid>.statement-index-panel,
+ #import-view.has-import-drafts .results-grid>.detail-panel{height:auto!important;min-height:0!important;overflow:visible!important}
+ #import-view.has-import-drafts .statement-index-panel>.statement-list{flex:0 1 auto!important;height:auto!important;max-height:250px!important;overflow-y:auto!important}
+ #import-view.has-import-drafts .detail-panel #preview-content:not(.hidden){height:auto!important;overflow:visible!important}
+ #import-view.has-import-drafts .detail-panel .transactions-panel-inner{height:auto!important;overflow:visible!important}
+ #import-view.has-import-drafts .transactions-panel-inner>.table-scroll{flex:0 0 auto!important;height:clamp(220px,35dvh,380px)!important;max-height:380px!important;overflow:auto!important}
+}
+/* On narrow screens the document must scroll. A rigid 100dvh/35:65 split
+   cropped the amount summary and left only a few rows of the preview visible. */
 @media(max-width:800px){
- body:has(#import-view.has-import-drafts:not(.hidden)){height:100dvh!important;overflow:hidden!important}
- .app-shell:has(#import-view.has-import-drafts:not(.hidden)){height:100dvh!important;display:flex!important;flex-direction:column!important;overflow:hidden!important}
- #finance-sidebar.sidebar{flex:0 0 auto!important;min-height:0!important;height:auto!important}
- .workspace:has(#import-view.has-import-drafts:not(.hidden)){height:auto!important;flex:1 1 0!important;min-height:0!important;overflow:hidden!important}
- .workspace .content:has(#import-view.has-import-drafts:not(.hidden)){height:100%!important;flex:1 1 0!important;min-height:0!important;overflow:hidden!important}
- #import-view.has-import-drafts:not(.hidden){height:100%!important;min-height:0!important}
+ body:has(#import-view.has-import-drafts:not(.hidden)){height:auto!important;overflow-x:hidden!important;overflow-y:auto!important}
+ .app-shell:has(#import-view.has-import-drafts:not(.hidden)){height:auto!important;min-height:100dvh!important;display:block!important;overflow:visible!important}
+ #finance-sidebar.sidebar{min-height:0!important;height:auto!important}
+ .workspace:has(#import-view.has-import-drafts:not(.hidden)){height:auto!important;min-height:0!important;overflow:visible!important}
+ .workspace .content:has(#import-view.has-import-drafts:not(.hidden)){height:auto!important;min-height:0!important;overflow:visible!important;padding-bottom:22px!important}
+ #import-view.has-import-drafts:not(.hidden){height:auto!important;min-height:0!important;display:flex!important;overflow:visible!important}
+ #import-view.has-import-drafts>.results-grid{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto;gap:12px;flex:0 0 auto!important;height:auto!important;max-height:none!important;overflow:visible!important}
+ #import-view.has-import-drafts .results-grid>.statement-index-panel,
+ #import-view.has-import-drafts .results-grid>.detail-panel{height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important}
+ #import-view.has-import-drafts .statement-index-panel>.statement-list{flex:0 1 auto!important;height:auto!important;min-height:0!important;max-height:260px!important;overflow-y:auto!important}
+ #import-view.has-import-drafts .detail-panel #preview-content:not(.hidden){display:flex!important;height:auto!important;overflow:visible!important}
+ #import-view.has-import-drafts .detail-panel .detail-summary-block{flex:0 0 auto!important;max-height:none!important;overflow:visible!important;padding:13px}
+ #import-view.has-import-drafts .detail-panel .transactions-panel-inner{flex:0 0 auto!important;height:auto!important;overflow:visible!important}
+ #import-view.has-import-drafts .transactions-panel-inner>.table-scroll{flex:0 0 auto!important;height:min(380px,46dvh)!important;min-height:190px!important;max-height:380px!important;overflow:auto!important}
+ #import-view.has-import-drafts .batch-bar{flex-wrap:wrap;flex:0 0 auto!important}
  .workspace:has(#import-view.has-import-drafts:not(.hidden)) footer{display:none!important}
- #import-view.has-import-drafts>.results-grid{grid-template-rows:minmax(0,35fr) minmax(0,65fr)}
- #import-view.has-import-drafts .detail-summary-block{padding:13px}
- #import-view.has-import-drafts .batch-bar{flex-wrap:wrap}
-}
-
-/* A native date picker needs room for its calendar icon. The ledger scrolls. */
-#manage-view .manage-editor .transaction-table{min-width:720px}
-#manage-view .manage-editor .transaction-table .col-date{width:162px}
-#manage-view .manage-editor .transaction-table td[data-label="利用日"] input[type="date"]{
-  width:146px;min-width:0;max-width:100%;box-sizing:border-box;
-  color:var(--ink);color-scheme:light;
-}
-:root[data-theme="dark"] #manage-view .manage-editor .transaction-table td[data-label="利用日"] input[type="date"]{
-  color-scheme:dark;
 }
 
 /* SOURCE: navigation-payroll-v1915.css */
 /* v1.9.15: the statement destinations are ordinary sidebar routes, not a disclosure. */
 @media(min-width:801px){
-  /* Manual show/hide animates the rail width and label fade; the toggle itself
-     deliberately does not travel (the older moving-button effect was removed). */
+  /* Manual show/hide animates the rail width and label fade. When pinning
+     an already-hovered 244px overlay, animate its -172px layout overlap back
+     to zero so the content glides instead of jumping sideways. */
   .app-shell:not(.nav-peeking) #finance-sidebar.sidebar{
     transition:width 260ms cubic-bezier(.22,1,.36,1),
       min-width 260ms cubic-bezier(.22,1,.36,1),
-      flex-basis 260ms cubic-bezier(.22,1,.36,1)!important;
+      flex-basis 260ms cubic-bezier(.22,1,.36,1),
+      margin-right 260ms cubic-bezier(.22,1,.36,1)!important;
   }
   #finance-sidebar .nav-text,
   #finance-sidebar .brand-copy,

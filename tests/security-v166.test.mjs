@@ -91,7 +91,7 @@ test('CSP restricts scripts and theme initialization is externalized',async()=>{
 });
 test('clean build removes stale published artifacts instead of reusing old output',async()=>{
   const packageJson=JSON.parse(await readFile(new URL('../package.json',import.meta.url),'utf8'));
-  assert.match(packageJson.scripts.build,/^npm run build:styles && node scripts\/clean-dist\.mjs && tsc && node scripts\/copy-static\.mjs/);
+  assert.match(packageJson.scripts.build,/^npm run build:meta && npm run build:styles && node scripts\/clean-dist\.mjs && tsc && node scripts\/copy-static\.mjs/);
   const dir=await mkdtemp(join(tmpdir(),'finance-clean-v166-'));
   await mkdir(join(dir,'dist'),{recursive:true});await writeFile(join(dir,'dist','stale.js'),'stale');
   execFileSync(process.execPath,[new URL('../scripts/clean-dist.mjs',import.meta.url).pathname],{cwd:dir});

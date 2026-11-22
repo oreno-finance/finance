@@ -22,23 +22,46 @@
 .import-revision-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:9px}
 @media(max-width:500px){.import-revision-inner{padding:15px}.import-revision-actions button{flex:1}}
 
-/* No drafts: the file selector is the entire workflow, not an empty editor. */
+/* A full-width uploader before parsing, a quiet entry point afterwards. */
+.import-inline-entry{width:100%;min-width:0}
+.import-inline-entry>.import-panel{width:100%;min-height:0!important;margin:0!important}
 #import-view:not(.has-import-drafts)>.results-grid,
 #import-view:not(.has-import-drafts)>.batch-bar{display:none!important}
-#import-view:not(.has-import-drafts) #entry-accordion{
-  width:100%;max-width:660px;margin:0 auto;
+#import-view:not(.has-import-drafts) .import-inline-entry .dropzone{min-height:156px!important;height:auto!important;padding:22px 18px}
+#import-view:not(.has-import-drafts):not(.hidden){min-height:0!important;height:auto!important;display:block!important}
+.import-page-heading{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:10px}
+.import-page-heading .import-add-open{width:auto;flex:0 0 auto;min-height:33px;margin:0;padding:7px 12px;font-size:12px;font-weight:700;white-space:nowrap;border-radius:9px}
+.import-page-heading .import-add-open.hidden{display:none!important}
+/* Reuse the established Finance native-dialog visual language. */
+.import-add-dialog{width:min(650px,calc(100vw - 28px));max-height:min(85dvh,740px);padding:0;
+  border:1px solid var(--line);border-radius:16px;background:var(--panel);color:var(--ink);
+  box-shadow:0 24px 90px #0005;overflow:hidden}
+.import-add-dialog[open]{display:flex;flex-direction:column}
+.import-add-dialog::backdrop{background:#102135a8;backdrop-filter:blur(3px)}
+.import-add-head{flex:0 0 auto;padding:19px 22px 15px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line)}
+.import-add-head h2{font-size:18px;letter-spacing:-.3px;margin:0}
+.import-add-close{width:35px;height:35px;flex:0 0 auto;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:9px;cursor:pointer;font-size:21px}
+.import-add-close:hover{background:var(--bg);border-color:var(--accent)}
+.import-add-close:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.import-add-body{padding:20px 22px 23px;overflow-y:auto;min-height:0;overscroll-behavior:contain}
+.import-add-body>.import-panel{padding:0!important;min-height:0!important;border:0!important;box-shadow:none!important;margin:0!important;overflow:visible}
+.import-add-body>.import-panel>.panel-heading{display:none}
+.import-add-body .dropzone{min-height:165px!important;height:auto!important;padding:22px 12px}
+.import-upload-feedback{border:1px solid color-mix(in srgb,#c45b5b 25%,var(--line));border-radius:9px;padding:10px 12px;
+  background:color-mix(in srgb,#c45b5b 8%,var(--panel));color:var(--ink);font-size:12px;line-height:1.6;
+  white-space:pre-line;overflow-wrap:anywhere;margin-top:12px}
+.import-upload-feedback.hidden,.import-clear-errors.hidden{display:none!important}
+.import-clear-errors{margin:9px 0 0;min-height:32px;cursor:pointer}
+@media(max-width:630px){
+  .import-page-heading{align-items:center}
+  .import-page-heading .import-add-open{min-height:32px;padding:6px 10px;font-size:11px}
+  .import-add-dialog{width:calc(100vw - 20px);max-height:calc(100dvh - 24px);border-radius:14px}
+  .import-add-head{padding:14px 16px 12px}
+  .import-add-body{padding:15px 16px 18px}
+  .import-add-body .dropzone{min-height:145px!important}
 }
-#import-view:not(.has-import-drafts) #entry-accordion>.import-panel{
-  min-height:0!important;margin-bottom:0!important;
-}
-@media(min-width:981px){
-  #import-view:not(.has-import-drafts):not(.hidden){
-    min-height:0!important;height:auto!important;display:block!important;
-  }
-}
-@media(max-width:800px){
-  #import-view:not(.has-import-drafts):not(.hidden){
-    min-height:0!important;height:auto!important;overflow:visible!important;
-  }
-  #import-view:not(.has-import-drafts) #entry-accordion{max-width:540px}
-}
+
+/* After the first import, an empty queue remains a quiet workspace, not an onboarding wizard. */
+.import-compact-empty{margin:10px 0;padding:20px 16px;border:1px solid var(--line);border-radius:12px;
+  background:var(--panel);color:var(--muted);font-size:12px;text-align:center}
+.import-compact-empty.hidden{display:none!important}

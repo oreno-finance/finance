@@ -82,6 +82,7 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
     let payrollSession = null;
     let payrollIncome = [];
     let payrollSynced = false, payrollBusy = false, payrollAccountDirty = false;
+    let payrollStale = false, payrollUseStale = false;
     let payrollSyncedAt = 0, lastPayrollAttemptAt = 0;
     let payrollOwner = null;
     const amounts = new Map();
@@ -431,7 +432,7 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             return;
         const data = vault.assetSettings(), records = vault.records();
         const today = new Date();
-        const available = payrollSynced ? payrollIncome : [];
+        const available = payrollSynced || (payrollStale && payrollUseStale && payrollOwner === vault) ? payrollIncome : [];
         const currentReport = forecastBankBalances(data, localDay(today), records, available, data.payrollDepositAccount, localDay(today)), nextReport = forecastBankBalances(data, lastDayOfNextMonth(today), records, available, data.payrollDepositAccount, localDay(today));
         const now = currentReport.accounts, next = nextReport.accounts;
         for (const account of ASSET_ACCOUNTS) {
@@ -464,8 +465,12 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
                     details.append(make('p', '', parts.join(' / ')));
                 if (current.warning)
                     details.append(make('p', '', current.warning));
-                if (data.payrollDepositAccount === account.id && !payrollSynced)
-                    details.append(make('p', '', 'Payrollの給与は未取得です。'));
+                if (data.payrollDepositAccount === account.id) {
+                    if (payrollStale && payrollUseStale && payrollOwner === vault)
+                        details.append(make('p', '', 'Payrollの前回取得分を使用中（最新同期失敗）。'));
+                    else if (!payrollSynced)
+                        details.append(make('p', '', 'Payrollの給与は未取得です。'));
+                }
                 const expected = nextReport.estimatedByAccount[account.id] ?? 0;
                 if (expected)
                     details.append(make('p', '', `給与見込み +${yen(expected)}`));
@@ -663,15 +668,20 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             return;
         if (!payrollAccountDirty)
             $('assets-payroll-deposit').value = vault.assetSettings().payrollDepositAccount ?? '';
-        if (!payrollSynced) {
-            $('assets-payroll-count').textContent = '0件';
-            $('assets-payroll-last').textContent = '未同期';
-            return;
-        }
-        $('assets-payroll-count').textContent = `${payrollIncome.length}件`;
-        $('assets-payroll-last').textContent = new Date(payrollSyncedAt).toLocaleString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+        const haveLast = payrollOwner === vault && payrollSyncedAt > 0;
+        $('assets-payroll-count').textContent = haveLast ? `${payrollIncome.length}件` : '0件';
+        $('assets-payroll-last').textContent = haveLast ? `${new Date(payrollSyncedAt).toLocaleString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit' })}${payrollStale ? '（更新失敗・古いデータ）' : ''}` : '未同期';
+        const staleBox = $('assets-payroll-stale');
+        staleBox.classList.toggle('hidden', !payrollStale || !haveLast);
+        $('assets-payroll-use-stale').checked = payrollUseStale;
         const recurring = vault.assetSettings().recurring.filter(e => e.enabled && e.kind === 'income' && /給与|給料|salary|payroll/i.test(e.name));
-        if (recurring.length)
+        if (payrollStale && haveLast) {
+            const note = $('assets-payroll-status');
+            note.textContent = `Payrollの最新同期に失敗しました。最終成功：${new Date(payrollSyncedAt).toLocaleString('ja-JP')}。${payrollUseStale ? '古い給与情報を予測に使用中です。' : '古い給与情報は予測から除外しています。'}`;
+            note.classList.add('bad');
+            note.setAttribute('role', 'alert');
+        }
+        if (!payrollStale && recurring.length)
             status($('assets-payroll-status'), `給与を${payrollIncome.length}件読み込みました。注意：給与らしい定期入金が${recurring.length}件登録されています。二重計上にご注意ください。`);
     }
     /** Manual registration is explicit; automatic reads use only the encrypted settings document. */
@@ -711,6 +721,8 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             payrollIncome = items;
             payrollSynced = true;
             payrollSyncedAt = Date.now();
+            payrollStale = false;
+            payrollUseStale = false;
             let credentialError;
             if (!automatic) {
                 try {
@@ -733,12 +745,20 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             onPayrollChange();
         }
         catch (error) {
-            // In case of a revoked password or interrupted download, never forecast from stale salaries.
+            // Keep the last success only in this unlocked tab, clearly marked stale.
+            // Do not include stale salary in forecasts unless the user explicitly opts in.
+            const lastVerified = payrollOwner === vault && payrollSyncedAt > 0;
             payrollSession = null;
-            payrollOwner = null;
-            payrollIncome = [];
             payrollSynced = false;
-            status($('assets-payroll-status'), `給与を取得できませんでした：${error instanceof Error ? error.message : '通信エラー'}。設定から再接続できます。`, true);
+            payrollStale = lastVerified;
+            if (!lastVerified)
+                payrollUseStale = false;
+            if (!lastVerified) {
+                payrollOwner = null;
+                payrollIncome = [];
+                payrollSyncedAt = 0;
+            }
+            status($('assets-payroll-status'), `給与を取得できませんでした：${error instanceof Error ? error.message : '通信エラー'}。${lastVerified ? '最終成功時の給与はこのタブに保持しましたが、予測から除外しています。' : '設定から再接続できます。'}`, true);
             if (getVault()?.unlocked) {
                 renderAccounts();
                 renderPayroll();
@@ -784,6 +804,8 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             payrollSynced = false;
             payrollOwner = null;
             payrollSyncedAt = 0;
+            payrollStale = false;
+            payrollUseStale = false;
             $('assets-payroll-secret').value = '';
             status($('assets-payroll-status'), 'Payroll連携を解除し、Financeの暗号化設定からパスフレーズを削除しました。');
             renderAccounts();
@@ -915,6 +937,12 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
     $('assets-payroll-deposit-form').addEventListener('submit', event => { event.preventDefault(); void savePayrollDeposit(); });
     $('assets-payroll-deposit').addEventListener('change', () => { payrollAccountDirty = true; });
     $('assets-payroll-forget').addEventListener('click', () => { void forgetPayroll(); });
+    $('assets-payroll-use-stale').addEventListener('change', event => {
+        payrollUseStale = event.target.checked && payrollStale && payrollOwner === getVault();
+        renderAccounts();
+        renderPayroll();
+        onPayrollChange();
+    });
     choices($('assets-recurring-from'), ASSET_ACCOUNTS.map(x => ({ value: x.id, label: x.name })));
     choices($('assets-recurring-to'), ASSET_ACCOUNTS.map(x => ({ value: x.id, label: x.name })));
     choices($('assets-recurring-day'), [{ value: '0', label: '末日' }, ...Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: `${i + 1}日` }))]);
@@ -974,7 +1002,7 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
                 return false;
             return openRecurringEditor(match);
         }, refreshPayroll, payrollSnapshot: () => {
-            const ready = !!getVault()?.unlocked && payrollSynced && payrollOwner === getVault();
+            const ready = !!getVault()?.unlocked && payrollOwner === getVault() && (payrollSynced || (payrollStale && payrollUseStale));
             return ready ? { ready: true, syncedAt: payrollSyncedAt, entries: structuredClone(payrollIncome) } : { ready: false, syncedAt: null, entries: [] };
         }, reset: () => {
             resetForm();
@@ -990,9 +1018,12 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             payrollSyncedAt = 0;
             lastPayrollAttemptAt = 0;
             payrollOwner = null;
+            payrollStale = false;
+            payrollUseStale = false;
             $('assets-payroll-secret').value = '';
             $('assets-payroll-count').textContent = '0件';
             $('assets-payroll-last').textContent = '未同期';
+            $('assets-payroll-stale').classList.add('hidden');
             status($('assets-payroll-status'), '');
             for (const account of ASSET_ACCOUNTS)
                 amounts.get(account.id).value = '';

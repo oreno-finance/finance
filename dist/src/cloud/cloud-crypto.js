@@ -16,14 +16,14 @@ function b64(bytes) { let s = ''; for (let i = 0; i < bytes.length; i += 16384)
 function un64(text) { if (typeof text !== 'string' || text.length > 220_000_000)
     throw new Error('暗号データが不正です。'); return new Uint8Array(Uint8Array.from(atob(text), c => c.charCodeAt(0))); }
 export function freshSalt() { return b64(crypto.getRandomValues(new Uint8Array(16))); }
-export async function deriveCloudKey(passphrase, salt, extractable = false) {
+export async function deriveCloudKey(passphrase, salt) {
     if (!passphrase)
         throw new Error('パスフレーズを入力してください。');
     const bytes = un64(salt);
     if (bytes.length !== 16)
         throw new Error('暗号化ソルトが不正です。');
     const base = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
-    return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: bytes, iterations: ITERATIONS, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, extractable, ['encrypt', 'decrypt']);
+    return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: bytes, iterations: ITERATIONS, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
 }
 export async function encryptDocument(document, key, salt) {
     const iv = crypto.getRandomValues(new Uint8Array(12));

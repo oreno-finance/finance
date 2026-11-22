@@ -47,10 +47,10 @@ test('empty import hides Step 02, Step 03 and Save until draft or error is prese
   const css=read('public/styles/import-v192.css');
   assert.match(css,/#import-view:not\(\.has-import-drafts\)>\.results-grid,\s*#import-view:not\(\.has-import-drafts\)>\.batch-bar\{display:none!important\}/);
   const state=functionBlock(main,'function buildStatementList(): void','function discardImportDraft(');
-  assert.match(state,/importQueue\(\)\.length>0 \|\| failedImports\.length>0/);
+  assert.match(state,/const hasDrafts=importQueue\(\)\.length>0/);
   assert.match(state,/classList\.toggle\('has-import-drafts',hasDrafts\)/);
-  assert.match(state,/if\(!hasDrafts\).*entry-accordion/);
-  for(const node of ['entry-accordion','batch-bar','results-grid','preview-empty','preview-content'])
+  assert.match(state,/\$\('import-inline-entry'\)\.classList\.toggle\('hidden',compact\)/);
+  for(const node of ['import-inline-entry','import-add-dialog','batch-bar','results-grid','preview-empty','preview-content'])
     assert.match(html,new RegExp(`(?:id="${node}"|class="[^"]*${node})`));
 });
 

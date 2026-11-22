@@ -4,6 +4,15 @@
  * PDFs are not sent to an API and are not persisted by this prototype.
  */
 import { parseStatementText } from './statement-parser.js';
+export const MAX_PDF_BYTES = 15 * 1024 * 1024;
+export const MAX_PDF_PAGES = 80;
+/** Limits protect the device before parsing, and prevent an unbounded page walk. */
+export function assertPdfLimits(size, pages) {
+    if (!Number.isSafeInteger(size) || size < 1 || size > MAX_PDF_BYTES)
+        throw new Error(`PDFは15MB以下のファイルを選択してください。`);
+    if (pages !== undefined && (!Number.isSafeInteger(pages) || pages < 1 || pages > MAX_PDF_PAGES))
+        throw new Error(`PDFは80ページ以下のファイルを選択してください。`);
+}
 function joinPageItems(items) {
     const tokens = items.filter((it) => 'str' in it && !!it.str?.trim() && Array.isArray(it.transform))
         .map(t => ({ value: t.str, x: t.transform[4] ?? 0, y: t.transform[5] ?? 0, width: t.width ?? 0 }));
@@ -30,6 +39,7 @@ function joinPageItems(items) {
     }).filter(Boolean);
 }
 export async function parsePdfFile(file) {
+    assertPdfLimits(file.size);
     let lib;
     try {
         // Keep PDF.js and its worker the same pinned version, hosted in this project.
@@ -42,13 +52,16 @@ export async function parsePdfFile(file) {
     lib.GlobalWorkerOptions.workerSrc = new URL('../../vendor/pdfjs/pdf.worker.mjs', import.meta.url).href;
     const task = lib.getDocument({
         data: new Uint8Array(await file.arrayBuffer()),
+        isEvalSupported: false,
         useSystemFonts: true,
         cMapUrl: new URL('../../vendor/pdfjs/cmaps/', import.meta.url).href,
         cMapPacked: true,
         standardFontDataUrl: new URL('../../vendor/pdfjs/standard_fonts/', import.meta.url).href,
+        wasmUrl: new URL('../../vendor/pdfjs/wasm/', import.meta.url).href,
     });
     const pdf = await task.promise;
     try {
+        assertPdfLimits(file.size, pdf.numPages);
         const pages = [];
         for (let page = 1; page <= pdf.numPages; page++) {
             const text = await (await pdf.getPage(page)).getTextContent();

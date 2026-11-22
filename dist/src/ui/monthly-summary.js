@@ -276,7 +276,6 @@ export function initMonthlySummary(deps) {
         }
         if (report.recurringSalaryExcluded)
             alert.append(element('p', '', `給与に見える定期収入${report.recurringSalaryExcluded}件は、Payrollとの二重計上を防ぐため除外しました。`));
-        alert.append(element('p', '', '定期入出金は登録内容に基づく予定です。銀行での入出金完了を確認した実績ではありません。'));
         main.append(alert);
         main.append(pointBenefitsSection('獲得ポイント', monthlyPointBenefits(period, source)));
         // Bank cash flow is separate from whole-household monthly income/expense.

@@ -164,8 +164,11 @@ export function parseCardCsv(text, filename, paymentDate) {
             throw new Error('CSVの請求合計より後ろに未対応の行があります。');
     }
     const rows = [], warnings = [];
+    let hasInstallmentOrNonSinglePayment = false;
     for (const [index, record] of records.slice(transactionStart, totalIndex).entries()) {
-        if (record.length < 6 || record.slice(6).some(cell => cell.trim()))
+        // Vpass column 7 is an optional remarks field (store detail, refund, FX or installment info).
+        // Columns after it must be empty: silently accepting unknown monetary columns is unsafe.
+        if (record.length < 6 || record.slice(7).some(cell => cell.trim()))
             throw new Error(`CSV ${transactionStart + index + 1}行目の列数が不正です。`);
         // A masked-card metadata line may follow a cashback or another charge.
         // It carries no billing amount; do not create an extra transaction or store PII.
@@ -178,6 +181,9 @@ export function parseCardCsv(text, filename, paymentDate) {
         const original = parseYen(record[2]);
         const paymentKind = normalize(record[3]).trim();
         const paymentCount = normalize(record[4]).trim();
+        const note = normalize(record[6] ?? '').trim();
+        if (note.length > 500)
+            throw new Error(`CSV ${transactionStart + index + 1}行目の備考が長すぎます（500文字以内）。`);
         // Point redemption/cashback is recorded as a negative billed amount with
         // the original amount, payment kind and count all blank.
         const adjustment = amount !== null && amount < 0 && record[2].trim() === '' && paymentKind === '' && paymentCount === '';
@@ -188,8 +194,11 @@ export function parseCardCsv(text, filename, paymentDate) {
         if (usedOn.slice(0, 4) !== meta.billingMonth.slice(0, 4) &&
             Math.abs((Number(usedOn.slice(0, 4)) - Number(meta.billingMonth.slice(0, 4)))) > 1)
             throw new Error(`CSV ${transactionStart + index + 1}行目の利用年が請求月から大きく離れています。`);
-        const description = (adjustment || (paymentKind === '1' && paymentCount === '1')) ? undefined :
+        const paymentDescription = (adjustment || (paymentKind === '1' && paymentCount === '1')) ? undefined :
             `支払区分 ${paymentKind} / 今回回数 ${paymentCount}（利用額 ${original.toLocaleString('ja-JP')}円）`;
+        if (paymentDescription)
+            hasInstallmentOrNonSinglePayment = true;
+        const description = [paymentDescription, note].filter(Boolean).join(' / ');
         rows.push({ id: rowId(rows.length), usedOn, merchant, amount, ...(description ? { description } : {}), sourceLine: transactionStart + index + 1 });
     }
     if (!rows.length)
@@ -197,7 +206,7 @@ export function parseCardCsv(text, filename, paymentDate) {
     const sum = rows.reduce((acc, row) => acc + row.amount, 0);
     if (!Number.isSafeInteger(sum) || sum !== total)
         throw new Error(`請求合計と明細合計が一致しません（CSV ${total.toLocaleString('ja-JP')}円／明細 ${sum.toLocaleString('ja-JP')}円）。`);
-    if (rows.some(row => row.description))
+    if (hasInstallmentOrNonSinglePayment)
         warnings.push('一部の取引は通常の1回払い以外です。支払区分と請求金額を確認してください。');
     const provider = meta.cardId === 'goldpoint' ? 'goldpoint' : 'smbc';
     return { provider, cardId: meta.cardId, sourceKind: 'csv', sourceName: filename, billingMonth: meta.billingMonth,

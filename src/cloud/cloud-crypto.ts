@@ -17,11 +17,11 @@ export const validDataSetId=(id:unknown):id is string=>typeof id==='string'&&/^[
 function b64(bytes:Uint8Array):string {let s='';for(let i=0;i<bytes.length;i+=16384)s+=String.fromCharCode(...bytes.subarray(i,i+16384));return btoa(s);}
 function un64(text:string):Uint8Array<ArrayBuffer> {if(typeof text!=='string'||text.length>220_000_000)throw new Error('暗号データが不正です。');return new Uint8Array(Uint8Array.from(atob(text),c=>c.charCodeAt(0)));}
 export function freshSalt():string{return b64(crypto.getRandomValues(new Uint8Array(16)));}
-export async function deriveCloudKey(passphrase:string,salt:string,extractable=false):Promise<CryptoKey> {
+export async function deriveCloudKey(passphrase:string,salt:string):Promise<CryptoKey> {
   if(!passphrase)throw new Error('パスフレーズを入力してください。');
   const bytes=un64(salt);if(bytes.length!==16)throw new Error('暗号化ソルトが不正です。');
   const base=await crypto.subtle.importKey('raw',enc.encode(passphrase),'PBKDF2',false,['deriveKey']);
-  return crypto.subtle.deriveKey({name:'PBKDF2',salt:bytes,iterations:ITERATIONS,hash:'SHA-256'},base,{name:'AES-GCM',length:256},extractable,['encrypt','decrypt']);
+  return crypto.subtle.deriveKey({name:'PBKDF2',salt:bytes,iterations:ITERATIONS,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
 }
 export async function encryptDocument(document:CloudDocument,key:CryptoKey,salt:string):Promise<string> {
   const iv=crypto.getRandomValues(new Uint8Array(12));

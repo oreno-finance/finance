@@ -606,11 +606,14 @@ body{overflow:hidden}
 .cloud-status-cell>span{display:block;color:var(--muted);font-size:11px;font-weight:670;margin-bottom:8px}
 .cloud-status-cell .cloud-account,.cloud-status-cell .cloud-probe-result{margin:0;background:none;border:0;border-radius:0;padding:0;min-width:0;color:var(--ink);font-size:13px;font-weight:740;line-height:1.7}
 .cloud-overview .cloud-status{margin:0 0 18px;padding:10px 13px;border-radius:8px;font-size:11px}
-.cloud-primary-actions{display:flex;flex-wrap:wrap;align-items:center;gap:9px}
-.cloud-primary-actions button{padding:10px 15px;min-height:41px;border-radius:9px;font-size:12px}
-.cloud-primary-actions .cloud-link-action{margin-left:auto;border:0;background:none;color:var(--muted);font:inherit;font-size:11px;font-weight:650;cursor:pointer}
-.cloud-primary-actions .cloud-link-action:hover{color:var(--ink);text-decoration:underline}
-.cloud-primary-actions .cloud-link-action:disabled{opacity:.42;cursor:default;text-decoration:none}
+/* Frequent actions are a predictable grid; account changes live on a separate row. */
+.cloud-primary-actions{display:grid;grid-template-columns:minmax(0,1.5fr) repeat(2,minmax(0,1fr));gap:9px;align-items:stretch}
+.cloud-primary-actions button{min-width:0;width:100%;min-height:41px;padding:10px 12px;border-radius:9px;font-size:12px;white-space:normal;overflow-wrap:anywhere;line-height:1.45}
+.cloud-account-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px 18px;flex-wrap:wrap;padding:6px 0 0;margin-top:7px}
+.cloud-account-actions .cloud-link-action{appearance:none;border:0;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:650;line-height:1.5;padding:5px 0;cursor:pointer}
+.cloud-account-actions .cloud-link-action:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
+.cloud-account-actions .cloud-link-action:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:3px}
+.cloud-account-actions .cloud-link-action:disabled{opacity:.42;cursor:default;text-decoration:none}
 .cloud-explainer{display:flex;align-items:flex-start;gap:10px;padding:16px 5px;margin:3px 0 18px;color:var(--muted)}
 .cloud-explainer>span{font-size:19px;line-height:1.4;color:var(--accent)}
 .cloud-explainer p{margin:0;font-size:12px;line-height:1.75}
@@ -645,13 +648,19 @@ body{overflow:hidden}
   .cloud-overview-label{font-size:10px}
   .cloud-overview-info{grid-template-columns:1fr;gap:10px}
   .cloud-status-cell{padding:12px 14px}
-  .cloud-primary-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
-  .cloud-primary-actions button{min-width:0;width:100%;margin:0}
-  .cloud-primary-actions .cloud-link-action{grid-column:1/-1;width:auto;text-align:center}
+  .cloud-primary-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cloud-primary-actions #cloud-login{grid-column:1/-1}
+  .cloud-account-actions{justify-content:flex-start}
+  .cloud-account-actions .cloud-link-action{min-height:40px;padding:9px 0}
   .cloud-advanced>summary{padding:15px 13px}
   .cloud-advanced-content{padding:3px 11px 13px}
   .cloud-advanced-content .cloud-panel{padding:16px}
   .cloud-advanced .cloud-button{min-width:0;width:100%}
+}
+
+@media(min-width:681px) and (max-width:1150px){
+  .cloud-primary-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cloud-primary-actions #cloud-login{grid-column:1/-1}
 }
 
 /* Blank import state: no 550px archival list when everything is committed. */
@@ -1034,3 +1043,47 @@ body{overflow:hidden}
 .assets-payroll-auto-option span{min-width:0;flex:1}
 .assets-payroll-auto-option strong{display:block;font-size:12px}
 .assets-payroll-auto-option small{display:block;margin-top:4px;color:var(--muted);font-size:10.5px;line-height:1.6}
+
+/* Opt-in browser key: one choice during unlock, one contextual action in settings. */
+.vault-retention-options{border:0;padding:0;margin:14px 0 6px;min-width:0}
+.vault-retention-options legend{font-size:12px;font-weight:750;color:var(--ink);margin-bottom:8px;padding:0}
+.vault-retention-options .vault-tab-option{margin:0 0 7px;padding:10px 12px;align-items:center}
+.vault-retention-options .vault-tab-option:has(input:checked){border-color:var(--accent);background:var(--accent-bg)}
+.vault-retention-options .vault-tab-option:focus-within{outline:2px solid var(--accent);outline-offset:1px}
+.vault-retention-options .vault-tab-option strong{font-size:12px}
+.vault-retention-options .vault-tab-option small{font-size:11px}
+.vault-retention-help{font-size:11px;line-height:1.55;color:var(--muted);margin:7px 0 0}
+.cloud-remember-controls{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:14px 0 0;border-top:1px solid var(--border,rgba(115,133,160,.24));margin-top:14px}
+.cloud-remember-copy{flex:1 1 270px;min-width:0}
+.cloud-remember-controls strong{font-size:13px}
+.cloud-remember-controls p{margin:5px 0 0;font-size:12px;line-height:1.6;color:var(--ink)}
+.cloud-remember-copy small{display:block;margin-top:5px;font-size:11px;line-height:1.5;color:var(--muted)}
+.cloud-remember-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+/* The shared cloud-link-action rules only apply inside .cloud-primary-actions.
+   This settings control must be fully styled in *both* remembered states. */
+.cloud-remember-actions button{
+  appearance:none;display:inline-flex;align-items:center;justify-content:center;
+  width:auto;min-height:40px;max-width:100%;padding:9px 15px;
+  border:1px solid var(--line);border-radius:9px;background:var(--panel);
+  color:var(--ink);font:inherit;font-size:12px;font-weight:700;line-height:1.45;
+  text-align:center;white-space:normal;cursor:pointer;
+  transition:background-color 150ms ease,border-color 150ms ease,color 150ms ease;
+}
+.cloud-remember-actions #cloud-remember-register{
+  color:var(--accent);background:var(--accent-bg);border-color:var(--accent);
+}
+.cloud-remember-actions #cloud-remember-register:hover{background:var(--panel);border-color:var(--accent)}
+.cloud-remember-actions #cloud-remember-forget:hover{background:var(--bg);border-color:var(--muted)}
+.cloud-remember-actions button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.cloud-remember-actions button:disabled{opacity:.5;cursor:not-allowed}
+@media(max-width:600px){.cloud-remember-actions{width:100%}.cloud-remember-actions button{width:100%}}
+@media(prefers-reduced-motion:reduce){.cloud-remember-actions button{transition:none}}
+
+/* Finance MSAL status: kept separate from financial-vault lock state. */
+.cloud-auth-state{margin:5px 0 0;font-size:12px;color:var(--muted);font-weight:650}
+.cloud-auth-state[data-state="reauth"]{color:var(--warning,#b7791f)}
+.cloud-auth-state[data-state="temporary"]{color:var(--warning,#b7791f)}
+
+/* Finance v1.9.31: stale Payroll preview is never silently treated as current. */
+.assets-payroll-stale {display:flex;align-items:flex-start;gap:.55rem;margin-top:.7rem;font-size:.9rem;line-height:1.5;}
+.assets-payroll-stale input {flex:none;margin-top:.3rem;}

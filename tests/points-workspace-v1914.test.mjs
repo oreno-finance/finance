@@ -48,13 +48,14 @@ test('明細管理は手動保存のみ。下書きを切り替えても自動�
  assert.doesNotMatch(dirty,/saveEditedStatement|saveBatch|setTimeout/);
  assert.doesNotMatch(main,/autoSaveTimer/);
  assert.match(main,/\$\('manage-save'\)\.addEventListener\('click',[\s\S]*saveEditedStatement\(s,true\)/);
- assert.match(main,/pending\(\)\.some\(s=>!importStaged\.has\(s\)\)/);
+ assert.match(main,/if\(pending\(\)\.length\|\|failedImports\.length\)unsaved\.push/);
  assert.match(html,/id="manage-points"/);
  assert.match(css,/td\[data-label="利用日"\] input\{width:116px/);
 });
-test('取込下書きがある場合はアップロード欄が閉じ、リストと明細が個別スクロール',()=>{
- assert.match(html,/<details id="entry-accordion" open>/);
- assert.match(main,/\$<HTMLDetailsElement>\('entry-accordion'\)\.open=false/);
+test('取込下書きがある場合はアップロード欄が非表示となり、モーダルで追加できる',()=>{
+ assert.match(html,/id="import-inline-entry"/);
+ assert.match(html,/id="import-add-dialog"/);
+ assert.match(main,/\$\('import-inline-entry'\)\.classList\.toggle\('hidden',compact\)/);
  assert.match(main,/classList\.toggle\('has-import-drafts',hasDrafts\)/);
  assert.match(css,/\.statement-index-panel>\.statement-list\{flex:1 1 auto!important/);
  assert.match(css,/\.transactions-panel-inner>\.table-scroll\{display:block!important;flex:1 1 0!important;min-height:0!important/);

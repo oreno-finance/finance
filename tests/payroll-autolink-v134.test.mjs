@@ -94,8 +94,7 @@ test('Payroll controls live in app settings and auto refresh is initiated after 
   assert.ok(!html.includes('id="assets-payroll-remember"'));
   assert.ok(!html.includes('id="assets-payroll-auto-status"'));
   assert.ok(!html.includes('id="assets-payroll-months"'));
-  assert.match(main,/await liveVault\.unlockTab[\s\S]*?void assetsUi\?\.refreshPayroll\(\)/);
-  assert.match(main,/await liveVault\.unlock\(pass,keepTab\)[\s\S]*?void assetsUi\?\.refreshPayroll\(\)/);
+  assert.match(main,/await liveVault\.unlock\(pass\)[\s\S]*?void assetsUi\?\.refreshPayroll\(\)/);
   assert.match(code,/window\.setInterval\(\(\)=>\{if\(!document\.hidden\)void refreshPayroll\(\);\},10\*60\*1000\)/);
   assert.match(code,/if\(action!==undefined\)await vault\.setPayrollAutoPassphrase\(action\)/);
 });

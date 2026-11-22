@@ -1,0 +1,48 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,rm,mkdir,readFile,writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {japanBuildDate,stampHtml,stampAppMeta} from '../scripts/stamp-app-meta.mjs';
+
+const row='<div class="sidebar-meta"><span>Finance v1.9.11</span><time id="app-updated-at" datetime="2026-11-19">更新 2026/11/19 JST</time></div>';
+
+test('build stamp always uses the package version and JST date, not the stale sidebar literals',()=>{
+  assert.equal(japanBuildDate(new Date('2026-11-21T15:10:00Z')),'2026-11-22');
+  assert.equal(japanBuildDate(new Date('2026-11-21T14:59:00Z')),'2026-11-21');
+  const transformed=stampHtml(row,'1.9.39','2026-11-22');
+  assert.match(transformed,/Finance v1\.9\.39/);
+  assert.match(transformed,/datetime="2026-11-22">更新 2026\/11\/22 JST/);
+  assert.equal(stampHtml(transformed,'1.9.39','2026-11-22'),transformed);
+});
+
+test('stamping rejects missing or duplicate sidebar rows to avoid silently shipping stale metadata',()=>{
+  assert.throws(()=>stampHtml('<main></main>','1.9.39','2026-11-22'),/検出0件/);
+  assert.throws(()=>stampHtml(row+row,'1.9.39','2026-11-22'),/検出2件/);
+  assert.throws(()=>stampHtml(row,'<script>','2026-11-22'),/形式が不正/);
+});
+
+test('build stamps from package.json without changing non-metadata markup and keeps repeated builds stable',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'finance-build-meta-'));
+  try{
+    await mkdir(join(root,'public'));
+    await writeFile(join(root,'package.json'),JSON.stringify({version:'1.9.39'}));
+    await writeFile(join(root,'public/index.html'),`<html>${row}<main>Keep UI unchanged</main></html>`);
+    const first=await stampAppMeta(root,new Date('2026-11-21T16:00:00Z'));
+    assert.deepEqual(first,{version:'1.9.39',day:'2026-11-22',changed:true});
+    const second=await stampAppMeta(root,new Date('2026-11-21T16:00:00Z'));
+    assert.equal(second.changed,false);
+    const markup=await readFile(join(root,'public/index.html'),'utf8');
+    assert.match(markup,/<main>Keep UI unchanged<\/main>/);
+    assert.match(markup,/Finance v1\.9\.39/);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('built source and publication carry the same version and day',async()=>{
+  const pkg=JSON.parse(await readFile(new URL('../package.json',import.meta.url),'utf8'));
+  const source=await readFile(new URL('../public/index.html',import.meta.url),'utf8');
+  const dist=await readFile(new URL('../dist/index.html',import.meta.url),'utf8');
+  assert.match(source,new RegExp(`Finance v${pkg.version.replaceAll('.','\\.')}`));
+  assert.match(source,/datetime="\d{4}-\d{2}-\d{2}">更新 \d{4}\/\d{2}\/\d{2} JST/);
+  assert.equal(source,dist);
+});

@@ -3,27 +3,59 @@ import { OneDriveTestClient, GraphError } from './onedrive-api.js';
 import { clearPasswordField } from '../ui/password-fields.js';
 import { showActivity, simpleActivity } from '../ui/activity-feedback.js';
 import { diagnoseVaultFiles } from './vault-diagnostics.js';
+import { classifyMicrosoftAuthError, selectMicrosoftAccount, coalesceSilentToken, type MicrosoftAuthFailure } from './msal-auth.js';
 const CLIENT_KEY='finance-onedrive-public-client-id-v1';
+const ACCOUNT_KEY='finance-msal-selected-account-v1:';
 const SCOPES=['Files.ReadWrite.AppFolder'];
 interface MsalAccount {homeAccountId:string;username?:string}
 interface MsalResult {account:MsalAccount|null;accessToken:string}
 interface MsalInstance {
   initialize():Promise<void>;handleRedirectPromise():Promise<MsalResult|null>;
-  getAllAccounts():MsalAccount[];getActiveAccount():MsalAccount|null;setActiveAccount(a:MsalAccount):void;
-  loginRedirect(r:{scopes:string[];prompt?:string}):Promise<void>;
-  acquireTokenSilent(r:{scopes:string[];account:MsalAccount}):Promise<MsalResult>;
+  getAllAccounts():MsalAccount[];getActiveAccount():MsalAccount|null;setActiveAccount(a:MsalAccount|null):void;
+  loginRedirect(r:{scopes:string[];prompt?:string;loginHint?:string}):Promise<void>;
+  acquireTokenSilent(r:{scopes:string[];account:MsalAccount;forceRefresh?:boolean}):Promise<MsalResult>;
   acquireTokenRedirect(r:{scopes:string[];account:MsalAccount}):Promise<void>;
   logoutRedirect(r:{account:MsalAccount;postLogoutRedirectUri:string}):Promise<void>;
 }
 interface MsalModule {PublicClientApplication:new(config:object)=>MsalInstance}
 const $=<T extends HTMLElement>(id:string):T=>{const node=document.getElementById(id);if(!node)throw new Error(`Missing cloud element #${id}`);return node as T;};
-const redirectUri=()=>window.location.origin+window.location.pathname;
+// MSAL v5 needs a dedicated static redirect bridge. The app itself must not
+// execute inside a silent-auth iframe or popup.
+const appUri=()=>window.location.origin+window.location.pathname;
+const redirectUri=()=>new URL('auth-bridge.html',new URL('./',window.location.href)).href;
 const validId=(v:string)=>/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.trim());
 let msal:MsalInstance|null=null;
+let selectedAccount:MsalAccount|null=null;
 let initializing:Promise<MsalInstance>|null=null;
 let activeId='';let busy=false;let verified=false;
-let reauthenticationRequired=false; /* finance-v146-noninteractive-check */
-const account=():MsalAccount|null=>msal?.getActiveAccount()??msal?.getAllAccounts()[0]??null;
+type AuthState='checking'|'connected'|'temporary'|'reauth'|'not-connected';
+let authState:AuthState='not-connected';
+let reauthenticationRequired=false;
+const tokenJobs=new Map<string,Promise<string>>();
+const account=():MsalAccount|null=>selectedAccount;
+function priorAccountId(clientId:string):string|null {
+  try{return window.localStorage.getItem(ACCOUNT_KEY+clientId);}catch{return null;}
+}
+function rememberAccount(clientId:string,selected:MsalAccount):void {
+  // homeAccountId is an opaque account selector, never a password or token.
+  try{window.localStorage.setItem(ACCOUNT_KEY+clientId,selected.homeAccountId);}catch{/* storage denied */}
+}
+function authStateText():string {
+  if(authState==='checking')return '接続を確認中';
+  if(authState==='temporary')return '一時的に接続できない';
+  if(authState==='reauth')return 'Microsoftアカウントの再認証が必要';
+  if(authState==='connected')return 'OneDriveに接続済み';
+  return 'Microsoftアカウントが未接続';
+}
+function authErrorMessage(kind:MicrosoftAuthFailure):string {
+  switch(kind){
+    case 'interaction': return 'Microsoftアカウントの再認証が必要です。「再接続」を押してください。';
+    case 'network': return 'ネットワークに接続できません。接続を確認して再試行してください。';
+    case 'timeout': return 'Microsoft認証の確認が時間内に完了しませんでした。再試行してください。';
+    case 'server': return 'Microsoft認証サービスに一時的な障害があります。再試行してください。';
+    default: return 'Microsoft認証を確認できませんでした。接続状態を確認してください。';
+  }
+}
 function status(text:string,kind:'ok'|'error'|'neutral'='neutral') {
   const el=$('cloud-status');
   el.textContent='';
@@ -36,6 +68,7 @@ function updateUi():void {
   // A cached MSAL account is not proof of a working token or the intended OneDrive account.
   // Keep explicit reconnect available even if the cached account looks connected.
   $('cloud-login').toggleAttribute('disabled',busy);
+  $('cloud-switch-account').toggleAttribute('disabled',busy);
   $('cloud-login').textContent=connected?'Microsoftアカウントを再接続':'Microsoftアカウントで接続';
   $('cloud-logout').toggleAttribute('disabled',busy||!connected);
   $('cloud-folder-check').toggleAttribute('disabled',busy||!connected);
@@ -44,61 +77,89 @@ function updateUi():void {
   $('cloud-upload').toggleAttribute('disabled',busy||!connected);
   $('cloud-download').toggleAttribute('disabled',busy||!connected);
   $('cloud-account').textContent=connected?(account()?.username||'Microsoftアカウント'):'';
+  const state=$('cloud-auth-state');state.textContent=authStateText();
+  state.dataset.state=authState;
 }
 async function ensureMsal():Promise<MsalInstance> {
   const id=$<HTMLInputElement>('cloud-client-id').value.trim();
   if(!validId(id))throw new Error('Microsoft Entraで取得したClient IDを設定してください。');
   if(msal&&activeId===id)return msal;
   if(initializing)return initializing;
+  authState='checking';updateUi();
   initializing=(async()=>{
     let lib:MsalModule;
     try {const url=new URL('../../vendor/msal/msal-browser.bundle.js',import.meta.url).href;lib=await import(url) as MsalModule;}
     catch {throw new Error('認証ライブラリの読み込みに失敗しました。npm install → npm run build を確認してください。');}
     const instance=new lib.PublicClientApplication({
-      auth:{clientId:id,authority:'https://login.microsoftonline.com/consumers',redirectUri:redirectUri(),postLogoutRedirectUri:redirectUri(),navigateToLoginRequestUrl:false},
-      cache:{cacheLocation:'sessionStorage'},
+      auth:{clientId:id,authority:'https://login.microsoftonline.com/consumers',redirectUri:redirectUri(),postLogoutRedirectUri:appUri(),navigateToLoginRequestUrl:false},
+      cache:{cacheLocation:'localStorage'},
     });
     await instance.initialize();
     const redirect=await instance.handleRedirectPromise();
-    const active=redirect?.account??instance.getActiveAccount()??instance.getAllAccounts()[0];
-    if(active)instance.setActiveAccount(active);
+    const active=selectMicrosoftAccount(instance.getAllAccounts(),redirect?.account??null,
+      priorAccountId(id),instance.getActiveAccount());
+    instance.setActiveAccount(active);
+    selectedAccount=active;
+    if(active)rememberAccount(id,active);
     msal=instance;activeId=id;verified=false;
+    authState=active?'checking':'not-connected';
     return instance;
   })();
   try{return await initializing;}finally{initializing=null;}
 }
-export async function graphClient():Promise<OneDriveTestClient> {
-  const instance=await ensureMsal();const user=account();
-  if(!user)throw new Error('まずOneDrive接続画面からMicrosoftアカウントにログインしてください。');
-  try {
-    const token=await instance.acquireTokenSilent({scopes:SCOPES,account:user});
-    reauthenticationRequired=false;
-    updateUi();
-    return new OneDriveTestClient(token.accessToken);
-  } catch {
-    reauthenticationRequired=true;
-    updateUi();
-    status('Microsoftアカウントの再認証が必要です。');
-    if(!window.confirm('認証情報の更新が必要です。未保存の編集内容を確認してからMicrosoftログインへ移動してください。続行しますか？'))throw new Error('認証をキャンセルしました。');
-    await instance.acquireTokenRedirect({scopes:SCOPES,account:user});
-    throw new Error('Microsoft認証画面へ移動しています。');
-  }
+/** Coalesce requests for the same account/refresh mode. The MSAL cache handles
+ * token lifetime; a Finance Graph client never persists a token string. */
+async function silentToken(instance:MsalInstance,user:MsalAccount,forceRefresh=false):Promise<string> {
+  if(account()?.homeAccountId!==user.homeAccountId)throw new Error('Microsoftアカウントが切り替わりました。再接続してください。');
+  const requestId=`${activeId}:${user.homeAccountId}:${forceRefresh?'refresh':'cached'}`;
+  return coalesceSilentToken(tokenJobs,requestId,async()=>{
+    let result:MsalResult;
+    try{
+      result=await instance.acquireTokenSilent({scopes:SCOPES,account:user,...(forceRefresh?{forceRefresh:true}:{})});
+    }catch(error){
+      const kind=classifyMicrosoftAuthError(error);
+      reauthenticationRequired=kind==='interaction';
+      authState=kind==='interaction'?'reauth':'temporary';
+      updateUi();
+      throw new Error(authErrorMessage(kind));
+    }
+    if(account()?.homeAccountId!==user.homeAccountId||
+       (result.account&&result.account.homeAccountId!==user.homeAccountId))
+      throw new Error('Microsoftアカウントが切り替わりました。再接続してください。');
+    reauthenticationRequired=false;authState='connected';updateUi();
+    return result.accessToken;
+  });
 }
-/** This explicit check never opens a login screen or changes the account. */
+
+/** No redirect from data operations, including background startup or writes.
+ * Only user-initiated explicit connection actions may start an interactive flow. */
 export async function graphClientWithoutRedirect():Promise<OneDriveTestClient> {
-  const instance=await ensureMsal();
-  const current=account();
-  if(!current)throw new Error('Microsoftアカウントが未接続です。上の「接続」からログインしてください。');
-  try {
-    const token=await instance.acquireTokenSilent({scopes:SCOPES,account:current});
-    reauthenticationRequired=false;
-    return new OneDriveTestClient(token.accessToken);
-  }catch {
-    reauthenticationRequired=true;
-    updateUi();
-    throw new Error('Microsoftアカウントの認証を確認できません。必要な場合は「Microsoftアカウントを再接続」を選択してください。');
-  }
+  const instance=await ensureMsal();const selected=account();
+  if(!selected){authState='not-connected';updateUi();throw new Error('Microsoftアカウントが未接続です。設定の「接続」からログインしてください。');}
+  const clientId=activeId;
+  const provider=async(forceRefresh=false):Promise<string>=>{
+    if(clientId!==activeId||account()?.homeAccountId!==selected.homeAccountId)
+      throw new Error('Microsoftアカウントが切り替わりました。データをロックして再接続してください。');
+    const token=await silentToken(instance,selected,forceRefresh);
+    if(clientId!==activeId||account()?.homeAccountId!==selected.homeAccountId)
+      throw new Error('Microsoftアカウントが切り替わりました。データをロックして再接続してください。');
+    return token;
+  };
+  await provider();
+  return new OneDriveTestClient(provider,undefined,()=>{
+    reauthenticationRequired=true;authState='reauth';updateUi();
+  });
 }
+/** Kept for existing callers. No unattended redirects from financial operations. */
+export async function graphClient():Promise<OneDriveTestClient> {
+  return graphClientWithoutRedirect();
+}
+/** Stable MSAL account identity for local key binding; never persist its raw value. */
+export function activeMicrosoftAccountId():string|null {
+  const id=$<HTMLInputElement>('cloud-client-id').value.trim();
+  return msal&&activeId===id?(account()?.homeAccountId??null):null;
+}
+
 export type CloudConnectPrompt = 'setup' | 'connect' | 'reconnect' | null;
 /** Only offer login after the account state is known; network failures are not sign-out. */
 export function cloudConnectPrompt():CloudConnectPrompt {
@@ -108,7 +169,7 @@ export function cloudConnectPrompt():CloudConnectPrompt {
   if(!account())return 'connect';
   return reauthenticationRequired?'reconnect':null;
 }
-export interface CloudHandlers {hasUnsavedChanges():boolean;onRefresh():Promise<void>;onMigration():Promise<void>;onLock():boolean;onChangePassphrase(current:string,next:string,onProgress:(message:string)=>void):Promise<void>}
+export interface CloudHandlers {hasUnsavedChanges():boolean;canNavigate?():boolean;onRefresh():Promise<void>;onMigration():Promise<void>;onLock():boolean;onChangePassphrase(current:string,next:string,onProgress:(message:string)=>void):Promise<void>;onCleanupPreview():Promise<{generationCount:number;legacyFolderCount:number;unreferencedOriginalCount:number;legacyV1Count:number;snapshots:Array<{id:string;name:string;createdDateTime:string}>}>;onCleanupDelete(which:{oldGenerations:boolean;unreferencedOriginals:boolean;unversionedFolders:boolean;legacyV1:boolean;snapshotIds:string[]},onProgress:(message:string)=>void):Promise<number>}
 export function initCloudSettings(handlers:CloudHandlers):void {
   let id='';try{id=localStorage.getItem(CLIENT_KEY)??'';}catch{ /* private browsing */ }
   $<HTMLInputElement>('cloud-client-id').value=id;
@@ -137,15 +198,32 @@ export function initCloudSettings(handlers:CloudHandlers):void {
     }
     if(localStorage.getItem(CLIENT_KEY)!==value)throw new Error('先にClient IDを保存してください。');
     const instance=await ensureMsal();
-    if(handlers.hasUnsavedChanges() && !window.confirm('未保存の変更が失われます。続行しますか？'))return;
-    // Always allow selection of the intended account. No vault data is created or deleted.
+    const current=account();
+    // Re-use valid auth without navigating. A network failure never launches login.
+    if(current){
+      try{
+        await graphClientWithoutRedirect();
+        await handlers.onRefresh();
+        status('OneDriveに接続済みです。','ok');
+        return;
+      }catch(error){if(!reauthenticationRequired)throw error;}
+    }
+    if(handlers.canNavigate){if(!handlers.canNavigate())return;}
+    else if(handlers.hasUnsavedChanges() && !window.confirm('未保存の変更があります。認証画面へ移動しますか？'))return;
+    await instance.loginRedirect({scopes:SCOPES,...(current?.username?{loginHint:current.username}:{})});
+  });});
+  $('cloud-switch-account').addEventListener('click',()=>{void action(async()=>{
+    const instance=await ensureMsal();
+    if(!window.confirm('別のMicrosoftアカウントに切り替えますか？現在の保管庫をロックします。'))return;
+    if(!handlers.onLock())return;
+    // Only an explicit account switch asks Microsoft to show the selector.
     await instance.loginRedirect({scopes:SCOPES,prompt:'select_account'});
   });});
   $('cloud-logout').addEventListener('click',()=>{void action(async()=>{
     const user=account();if(!msal||!user)return;
     if(!window.confirm('Microsoftアカウントからサインアウトしますか？未保存の変更は失われます。'))return;
     if(!handlers.onLock())return;
-    await msal.logoutRedirect({account:user,postLogoutRedirectUri:redirectUri()});
+    await msal.logoutRedirect({account:user,postLogoutRedirectUri:appUri()});
   });});
   $('cloud-folder-check').addEventListener('click',()=>{void action(async()=>{
     const button=$<HTMLButtonElement>('cloud-folder-check');
@@ -186,19 +264,86 @@ export function initCloudSettings(handlers:CloudHandlers):void {
   });});
   $('cloud-upload').addEventListener('click',()=>{void action(async()=>{
     const input=$<HTMLInputElement>('cloud-passphrase');
+    try {
     if(input.value.length<12)throw new Error('テスト用パスフレーズは12文字以上で入力してください。');
     const {encrypted,probe}=await createEncryptedProbe(input.value);
     if(!window.confirm('金融データを含まない暗号化テストファイルをOneDriveに保存します。続行しますか？'))return;
     await (await graphClient()).uploadEncryptedProbe(encrypted);
     $('cloud-probe-result').textContent=`アップロード成功：${probe.createdAt} / ID ${probe.nonce}`;
     status('暗号化テストデータをアップロードしました。','ok');
+    } finally {clearPasswordField('cloud-passphrase');}
   });});
   $('cloud-download').addEventListener('click',()=>{void action(async()=>{
     const input=$<HTMLInputElement>('cloud-passphrase');
+    try {
     const probe=await decryptEncryptedProbe(await (await graphClient()).downloadEncryptedProbe(),input.value);
-    clearPasswordField('cloud-passphrase');
     $('cloud-probe-result').textContent=`復号成功：${probe.createdAt} / ID ${probe.nonce}`;
     status('OneDriveから暗号化ファイルを取得し、復号できました。','ok');
+    } finally {clearPasswordField('cloud-passphrase');}
+  });});
+  const cleanupScan=$<HTMLButtonElement>('cloud-cleanup-scan');
+  const cleanupDelete=$<HTMLButtonElement>('cloud-cleanup-delete');
+  const cleanupOptions=$('cloud-cleanup-options');
+  const cleanupResult=$('cloud-cleanup-result');
+  const oldGenerations=$<HTMLInputElement>('cloud-cleanup-versions');
+  const unreferencedOriginals=$<HTMLInputElement>('cloud-cleanup-originals');
+  const unversionedFolders=$<HTMLInputElement>('cloud-cleanup-legacy');
+  const legacyV1=$<HTMLInputElement>('cloud-cleanup-v1');
+  const snapshotList=$('cloud-cleanup-snapshot-list');
+  const backupConfirmed=$<HTMLInputElement>('cloud-cleanup-backup');
+  let cleanupCounts:{generationCount:number;legacyFolderCount:number;unreferencedOriginalCount:number;legacyV1Count:number;snapshots:Array<{id:string;name:string;createdDateTime:string}>}|null=null;
+  const selectedSnapshots=()=>Array.from(snapshotList.querySelectorAll<HTMLInputElement>('input[data-snapshot-id]:checked')).map(input=>input.dataset.snapshotId!);
+  function invalidateCleanup():void {
+    cleanupCounts=null;cleanupOptions.classList.add('hidden');cleanupDelete.disabled=true;
+    oldGenerations.checked=false;unreferencedOriginals.checked=false;unversionedFolders.checked=false;legacyV1.checked=false;backupConfirmed.checked=false;
+    snapshotList.replaceChildren();
+  }
+  function updateCleanupDelete():void {
+    cleanupDelete.disabled=!cleanupCounts||!backupConfirmed.checked||
+      !(oldGenerations.checked&&cleanupCounts.generationCount||unreferencedOriginals.checked&&cleanupCounts.unreferencedOriginalCount||unversionedFolders.checked&&cleanupCounts.legacyFolderCount||legacyV1.checked&&cleanupCounts.legacyV1Count||selectedSnapshots().length);
+  }
+  for(const checkbox of [oldGenerations,unreferencedOriginals,unversionedFolders,legacyV1,backupConfirmed])
+    checkbox.addEventListener('change',updateCleanupDelete);
+  snapshotList.addEventListener('change',updateCleanupDelete);
+  cleanupScan.addEventListener('click',()=>{void action(async()=>{
+    invalidateCleanup();cleanupResult.textContent='暗号化ファイルを確認中…';cleanupScan.disabled=true;
+    try {
+      const counts=await handlers.onCleanupPreview();
+      cleanupCounts=counts;
+      $('cloud-cleanup-original-count').textContent=`（${counts.unreferencedOriginalCount}件）`;
+      $('cloud-cleanup-version-count').textContent=`（${counts.generationCount}世代）`;
+      $('cloud-cleanup-legacy-count').textContent=`（${counts.legacyFolderCount}フォルダ）`;
+      $('cloud-cleanup-v1-count').textContent=`（${counts.legacyV1Count}件）`;
+      for(const item of counts.snapshots){
+        const label=document.createElement('label');label.className='rules-check';
+        const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.dataset.snapshotId=item.id;
+        label.append(checkbox,document.createTextNode(` ${item.createdDateTime.slice(0,10)} / ${item.name}`));
+        snapshotList.append(label);
+      }
+      if(!counts.snapshots.length)snapshotList.textContent='スナップショットはありません。';
+      unreferencedOriginals.disabled=counts.unreferencedOriginalCount===0;
+      oldGenerations.disabled=counts.generationCount===0;
+      unversionedFolders.disabled=counts.legacyFolderCount===0;
+      legacyV1.disabled=counts.legacyV1Count===0;
+      cleanupOptions.classList.remove('hidden');
+      cleanupResult.textContent='確認が完了しました。必要な種類だけ選択して削除できます。';
+      updateCleanupDelete();
+    }catch(error){cleanupResult.textContent=error instanceof Error?error.message:'確認に失敗しました。';throw error;}
+    finally{cleanupScan.disabled=false;}
+  });});
+  cleanupDelete.addEventListener('click',()=>{void action(async()=>{
+    if(!cleanupCounts||!backupConfirmed.checked)throw new Error('対象を調査し、バックアップを確認してください。');
+    const which={oldGenerations:oldGenerations.checked,unreferencedOriginals:unreferencedOriginals.checked,unversionedFolders:unversionedFolders.checked,legacyV1:legacyV1.checked,snapshotIds:selectedSnapshots()};
+    const count=(which.oldGenerations?cleanupCounts.generationCount:0)+
+      (which.unreferencedOriginals?cleanupCounts.unreferencedOriginalCount:0)+(which.unversionedFolders?cleanupCounts.legacyFolderCount:0)+(which.legacyV1?cleanupCounts.legacyV1Count:0)+which.snapshotIds.length;
+    if(!count)return;
+    if(window.prompt(`${count}件（世代フォルダはフォルダ単位）の暗号化データをOneDriveから削除します。復旧ができなくなる場合があります。実行するには「削除」と入力してください。`) !== '削除')return;
+    invalidateCleanup();cleanupScan.disabled=true;
+    try{
+      const removed=await handlers.onCleanupDelete(which,message=>{cleanupResult.textContent=message;});
+      cleanupResult.textContent=`${removed}件の削除が完了しました。必要なら再確認してください。`;
+    }catch(error){cleanupResult.textContent=error instanceof Error?error.message:'削除結果を確認できません。再度調べてください。';throw error;}
+    finally{cleanupScan.disabled=false;}
   });});
   $('cloud-rotate-form').addEventListener('submit',event=>{event.preventDefault();void action(async()=>{
     const current=$<HTMLInputElement>('cloud-current-secret').value;
@@ -214,6 +359,7 @@ export function initCloudSettings(handlers:CloudHandlers):void {
     message.className='cloud-status';
     try{
       await handlers.onChangePassphrase(current,next,text=>{message.textContent='';showActivity(text,'working');});
+      invalidateCleanup();
       for(const id of ['cloud-current-secret','cloud-next-secret','cloud-next-confirm'])clearPasswordField(id);
       message.textContent='';
       message.className='cloud-status ok';
@@ -235,6 +381,7 @@ export function initCloudSettings(handlers:CloudHandlers):void {
   // Passive startup must not set the global 'busy' flag, otherwise a stalled
   // MSAL initialization disables reconnect/diagnostics in Settings indefinitely.
   if(id&&validId(id))void ensureMsal().then(()=>updateUi()).catch(error=>{
+    authState='temporary';
     status(`認証ライブラリの初期化に失敗しました：${error instanceof Error?error.message:'不明なエラー'}`,'error');
     updateUi();
   });

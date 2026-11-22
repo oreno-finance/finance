@@ -4,7 +4,6 @@ import {webcrypto} from 'node:crypto';
 import {LiveVault} from '../dist/src/cloud/live-vault.js';
 import {GraphError} from '../dist/src/cloud/onedrive-api.js';
 import {parseIndexEnvelope, decryptIndex, deriveCloudKey} from '../dist/src/cloud/cloud-crypto.js';
-import {saveTabSession,readTabSession} from '../dist/src/cloud/tab-session.js';
 if(!globalThis.crypto)globalThis.crypto=webcrypto;
 const oldPass='correct horse battery staple old';
 const nextPass='correct horse battery staple NEW';
@@ -128,17 +127,16 @@ test('second rotation reencrypts again, preserves originals and invalidates prev
   assert.equal(newer.assetSettings().snapshots[0].balance,123456);
 });
 
-test('v1 tab session is invalid after rotation, v2 tab session can be kept only for its own generation',async()=>{
-  const {store,vault}=setup();await vault.create(oldPass,true);
-  const initial=await vault.exportTabKey();
+test('remembered browser key is invalid after rotation; a newly verified key is usable',async()=>{
+  const {store,vault}=setup();await vault.create(oldPass);
+  const initial=vault.verifiedBrowserKey();
+  assert.equal(initial.key.extractable,false);
   await vault.changePassphrase(oldPass,nextPass);
-  const oldTab=new LiveVault(new FakeVersionedGraph(store));
-  await assert.rejects(oldTab.unlockTab(initial.salt,initial.key,initial.dataSetId),/パスフレーズが変更/);
-  const newTab=new LiveVault(new FakeVersionedGraph(store));await newTab.unlock(nextPass,true);
-  const exported=await newTab.exportTabKey();
-  const another=new LiveVault(new FakeVersionedGraph(store));
-  await another.unlockTab(exported.salt,exported.key,exported.dataSetId);
-  assert.equal(another.unlocked,true);
+  const oldBrowser=new LiveVault(new FakeVersionedGraph(store));
+  await assert.rejects(oldBrowser.unlockBrowserKey(initial),/generation|変更/);
+  const newBrowser=new LiveVault(new FakeVersionedGraph(store));
+  await newBrowser.unlockBrowserKey(vault.verifiedBrowserKey());
+  assert.equal(newBrowser.unlocked,true);
 });
 
 test('password rotation UI is present and readable with masked password fields',async()=>{
