@@ -53,11 +53,11 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
   const root=document.getElementById('reports-content');if(!root)throw new Error('月次レポート画面がありません。');
   const container:HTMLElement=root;
   let selected=today();let loadedPeriod='';let archive:MonthlyReportDocument|null=null;
-  let periods:string[]=[];let busy=false;let message='';let draft='';let chosenRevision:string|null=null;
+  let periods:string[]=[];let busy=false;let saving=false;let message='';let draft='';let chosenRevision:string|null=null;
   let request=0;let changed=false;let loadFailed=false;let draftConflict=false;
   const drafts=new Map<string,{note:string;revision:string|null}>();
   const active=()=>deps.vault()?.unlocked===true;
-  function reset():void {++request;selected=today();loadedPeriod='';archive=null;periods=[];busy=false;message='';draft='';changed=false;loadFailed=false;draftConflict=false;chosenRevision=null;drafts.clear();container.replaceChildren();}
+  function reset():void {++request;selected=today();loadedPeriod='';archive=null;periods=[];busy=false;saving=false;message='';draft='';changed=false;loadFailed=false;draftConflict=false;chosenRevision=null;drafts.clear();container.replaceChildren();}
   async function fetch():Promise<void>{
     const vault=deps.vault();if(!vault?.unlocked)return;
     const id=++request;busy=true;message='';loadFailed=false;showActivity('月次レポートを読み込み中…','working');render();
@@ -75,15 +75,16 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
   }
   async function save():Promise<void>{
     const vault=deps.vault(),source=deps.source();if(!vault?.unlocked||!source||busy||loadFailed||draftConflict||loadedPeriod!==selected)return;
-    busy=true;message='';showActivity('月次レポートを保存中…','working');render();
+    const id=++request;busy=true;saving=true;message='';showActivity('月次レポートを保存中…','working');render();
     try{
       const snapshot=reportSnapshot(selected,source);
       const result=await vault.saveArchivedReport(snapshot,draft,archive?.current.id??null);
+      if(id!==request)return;
       archive=result;loadedPeriod=selected;draft=result.current.note;drafts.delete(selected);changed=false;draftConflict=false;chosenRevision=null;
       if(!periods.includes(selected))periods=[selected,...periods].sort().reverse();
       message='';showActivity('月次レポートを保存しました。','good');
-    }catch(error){message=`${error instanceof CloudWriteUncertainError?'保存結果未確認':'保存失敗'}：${error instanceof Error?error.message:'保存できませんでした。'}`;showActivity(message,'bad');}
-    finally{busy=false;render();}
+    }catch(error){if(id!==request)return;message=`${error instanceof CloudWriteUncertainError?'保存結果未確認':'保存失敗'}：${error instanceof Error?error.message:'保存できませんでした。'}`;showActivity(message,'bad');}
+    finally{if(id===request){busy=false;saving=false;render();}}
   }
   async function compareSource():Promise<void>{
     const id=request;
@@ -91,12 +92,22 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
     try {const hash=await snapshotHash(reportSnapshot(selected,source));if(id===request){changed=hash!==archive.current.sourceHash;render();}}
     catch {if(id===request){changed=false;}}
   }
+  function selectPeriod(period:string):boolean {
+    // A cloud save must finish against its original month. Loading requests may
+    // be superseded; revoke their busy state before starting the next request.
+    if(saving)return false;
+    ++request;
+    if(busy){busy=false;finishActivity('月次レポート');}
+    selected=period;loadedPeriod='';archive=null;draft='';chosenRevision=null;
+    message='';loadFailed=false;draftConflict=false;changed=false;
+    return true;
+  }
   function render():void{
     container.replaceChildren();
     if(!active()) {container.append(el('div','panel reports-locked','OneDrive保管庫を解除してください。'));return;}
     container.append(el('p','reports-purpose','月別サマリーは最新データの集計。このレポートは、保存した時点の集計とメモを後から振り返るための記録です。保存しなくても日常の収支管理には影響しません。'));
     const top=el('div','reports-controls');
-    const choosePeriod=(period:string)=>{selected=period;loadedPeriod='';archive=null;draft='';chosenRevision=null;message='';++request;void fetch();};
+    const choosePeriod=(period:string)=>{if(selectPeriod(period))void fetch();};
     const nav=monthNavigator(selected,choosePeriod,{label:'レポート対象年月',min:'1900-02',max:'2199-12',today:today()});
     if(busy)nav.querySelectorAll('button,input').forEach(item=>{(item as HTMLButtonElement|HTMLInputElement).disabled=true;});
     const refresh=button('最新を取得',()=>{void fetch();});refresh.disabled=busy;
@@ -107,7 +118,7 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
     if(loadedPeriod!==selected){void fetch();return;}
     if(periods.length){
       const list=el('div','reports-period-list');list.append(el('span','reports-muted','保存済み'));
-      for(const period of periods){const item=button(month(period),()=>{selected=period;loadedPeriod='';archive=null;++request;void fetch();},'reports-period-button'+(period===selected?' selected':''));item.setAttribute('aria-pressed',String(period===selected));list.append(item);}
+      for(const period of periods){const item=button(month(period),()=>{if(selectPeriod(period))void fetch();},'reports-period-button'+(period===selected?' selected':''));item.setAttribute('aria-pressed',String(period===selected));list.append(item);}
       container.append(list);
     }
     const control=section(month(selected));
@@ -152,7 +163,7 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
   }
   function openPeriod(period:string):void {
     if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))return;
-    selected=period;loadedPeriod='';archive=null;draft='';++request;
+    selectPeriod(period);
   }
   return {render:()=>{render();if(archive&&!busy)void compareSource();},openPeriod,reset,
     isBusy:()=>busy,isDirty:()=>[...drafts].some(([period,entry])=>

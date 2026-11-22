@@ -100,7 +100,7 @@ test('screen includes separate analysis-only actions, and tracks new navigation'
   assert.match(html,/id="nav-subscriptions"/);assert.match(html,/id="subscriptions-content"/);
   assert.match(styleOrder,/subscriptions-v183.css/);
   const js=readFileSync(new URL('../dist/src/ui/subscriptions.js',import.meta.url),'utf8');
-  assert.match(js,/今回は対象外/);assert.match(js,/カード払い/);
+  assert.match(js,/候補から除外/);assert.match(js,/カード払い/);
   const main=readFileSync(new URL('../src/main.ts',import.meta.url),'utf8');
   assert.match(main,/function interruptionState\(\)[\s\S]*?subscriptionsUi\?\.isBusy\(\)/);
   assert.match(main,/beforeunload[\s\S]*?hasInterruptionRisk\(state\)/);

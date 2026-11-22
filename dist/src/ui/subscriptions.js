@@ -1,6 +1,6 @@
 import { showActivity } from './activity-feedback.js';
 import { CloudWriteUncertainError } from '../cloud/live-vault.js';
-import { detectCardSubscriptions, latestRegisteredCardCharges, subscriptionDecision } from '../subscriptions/detect.js';
+import { detectCardSubscriptions, latestRegisteredCardCharges, matchedCardRecurringDecision, legacyDecisionMigrationCandidate, subscriptionDecision } from '../subscriptions/detect.js';
 const yen = (amount) => `${amount.toLocaleString('ja-JP')}円`;
 function el(tag, cls = '', text) {
     const node = document.createElement(tag);
@@ -45,6 +45,31 @@ export function initSubscriptions(deps) {
             render();
         }
     }
+    async function migrateLegacy(fromKey, candidate) {
+        const vault = deps.vault(), source = deps.source();
+        const old = source?.assets.cardRecurringDecisions?.[fromKey];
+        if (busy || !vault?.unlocked || !old || !source)
+            return;
+        if (!window.confirm(`既存の「${old.label}」を「${candidate.merchant}」に紐付け直しますか？\n登録状態は維持されます。`))
+            return;
+        busy = true;
+        notice = '';
+        showActivity('既存の定期支出を紐付け直しています…', 'working');
+        render();
+        try {
+            await vault.migrateCardRecurringDecision(fromKey, candidate.key, old, { ...old, merchant: candidate.key.slice(candidate.cardId.length + 1), label: candidate.merchant });
+            deps.onSaved();
+            showActivity('既存の登録を引き継ぎました。', 'good');
+        }
+        catch (error) {
+            notice = `移行失敗：${error instanceof Error ? error.message : '通信エラー'}`;
+            showActivity(notice, 'bad');
+        }
+        finally {
+            busy = false;
+            render();
+        }
+    }
     function card(name, sub, amount, description, actions) {
         const block = el('article', 'panel subscriptions-card');
         const header = el('div', 'subscriptions-card-heading');
@@ -70,7 +95,7 @@ export function initSubscriptions(deps) {
         }
         const candidates = detectCardSubscriptions(source);
         const decisions = source.assets.cardRecurringDecisions ?? {};
-        const pending = candidates.filter(item => !decisions[item.key]);
+        const pending = candidates.filter(item => !matchedCardRecurringDecision(decisions, item));
         const registered = Object.entries(decisions).filter(([, value]) => value.state === 'registered');
         const ignored = Object.entries(decisions).filter(([, value]) => value.state === 'ignored');
         const tabs = el('div', 'subscriptions-tabs');
@@ -91,7 +116,10 @@ export function initSubscriptions(deps) {
         if (filter === 'candidate') {
             for (const item of pending) {
                 const actions = [button('登録', () => { void update(item.key, subscriptionDecision(item, 'registered')); }, 'save-action'),
-                    button('今回は対象外', () => { void update(item.key, subscriptionDecision(item, 'ignored')); })];
+                    button('候補から除外', () => { void update(item.key, subscriptionDecision(item, 'ignored')); })];
+                const legacy = legacyDecisionMigrationCandidate(decisions, candidates, item);
+                if (legacy)
+                    actions.push(button('既存登録と紐付け', () => { void migrateLegacy(legacy, item); }));
                 for (const b of actions)
                     b.disabled = busy;
                 list.append(card(item.merchant, `${item.cardName} · ${item.frequency === 'monthly' ? '毎月' : '毎年'}の可能性`, yen(item.amount), details(item), actions));
@@ -106,12 +134,13 @@ export function initSubscriptions(deps) {
                 const control = button('候補に戻す', () => { void update(key, null); });
                 control.disabled = busy;
                 const cardName = source.assets.cardPreferences?.[item.cardId]?.name ?? item.cardId;
-                const latest = latestCharges?.get(key) ?? null;
+                const current = candidates.find(candidate => matchedCardRecurringDecision(decisions, candidate) === key);
+                const latest = latestCharges?.get(current?.key ?? key) ?? null;
                 const difference = latest ? latest.amount - item.amount : 0;
                 const evidence = filter === 'registered'
                     ? `登録時の推定額：${yen(item.amount)} · 最新の確認済み明細：${latest ? `${yen(latest.amount)}（${latest.month.replace('-', '年')}月支払）${difference ? ` · 登録時との差額 ${difference > 0 ? '+' : '−'}${yen(Math.abs(difference))}` : ' · 変化なし'}` : '確認できません'}`
                     : '候補から除外しています';
-                const entry = card(item.label, `${cardName} · ${item.frequency === 'monthly' ? '毎月' : '毎年'}`, yen(item.amount), evidence, [control]);
+                const entry = card(current?.merchant ?? item.label, `${cardName} · ${item.frequency === 'monthly' ? '毎月' : '毎年'}`, yen(latest?.amount ?? item.amount), evidence, [control]);
                 if (filter === 'registered' && difference)
                     entry.classList.add('subscriptions-price-changed');
                 list.append(entry);

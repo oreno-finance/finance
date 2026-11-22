@@ -59,6 +59,7 @@ function auditFixture(){
  git('init','-q');git('config','user.name','Morbee');git('config','user.email','114388961+morbachev@users.noreply.github.com');
  mkdirSync(join(cwd,'scripts'));cpSync('scripts/audit-publication.mjs',join(cwd,'scripts/audit-publication.mjs'));
  cpSync('scripts/publication-policy.json',join(cwd,'scripts/publication-policy.json'));
+  cpSync('scripts/finance-csp.mjs',join(cwd,'scripts/finance-csp.mjs'));
  writeFileSync(join(cwd,'package.json'),JSON.stringify({type:'module'}));
  writeFileSync(join(cwd,'README.md'),'safe');git('add','package.json','README.md');git('commit','-qm','baseline');
  const run=(mode)=>spawnSync(process.execPath,['scripts/audit-publication.mjs',mode],{cwd,encoding:'utf8'});

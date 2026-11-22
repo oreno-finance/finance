@@ -145,3 +145,13 @@ export function targetMonthForAge(birthMonth:string,age:number):string|null {
   if(y>2199)return null;
   return `${y}-${birthMonth.slice(5)}`;
 }
+
+/** Select only birthday months that the projection engine can actually calculate. */
+export function projectionAgeBounds(birthMonth:string,todayMonth:string):{min:number;max:number}|null {
+  if(!period(birthMonth)||!period(todayMonth))return null;
+  const birth=Number(birthMonth.slice(0,4))*12+Number(birthMonth.slice(5,7))-1;
+  const today=Number(todayMonth.slice(0,4))*12+Number(todayMonth.slice(5,7))-1;
+  const min=Math.max(18,Math.ceil((today-birth)/12));
+  const max=Math.min(80,Math.floor((today+600-birth)/12));
+  return min<=max?{min,max}:null;
+}

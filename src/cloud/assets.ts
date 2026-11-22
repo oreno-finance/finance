@@ -134,7 +134,7 @@ export function validateCardPreferences(raw:unknown):Record<string,CardPreferenc
 /** User decisions for card-paid subscriptions. These NEVER enter recurring bank forecasts. */
 export interface CardRecurringDecision {
   cardId:string;
-  merchant:string; // normalized display merchant; paired with card ID
+  merchant:string; // normalized stable original merchant (legacy: display alias); paired with card ID
   label:string;
   amount:number;
   frequency:'monthly'|'yearly';

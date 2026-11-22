@@ -87,6 +87,7 @@ export function initMonthlyReports(deps) {
     let archive = null;
     let periods = [];
     let busy = false;
+    let saving = false;
     let message = '';
     let draft = '';
     let chosenRevision = null;
@@ -96,7 +97,7 @@ export function initMonthlyReports(deps) {
     let draftConflict = false;
     const drafts = new Map();
     const active = () => deps.vault()?.unlocked === true;
-    function reset() { ++request; selected = today(); loadedPeriod = ''; archive = null; periods = []; busy = false; message = ''; draft = ''; changed = false; loadFailed = false; draftConflict = false; chosenRevision = null; drafts.clear(); container.replaceChildren(); }
+    function reset() { ++request; selected = today(); loadedPeriod = ''; archive = null; periods = []; busy = false; saving = false; message = ''; draft = ''; changed = false; loadFailed = false; draftConflict = false; chosenRevision = null; drafts.clear(); container.replaceChildren(); }
     async function fetch() {
         const vault = deps.vault();
         if (!vault?.unlocked)
@@ -148,13 +149,17 @@ export function initMonthlyReports(deps) {
         const vault = deps.vault(), source = deps.source();
         if (!vault?.unlocked || !source || busy || loadFailed || draftConflict || loadedPeriod !== selected)
             return;
+        const id = ++request;
         busy = true;
+        saving = true;
         message = '';
         showActivity('月次レポートを保存中…', 'working');
         render();
         try {
             const snapshot = reportSnapshot(selected, source);
             const result = await vault.saveArchivedReport(snapshot, draft, archive?.current.id ?? null);
+            if (id !== request)
+                return;
             archive = result;
             loadedPeriod = selected;
             draft = result.current.note;
@@ -168,12 +173,17 @@ export function initMonthlyReports(deps) {
             showActivity('月次レポートを保存しました。', 'good');
         }
         catch (error) {
+            if (id !== request)
+                return;
             message = `${error instanceof CloudWriteUncertainError ? '保存結果未確認' : '保存失敗'}：${error instanceof Error ? error.message : '保存できませんでした。'}`;
             showActivity(message, 'bad');
         }
         finally {
-            busy = false;
-            render();
+            if (id === request) {
+                busy = false;
+                saving = false;
+                render();
+            }
         }
     }
     async function compareSource() {
@@ -194,6 +204,27 @@ export function initMonthlyReports(deps) {
             }
         }
     }
+    function selectPeriod(period) {
+        // A cloud save must finish against its original month. Loading requests may
+        // be superseded; revoke their busy state before starting the next request.
+        if (saving)
+            return false;
+        ++request;
+        if (busy) {
+            busy = false;
+            finishActivity('月次レポート');
+        }
+        selected = period;
+        loadedPeriod = '';
+        archive = null;
+        draft = '';
+        chosenRevision = null;
+        message = '';
+        loadFailed = false;
+        draftConflict = false;
+        changed = false;
+        return true;
+    }
     function render() {
         container.replaceChildren();
         if (!active()) {
@@ -202,7 +233,8 @@ export function initMonthlyReports(deps) {
         }
         container.append(el('p', 'reports-purpose', '月別サマリーは最新データの集計。このレポートは、保存した時点の集計とメモを後から振り返るための記録です。保存しなくても日常の収支管理には影響しません。'));
         const top = el('div', 'reports-controls');
-        const choosePeriod = (period) => { selected = period; loadedPeriod = ''; archive = null; draft = ''; chosenRevision = null; message = ''; ++request; void fetch(); };
+        const choosePeriod = (period) => { if (selectPeriod(period))
+            void fetch(); };
         const nav = monthNavigator(selected, choosePeriod, { label: 'レポート対象年月', min: '1900-02', max: '2199-12', today: today() });
         if (busy)
             nav.querySelectorAll('button,input').forEach(item => { item.disabled = true; });
@@ -227,7 +259,8 @@ export function initMonthlyReports(deps) {
             const list = el('div', 'reports-period-list');
             list.append(el('span', 'reports-muted', '保存済み'));
             for (const period of periods) {
-                const item = button(month(period), () => { selected = period; loadedPeriod = ''; archive = null; ++request; void fetch(); }, 'reports-period-button' + (period === selected ? ' selected' : ''));
+                const item = button(month(period), () => { if (selectPeriod(period))
+                    void fetch(); }, 'reports-period-button' + (period === selected ? ' selected' : ''));
                 item.setAttribute('aria-pressed', String(period === selected));
                 list.append(item);
             }
@@ -301,11 +334,7 @@ export function initMonthlyReports(deps) {
     function openPeriod(period) {
         if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))
             return;
-        selected = period;
-        loadedPeriod = '';
-        archive = null;
-        draft = '';
-        ++request;
+        selectPeriod(period);
     }
     return { render: () => { render(); if (archive && !busy)
             void compareSource(); }, openPeriod, reset,

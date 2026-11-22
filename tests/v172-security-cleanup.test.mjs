@@ -57,6 +57,7 @@ test('publication audit blocks forbidden staged documents and personal email',()
   git('init','-q');git('config','user.name','Morbee');git('config','user.email','114388961+morbachev@users.noreply.github.com');
   mkdirSync(join(cwd,'scripts'));cpSync('scripts/audit-publication.mjs',join(cwd,'scripts/audit-publication.mjs'));
   cpSync('scripts/publication-policy.json',join(cwd,'scripts/publication-policy.json'));
+  cpSync('scripts/finance-csp.mjs',join(cwd,'scripts/finance-csp.mjs'));
   writeFileSync(join(cwd,'package.json'),'{"type":"module"}');
   writeFileSync(join(cwd,'README.md'),'hello');git('add','README.md');git('commit','-qm','test baseline');
   writeFileSync(join(cwd,'secret.pdf'),'fake.pdf');git('add','secret.pdf');

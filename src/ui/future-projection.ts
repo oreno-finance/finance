@@ -1,7 +1,7 @@
 /** Long-term savings planner reads persisted settings; only comparison parameters are editable. */
 import type { AssetsDocument } from '../cloud/assets.js';
 import type { CloudRecord } from '../cloud/merge.js';
-import {futureProjection, suggestedNisaMonthly, targetMonthForAge, type FuturePoint} from '../cloud/future-projection.js';
+import {futureProjection, suggestedNisaMonthly, targetMonthForAge, projectionAgeBounds, type FuturePoint} from '../cloud/future-projection.js';
 
 export interface FutureProjectionUi {render():void;reset():void}
 export interface FutureSource {assets:AssetsDocument;records:CloudRecord[]}
@@ -148,17 +148,24 @@ export function initFutureProjection(getSource:()=>FutureSource|null):FutureProj
     results.replaceChildren();
     if(!source){hint.textContent='OneDrive保管庫の解除後に将来資産を試算できます。';return;}
     const birthMonth=source.assets.birthMonth??'';
+    const bounds=projectionAgeBounds(birthMonth,localToday().slice(0,7));
     if(lastBirthMonth!==birthMonth){
       lastBirthMonth=birthMonth;
-      const calculated=targetMonthForAge(birthMonth,Number(age.value));
-      target.value=calculated??incrementYearMonth(localToday().slice(0,7),18);
+      age.value=String(bounds?Math.max(bounds.min,Math.min(40,bounds.max)):40);
     }
-    age.disabled=!birthMonth;
+    if(bounds){
+      age.min=String(bounds.min);age.max=String(bounds.max);
+      const clamped=Math.max(bounds.min,Math.min(Number(age.value)||bounds.min,bounds.max));
+      age.value=String(clamped);
+      target.value=targetMonthForAge(birthMonth,clamped)??'';
+    }else target.value='';
+    age.disabled=!bounds;
     birthSettings.hidden=!!birthMonth;
     find('future-age-value').textContent=`${age.value}歳`;
     find('future-nisa-rate-value').textContent=`${Number(nisaRate.value).toFixed(1)}%`;
     find('future-target-label').textContent=birthMonth?`${dateTitle(target.value)}（${age.value}歳）`:'生年月未設定';
     if(!birthMonth){hint.textContent='生年月を設定してください。';return;}
+    if(!bounds){hint.textContent='生年月と現在年月から、50年以内に選べる目標年齢がありません。';return;}
     const cashRules=source.assets.recurring.filter(e=>e.enabled&&e.toAccountId==='cash-savings'&&e.fromAccountId!=='cash-savings'&&(e.kind==='transfer'||e.kind==='income'));
     const nisaRules=source.assets.recurring.filter(e=>e.enabled&&e.toAccountId==='nisa'&&(e.kind==='income'||e.kind==='transfer'));
     const hasNisaSchedule=nisaRules.length>0;

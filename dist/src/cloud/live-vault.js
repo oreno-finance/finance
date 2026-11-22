@@ -1079,6 +1079,25 @@ export class LiveVault {
         next.cardRecurringDecisions = changes;
         await this.commitAssets(next);
     }
+    /** Move a legacy display-name key to the stable issuer-merchant key in one cloud write. */
+    async migrateCardRecurringDecision(fromKey, toKey, expected, decision) {
+        if (!this.key || this.rotating)
+            throw new Error('OneDrive保管庫を解除してください。');
+        if (fromKey === toKey)
+            return;
+        const next = clone(this.assetsDocument);
+        const previous = next.cardRecurringDecisions?.[fromKey];
+        if (!previous || next.cardRecurringDecisions?.[toKey])
+            throw new Error('移行対象の登録状態が変更されました。');
+        if (JSON.stringify(previous) !== JSON.stringify(expected) || previous.cardId !== decision.cardId || previous.state !== decision.state)
+            throw new Error('移行元の登録内容が更新されました。読み直してください。');
+        const normalized = validateCardRecurringDecisions({ [toKey]: decision })[toKey];
+        const updated = { ...(next.cardRecurringDecisions ?? {}) };
+        delete updated[fromKey];
+        updated[toKey] = normalized;
+        next.cardRecurringDecisions = updated;
+        await this.commitAssets(next);
+    }
     async deleteRecurring(id) {
         if (!this.key)
             throw new Error('OneDrive保管庫を解除してください。');

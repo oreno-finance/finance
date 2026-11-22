@@ -42,8 +42,9 @@ function eligibleCardChargeGroups(source:MonthlySource,asOf:string):Map<string,G
       const nisa=nisaRuleOnDay(source.assets,row.usedOn);
       if(nisa?.enabled&&nisa.cardId===s.cardId&&normalizeMerchant(row.merchant).includes(normalizeMerchant(nisa.merchantContains)))continue;
       const merchant=displayMerchant(row.merchant,s.cardId,source.rules,row.merchantOverride).trim();
-      if(!merchant||merchant.length>100||cardRecurringKey(s.cardId,merchant).length>240)continue;
-      const key=cardRecurringKey(s.cardId,merchant);
+      if(!merchant||merchant.length>100||normalizeMerchant(row.merchant).length>160||cardRecurringKey(s.cardId,row.merchant).length>240)continue;
+      // The issuer's original merchant survives display-rule renames.
+      const key=cardRecurringKey(s.cardId,row.merchant);
       const group=groups.get(key)??{cardId:s.cardId,merchant,values:[]};
       group.values.push({period,amount:row.amount});groups.set(key,group);
     }
@@ -117,9 +118,31 @@ export function detectCardSubscriptions(source:MonthlySource,asOf=todayPeriod())
 }
 export function pendingCardSubscriptions(source:MonthlySource,asOf?:string):SubscriptionCandidate[]{
   const decisions=source.assets.cardRecurringDecisions??{};
-  return detectCardSubscriptions(source,asOf).filter(candidate=>!decisions[candidate.key]);
+  return detectCardSubscriptions(source,asOf).filter(candidate=>!matchedCardRecurringDecision(decisions,candidate));
 }
 export function subscriptionDecision(candidate:SubscriptionCandidate,state:CardRecurringDecision['state'],now=new Date().toISOString()):CardRecurringDecision {
-  return {cardId:candidate.cardId,merchant:normalizeMerchant(candidate.merchant),label:candidate.merchant,amount:candidate.amount,
+  return {cardId:candidate.cardId,merchant:candidate.key.slice(candidate.cardId.length+1),label:candidate.merchant,amount:candidate.amount,
     frequency:candidate.frequency,state,updatedAt:now};
+}
+
+/** Read old display-name-keyed decisions without changing encrypted storage.
+ * A renamed legacy alias cannot be mapped reliably without user confirmation. */
+export function matchedCardRecurringDecision(decisions:Record<string,CardRecurringDecision>,candidate:SubscriptionCandidate):string|null {
+  if(decisions[candidate.key])return candidate.key;
+  const legacy=cardRecurringKey(candidate.cardId,candidate.merchant);
+  return decisions[legacy]?legacy:null;
+}
+/** Offer *manual* migration only when the old decision and new candidate form
+ * an unambiguous one-to-one pair for the same card and recurrence frequency. */
+export function legacyDecisionMigrationCandidate(
+  decisions:Record<string,CardRecurringDecision>,candidates:SubscriptionCandidate[],candidate:SubscriptionCandidate
+):string|null {
+  if(matchedCardRecurringDecision(decisions,candidate))return null;
+  const unlinked=candidates.filter(c=>!matchedCardRecurringDecision(decisions,c)&&c.cardId===candidate.cardId);
+  const linked=new Set(candidates.flatMap(c=>{
+    const key=matchedCardRecurringDecision(decisions,c);return key?[key]:[];
+  }));
+  const orphaned=Object.entries(decisions).filter(([key,item])=>!linked.has(key)&&item.cardId===candidate.cardId&&item.frequency===candidate.frequency);
+  const peers=unlinked.filter(c=>c.frequency===candidate.frequency);
+  return orphaned.length===1&&peers.length===1?orphaned[0]![0]:null;
 }

@@ -4,12 +4,16 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
+  schedule:
+    # Every Monday 09:17 JST (00:17 UTC); scan only, do not deploy.
+    - cron: '17 0 * * 1'
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -17,6 +21,7 @@ concurrency:
 
 jobs:
   security:
+    name: security
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -25,21 +30,39 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
+          # Avoid the synthetic GitHub merge author on pull_request events.
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Inspect author, tracked files and sensitive data
+      - name: Install dependencies from locked versions
+        run: npm ci
+      - name: Inspect author, tracked files, PII, CSP and secrets
         run: node scripts/audit-publication.mjs --tree
       - name: Gitleaks full history secret scan
         run: |
           docker run --rm -v "$PWD:/repo:ro" -w /repo \
             ghcr.io/gitleaks/gitleaks@sha256:b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb \
             git --redact --no-banner --log-opts="--all" .
+      - name: Audit dependencies for high and critical vulnerabilities
+        run: npm audit --audit-level=high
+      - name: Typecheck, build and exercise the tests before merging
+        run: |
+          npm run check
+          npm test
+          npm run verify:cloud
+          npm run audit:tree
 
   deploy:
     needs: security
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
 
     environment:
       name: github-pages

@@ -2699,6 +2699,8 @@ async function handleFiles(files) {
             try {
                 let result = false;
                 if (name.endsWith('.csv')) {
+                    if (file.size === 0 || file.size > 2_000_000)
+                        throw new Error('CSVのサイズが不正です（上限2MB）。');
                     const text = decodeCardCsv(await file.arrayBuffer());
                     const meta = identifyCardCsv(text, file.name);
                     const date = csvPaymentDate(meta.cardId, meta.billingMonth);
