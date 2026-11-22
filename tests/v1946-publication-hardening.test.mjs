@@ -129,6 +129,6 @@ test('pull requests run security checks and cannot deploy Pages',()=>{
   const yaml=readFileSync(new URL('../.github/workflows/pages.yml',import.meta.url),'utf8');
   assert.match(yaml,/pull_request:\s*\n\s+branches:\s*\n\s+- main/);
   assert.match(yaml,/name: security/);
-  assert.match(yaml,/deploy:\s*\n\s+needs: security\s*\n\s+if: github\.event_name == 'push' \|\| github\.event_name == 'workflow_dispatch'/);
+  assert.match(yaml,/deploy:\s*\n\s+needs: security\s*\n\s+if: \(github\.event_name == 'push' \|\| github\.event_name == 'workflow_dispatch'\) && github\.ref == 'refs\/heads\/main'/);
   assert.match(yaml,/npm audit --audit-level=high/);
 });
