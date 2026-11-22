@@ -1256,6 +1256,26 @@ body{overflow:hidden}
 @media(max-width:1100px){.future-controls{grid-template-columns:repeat(2,minmax(0,1fr))}.future-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:640px){.future-panel{padding:16px}.future-controls{grid-template-columns:minmax(0,1fr)}.future-cards{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.future-card{padding:12px}}
 
+/* Interactive projection explorer: touch, pointer and keyboard share one month. */
+.future-chart-filters{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 9px}
+.future-chart-filter{appearance:none;flex:0 0 auto;border:1px solid var(--line);border-radius:20px;padding:7px 12px;background:var(--bg);color:var(--ink);font-size:11px;font-weight:700;cursor:pointer}
+.future-chart-filter[aria-pressed="true"]{background:var(--accent-bg);color:var(--accent);border-color:var(--accent)}
+.future-chart-filter:focus-visible,.future-chart-svg:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.future-chart-svg{touch-action:pan-y;cursor:crosshair;outline-offset:3px}
+.future-chart-guide{stroke:var(--muted);stroke-width:1.5;stroke-dasharray:4 4;pointer-events:none}
+.future-chart-dot{fill:var(--panel);stroke-width:4;pointer-events:none}
+.future-chart-dot-cash{stroke:var(--future-cash,#7f92af)}
+.future-chart-dot-nisa{stroke:var(--future-nisa,#c59644)}
+.future-chart-dot-base{stroke:var(--future-total,#297a70)}
+.future-chart-dot-scenario{stroke:var(--future-after,#9267bc)}
+.future-chart-help{margin:7px 0 0;color:var(--muted);font-size:10px;line-height:1.5}
+.future-chart-selection{margin-top:11px;padding:11px 13px;border:1px solid var(--line);border-radius:11px;background:var(--bg)}
+.future-chart-selection-date{display:block;margin-bottom:9px;color:var(--ink);font-size:12px}
+.future-chart-selection-values{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}
+.future-chart-selection-item{min-width:0;display:flex;flex-direction:column;gap:2px;font-size:10px;color:var(--muted)}
+.future-chart-selection-item strong{font-size:13px;color:var(--ink);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+@media(max-width:560px){.future-chart-selection-values{grid-template-columns:repeat(2,minmax(0,1fr))}.future-chart-selection{padding:10px}}
+
 /* SOURCE: settings-cleanup.css */
 /* Finance v1.4.4 — quieter settings UI, no changes to shared layout primitives. */
 .settings-heading{margin-bottom:14px}
@@ -3379,11 +3399,11 @@ html.assets-once-page-locked,html.assets-once-page-locked body{overflow:hidden!i
 #startup-recovery strong {display:block;margin:0;font-size:14px;line-height:1.5;font-weight:750;letter-spacing:-.02em;color:inherit}
 #startup-recovery .startup-recovery-description {margin:4px 0 0;color:#66788a;font-size:12px;line-height:1.6}
 #startup-recovery .startup-recovery-actions {
-  display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:8px;
-  margin-top:17px;padding-top:14px;border-top:1px solid #edf0f4;
+  display:flex;flex-wrap:wrap;justify-content:flex-start;align-items:center;gap:8px;
+  margin-top:14px;padding-top:0;border-top:0;
 }
 #startup-recovery .startup-recovery-actions button {
-  box-sizing:border-box;min-width:0;min-height:38px;padding:8px 12px;
+  box-sizing:border-box;flex:0 0 auto;width:auto;min-width:0;min-height:38px;padding:8px 12px;
   border:1px solid transparent;border-radius:9px;background:transparent;
   color:#566b80;font:inherit;font-size:12px;font-weight:700;
   line-height:1.45;text-align:center;white-space:nowrap;cursor:pointer;
@@ -3407,7 +3427,6 @@ html.assets-once-page-locked,html.assets-once-page-locked body{overflow:hidden!i
 }
 :root[data-theme="dark"] #startup-recovery .startup-recovery-symbol {border-color:#3b5164;background:#2a3b4d;color:#b5d5df}
 :root[data-theme="dark"] #startup-recovery .startup-recovery-description {color:#a5b6c6}
-:root[data-theme="dark"] #startup-recovery .startup-recovery-actions {border-color:#38485a}
 :root[data-theme="dark"] #startup-recovery .startup-recovery-actions button {color:#c5d3e1}
 :root[data-theme="dark"] #startup-recovery .startup-recovery-actions button:hover {background:#314256;color:#fff}
 :root[data-theme="dark"] #startup-recovery .startup-recovery-actions .startup-recovery-reload {border-color:#319383;background:#319383;color:#fff}
@@ -3415,9 +3434,8 @@ html.assets-once-page-locked,html.assets-once-page-locked body{overflow:hidden!i
 :root[data-theme="dark"] #startup-recovery .startup-recovery-note {border-color:#3a4c60;background:#253448;color:#c7d7e5}
 @media (max-width:520px) {
   #startup-recovery {right:12px;bottom:12px;width:calc(100vw - 24px);max-height:calc(100dvh - 24px);padding:16px}
-  #startup-recovery .startup-recovery-actions {grid-template-columns:repeat(2,minmax(0,1fr))}
-  #startup-recovery .startup-recovery-actions .startup-recovery-reload {grid-column:1/-1}
-  #startup-recovery .startup-recovery-actions button {white-space:normal}
+  #startup-recovery .startup-recovery-actions {display:flex;flex-wrap:wrap;justify-content:flex-start}
+  #startup-recovery .startup-recovery-actions button {flex:0 0 auto;white-space:normal}
 }
 @keyframes finance-startup-appear {from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:translateY(0)}}
 @media (prefers-reduced-motion:reduce) {
@@ -3862,6 +3880,28 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 @media(max-width:420px){.card-setting-payment-fields,.card-setting-review{grid-template-columns:1fr}}
 
 @media(max-width:720px){.card-setting-basic-fields{grid-template-columns:1fr}}
+
+/* Read-only reconciliation of confirmed balances. The gap is never posted as a transaction. */
+.assets-reconciliation{min-width:0;margin:8px 0 12px}
+.assets-reconcile-card{min-width:0;border:1px solid var(--line);border-radius:10px;background:var(--bg);overflow:hidden}
+.assets-reconcile-card.has-difference{border-color:var(--accent)}
+.assets-reconcile-card.is-investment.has-difference{border-color:var(--line)}
+.assets-reconcile-summary{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:10px 11px;cursor:pointer;list-style:none}
+.assets-reconcile-summary::-webkit-details-marker{display:none}
+.assets-reconcile-summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.assets-reconcile-title{font-size:10px;font-weight:650;color:var(--muted)}
+.assets-reconcile-difference{font-size:12px;color:var(--accent);font-variant-numeric:tabular-nums;text-align:right}
+.assets-reconcile-card.is-investment .assets-reconcile-difference{color:var(--ink)}
+.assets-reconcile-body{border-top:1px solid var(--line);padding:12px;display:flex;flex-direction:column;gap:9px}
+.assets-reconcile-period,.assets-reconcile-footnote,.assets-reconcile-unavailable{font-size:10px;color:var(--muted);line-height:1.65;margin:0}
+.assets-reconcile-figures{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.assets-reconcile-figure{min-width:0;display:flex;flex-direction:column;gap:4px}
+.assets-reconcile-figure span{font-size:9px;color:var(--muted)}
+.assets-reconcile-figure strong{font-size:11px;color:var(--ink);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.assets-reconcile-advice{margin:0;font-size:11px;line-height:1.65;color:var(--ink)}
+.assets-reconcile-findings{margin:0;padding:0 0 0 17px;font-size:10px;line-height:1.65;color:var(--ink)}
+.assets-reconcile-card .assets-reconcile-action{align-self:flex-start;font-size:11px;padding:8px 11px;border:1px solid var(--line);border-radius:9px;color:var(--accent);background:var(--panel);font-weight:700;cursor:pointer}
+@media(max-width:500px){.assets-reconcile-figures{grid-template-columns:minmax(0,1fr)}.assets-reconcile-figure{flex-direction:row;align-items:baseline;justify-content:space-between;gap:8px}}
 
 /* SOURCE: layout-v195.css */
 /* Finance v1.9.5: consistent compact navigation and card settings layout. */

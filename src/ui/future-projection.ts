@@ -32,7 +32,19 @@ function ageText(month:string,born:string):string {
   const age=Number(month.slice(0,4))-Number(born.slice(0,4))-(Number(month.slice(5))<Number(born.slice(5))?1:0);
   return age>=0?`（${age}歳）`:'';
 }
-function drawChart(container:HTMLElement,points:FuturePoint[],born:string,compare:boolean):void{
+export type ProjectionSeriesFilter='all'|'cash'|'nisa'|'combined'|'combinedScenario';
+/** Map a screen-space x coordinate to the monthly index, independent of screen density. */
+export function nearestProjectionIndex(clientX:number,left:number,width:number,count:number):number {
+  if(count<=1||!Number.isFinite(clientX)||!Number.isFinite(width)||width<=0)return 0;
+  const relative=(clientX-left)/width;
+  const visibleX=Math.max(0,Math.min(1,(relative*840-50)/(840-50-16)));
+  return Math.max(0,Math.min(count-1,Math.round(visibleX*(count-1))));
+}
+function drawChart(
+  container:HTMLElement,points:FuturePoint[],born:string,compare:boolean,
+  filter:ProjectionSeriesFilter,selectedMonth:string|null,
+  onFilter:(key:ProjectionSeriesFilter)=>void,onSelect:(month:string)=>void,
+):void{
   container.replaceChildren();
   const names:[keyof FuturePoint,string,string][]=[
     ['cash','現金貯金','cash'],
@@ -40,13 +52,26 @@ function drawChart(container:HTMLElement,points:FuturePoint[],born:string,compar
     ['combined','現金＋NISA','base'],
     ...(compare?[['combinedScenario','積立変更後の合計','scenario'] as [keyof FuturePoint,string,string]]:[]),
   ];
-  const values=points.flatMap(p=>names.flatMap(([key])=>typeof p[key]==='number'?[p[key] as number]:[]));
-  if(values.length<2){container.append(el('p','future-help','残高を登録すると推移グラフを表示します。'));return;}
+  const buttons=el('div','future-chart-filters');
+  buttons.setAttribute('role','group');buttons.setAttribute('aria-label','グラフの表示切り替え');
+  const options:[ProjectionSeriesFilter,string][]=[['all','すべて'],['cash','現金'],['nisa','NISA'],['combined','合計'],...(compare?[['combinedScenario','変更後'] as [ProjectionSeriesFilter,string]]:[])];
+  for(const [key,title] of options){
+    const button=el('button','future-chart-filter',title) as HTMLButtonElement;
+    button.type='button';button.setAttribute('aria-pressed',String(filter===key));
+    button.addEventListener('click',()=>onFilter(key));buttons.append(button);
+  }
+  container.append(buttons);
+  const shown=filter==='all'?names:names.filter(([key])=>key===filter);
+  const values=points.flatMap(p=>shown.flatMap(([key])=>typeof p[key]==='number'?[p[key] as number]:[]));
+  if(!points.length||values.length<2){container.append(el('p','future-help','残高を登録すると推移グラフを表示します。'));return;}
   const min=Math.min(0,...values),max=Math.max(1,...values),range=max-min;
   const w=840,h=270,padX=50,padTop=18,padBottom=38;
   const x=(i:number)=>padX+(i/(points.length-1||1))*(w-padX-16);
   const y=(value:number)=>padTop+(max-value)/range*(h-padTop-padBottom);
-  const svg=svgNode('svg',{viewBox:`0 0 ${w} ${h}`,role:'img','aria-label':'現金貯金・NISA・合計の将来推移',class:'future-chart-svg'});
+  const svg=svgNode('svg',{viewBox:`0 0 ${w} ${h}`,role:'slider',tabindex:'0',
+    'aria-label':'予測年月を選択','aria-valuemin':'0','aria-valuemax':String(points.length-1),
+    class:'future-chart-svg'});
+  const description=svgNode('title',{});description.textContent='グラフをタップまたは左右矢印キーで年月を選択';svg.append(description);
   for(let i=0;i<=4;i++){
     const value=min+range*i/4;
     const yy=y(value);
@@ -54,20 +79,72 @@ function drawChart(container:HTMLElement,points:FuturePoint[],born:string,compar
     const label=svgNode('text',{x:String(padX-8),y:String(yy+4),'text-anchor':'end',class:'future-axis-text'});
     label.textContent=Math.round(value/10000).toLocaleString('ja-JP')+'万';svg.append(label);
   }
-  for(const [key,,cls] of names){
+  for(const [key,,cls] of shown){
     const finite=points.map((p,i)=>({i,value:p[key]})).filter((p):p is {i:number;value:number}=>typeof p.value==='number');
     if(finite.length<2)continue;
-    const path=finite.map(p=>`${x(p.i).toFixed(1)},${y(p.value).toFixed(1)}`).join(' ');
-    svg.append(svgNode('polyline',{points:path,fill:'none',class:`future-path future-path-${cls}`,'stroke-linecap':'round','stroke-linejoin':'round'}));
+    svg.append(svgNode('polyline',{points:finite.map(p=>`${x(p.i).toFixed(1)},${y(p.value).toFixed(1)}`).join(' '),
+      fill:'none',class:`future-path future-path-${cls}`,'stroke-linecap':'round','stroke-linejoin':'round'}));
   }
   const tickIndices=[0,Math.floor((points.length-1)/2),points.length-1];
   for(const i of [...new Set(tickIndices)]){
     const label=svgNode('text',{x:String(x(i)),y:String(h-12),'text-anchor':i===0?'start':i===points.length-1?'end':'middle',class:'future-axis-text'});
     label.textContent=points[i]!.month.slice(0,4)+'年'+ageText(points[i]!.month,born);svg.append(label);
   }
-  container.append(svg);
+  const indicator=svgNode('g',{'aria-hidden':'true',class:'future-chart-indicator'});
+  svg.append(indicator);container.append(svg);
+  const help=el('p','future-chart-help','グラフをタップ・ドラッグして年月を確認できます。左右矢印キーにも対応。');
+  container.append(help);
+  const detail=el('div','future-chart-selection');detail.setAttribute('role','status');detail.setAttribute('aria-live','polite');
+  container.append(detail);
+  const remembered=selectedMonth?points.findIndex(p=>p.month===selectedMonth):-1;
+  let selectedIndex=remembered>=0?remembered:points.length-1;
+  const select=(index:number)=>{
+    if(index===selectedIndex&&detail.childElementCount)return;
+    selectedIndex=Math.max(0,Math.min(points.length-1,index));
+    const selected=points[selectedIndex]!;
+    onSelect(selected.month);
+    svg.setAttribute('aria-valuenow',String(selectedIndex));
+    svg.setAttribute('aria-valuetext',dateTitle(selected.month));
+    indicator.replaceChildren();
+    indicator.append(svgNode('line',{x1:String(x(selectedIndex)),x2:String(x(selectedIndex)),y1:String(padTop),y2:String(h-padBottom),class:'future-chart-guide'}));
+    for(const [key,,cls] of shown){
+      const v=selected[key];if(typeof v!=='number')continue;
+      indicator.append(svgNode('circle',{cx:String(x(selectedIndex)),cy:String(y(v)),r:'6',class:`future-chart-dot future-chart-dot-${cls}`}));
+    }
+    detail.replaceChildren();
+    detail.append(el('strong','future-chart-selection-date',dateTitle(selected.month)+ageText(selected.month,born)));
+    const valuesList=el('div','future-chart-selection-values');
+    for(const [key,title,cls] of shown){
+      const item=el('div',`future-chart-selection-item future-chart-selection-${cls}`);
+      item.append(el('span','',title),el('strong','',yen(selected[key] as number|null)));
+      valuesList.append(item);
+    }
+    detail.append(valuesList);
+  };
+  const atPointer=(event:PointerEvent)=>{
+    const rect=svg.getBoundingClientRect();
+    select(nearestProjectionIndex(event.clientX,rect.left,rect.width,points.length));
+  };
+  let dragId:number|null=null;
+  svg.addEventListener('pointerdown',event=>{
+    dragId=event.pointerId;atPointer(event);
+    // Capture a touch drag without disabling normal vertical page scrolling.
+    if(event.pointerType==='mouse')svg.setPointerCapture?.(event.pointerId);
+  });
+  svg.addEventListener('pointermove',event=>{
+    if(event.pointerType==='mouse'||dragId===event.pointerId)atPointer(event);
+  });
+  const stop=(event:PointerEvent)=>{if(dragId===event.pointerId)dragId=null;};
+  svg.addEventListener('pointerup',stop);svg.addEventListener('pointercancel',stop);
+  svg.addEventListener('keydown',event=>{
+    const increment=event.key==='ArrowRight'||event.key==='ArrowUp'?1:event.key==='ArrowLeft'||event.key==='ArrowDown'?-1:0;
+    if(increment){event.preventDefault();select(selectedIndex+increment);}
+    else if(event.key==='Home'){event.preventDefault();select(0);}
+    else if(event.key==='End'){event.preventDefault();select(points.length-1);}
+  });
+  select(selectedIndex);
   const legend=el('div','future-legend');
-  for(const [,name,cls] of names)legend.append(el('span',`future-legend-item future-legend-${cls}`,name));
+  for(const [,name,cls] of shown)legend.append(el('span',`future-legend-item future-legend-${cls}`,name));
   container.append(legend);
 }
 
@@ -87,6 +164,8 @@ export function initFutureProjection(getSource:()=>FutureSource|null):FutureProj
   const cashChoice=find<HTMLInputElement>('future-compare-cash');
   const nisaChoice=find<HTMLInputElement>('future-compare-nisa');
   let compare=false;
+  let chartFilter:ProjectionSeriesFilter='all';
+  let chosenMonth:string|null=null;
   const updateScenarioControls=()=>{
     const cash=cashChoice.checked, nisa=nisaChoice.checked;
     find<HTMLElement>('future-cash-amount-wrap').hidden=!cash;
@@ -203,7 +282,11 @@ export function initFutureProjection(getSource:()=>FutureSource|null):FutureProj
       results.append(breakdown);
       if(report.conflictingNisaSources)results.append(el('p','future-warning','NISAの積立設定が重複している可能性があります。'));
       if(report.cashStart===null||report.nisaStart===null)results.append(el('p','future-warning','口座管理で現在の残高を登録してください。'));
-      const graph=el('div','future-chart');drawChart(graph,report.points,birthMonth,compare);results.append(graph);
+      const graph=el('div','future-chart');
+      const repaint=()=>drawChart(graph,report.points,birthMonth,compare,chartFilter,chosenMonth,
+        next=>{chartFilter=next;repaint();},month=>{chosenMonth=month;});
+      if(!compare&&chartFilter==='combinedScenario')chartFilter='all';
+      repaint();results.append(graph);
       const tableWrap=el('div','future-table-scroll');const table=document.createElement('table');table.className='future-table';
       const thead=document.createElement('thead');const tr=document.createElement('tr');
       const columns=compare?['年月','現金貯金','NISA','合計','変更後の合計']:['年月','現金貯金','NISA','合計'];
@@ -223,7 +306,7 @@ export function initFutureProjection(getSource:()=>FutureSource|null):FutureProj
     lastBirthMonth=null;age.disabled=true;birthSettings.hidden=false;target.value=incrementYearMonth(localToday().slice(0,7),18);
     from.value=monthAfter(localToday().slice(0,7));saving.value='20000';nisaScenarioInput.value='20000';
     scenarioCashEdited=false;scenarioNisaEdited=false;results.replaceChildren();hint.textContent='保管庫を解除してください。';
-    compare=false;scenarioAccordion.open=false;scenarioPanel.hidden=true;
+    compare=false;chartFilter='all';chosenMonth=null;scenarioAccordion.open=false;scenarioPanel.hidden=true;
     cashChoice.checked=true;nisaChoice.checked=false;updateScenarioControls();
   };
   return {render,reset};
