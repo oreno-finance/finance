@@ -24,10 +24,31 @@ try {
   if(mode==='--staged'){
     checkIdentity(str('config','user.name'),str('config','user.email'),'現在のGit作成者');
   }
-  for(const line of str('log','--all','--format=%an%x09%ae%x09%cn%x09%ce').split('\n').filter(Boolean)){
-    const [name,email,committer,committerEmail]=line.split('\t');
+  // The pull_request checkout checks out GitHub's *synthetic* test-merge.
+  // Trust only the exact CI-provided SHA with the expected base/head parents;
+  // never skip the source branch's author/committer validation.
+  const syntheticPrMerge=(sha,parents)=>
+    process.env.GITHUB_ACTIONS==='true' &&
+    process.env.GITHUB_EVENT_NAME==='pull_request' &&
+    process.env.GITHUB_BASE_REF==='main' &&
+    process.env.GITHUB_SHA===sha &&
+    /^[0-9a-f]{40}$/i.test(process.env.FINANCE_PR_BASE_SHA??'') &&
+    /^[0-9a-f]{40}$/i.test(process.env.FINANCE_PR_HEAD_SHA??'') &&
+    parents.length===2 &&
+    parents[0]===process.env.FINANCE_PR_BASE_SHA &&
+    parents[1]===process.env.FINANCE_PR_HEAD_SHA;
+  for(const line of str('log','--all','--format=%H%x09%an%x09%ae%x09%cn%x09%ce%x09%P%x09%s').split('\n').filter(Boolean)){
+    const [sha,name,email,committer,committerEmail,parentField,subject]=line.split('\t');
+    const parents=parentField.split(' ').filter(Boolean);
+    if(syntheticPrMerge(sha,parents))continue;
     checkIdentity(name,email,'コミット履歴のAuthor');
-    checkIdentity(committer,committerEmail,'コミット履歴のCommitter');
+    // GitHub's official "Create a merge commit" flow uses its own exact
+    // committer identity. Restrict the exception to two-parent PR merges,
+    // an already-allowed human author, and the standard merge subject.
+    const githubMergeCommitter=allowedIdentity(name,email) &&
+      committer==='GitHub' && committerEmail==='noreply'+'@github.com' &&
+      parents.length===2 && /^Merge pull request #\d+ from /i.test(subject);
+    if(!githubMergeCommitter)checkIdentity(committer,committerEmail,'コミット履歴のCommitter');
   }
 }catch(error){errors.push('Git作成者・履歴を取得できません');}
 const names=mode==='--staged'

@@ -31,8 +31,8 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          # Avoid the synthetic GitHub merge author on pull_request events.
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          # PR uses GitHub's synthetic merge ref, exercising the merged tree.
+          # The scanner narrowly excludes only that synthetic commit's identity.
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -40,6 +40,9 @@ jobs:
       - name: Install dependencies from locked versions
         run: npm ci
       - name: Inspect author, tracked files, PII, CSP and secrets
+        env:
+          FINANCE_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          FINANCE_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: node scripts/audit-publication.mjs --tree
       - name: Gitleaks full history secret scan
         run: |
@@ -49,15 +52,28 @@ jobs:
       - name: Audit dependencies for high and critical vulnerabilities
         run: npm audit --audit-level=high
       - name: Typecheck, build and exercise the tests before merging
+        env:
+          FINANCE_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          FINANCE_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           npm run check
           npm test
           npm run verify:cloud
           npm run audit:tree
+      - name: Gitleaks scan of actual published build
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" -w /repo \
+            ghcr.io/gitleaks/gitleaks@sha256:b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb \
+            dir --redact --no-banner dist
+      - name: Upload exactly the audited Pages build
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./dist
 
   deploy:
     needs: security
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -69,31 +85,9 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Check and build Finance
-        run: |
-          npm run check
-          npm run test
-          npm run verify:cloud
-
+      # No checkout, npm install or rebuild here: publish the audited artifact.
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
-
-      - name: Upload website
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: ./dist
 
       - name: Deploy website
         id: deployment
