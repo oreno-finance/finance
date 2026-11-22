@@ -34,3 +34,23 @@
 .future-warning{border-left:3px solid #c59644;background:var(--bg);padding:9px 12px;font-size:12px;line-height:1.7}
 @media(max-width:1100px){.future-controls{grid-template-columns:repeat(2,minmax(0,1fr))}.future-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:640px){.future-panel{padding:16px}.future-controls{grid-template-columns:minmax(0,1fr)}.future-cards{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.future-card{padding:12px}}
+
+/* Interactive projection explorer: touch, pointer and keyboard share one month. */
+.future-chart-filters{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 9px}
+.future-chart-filter{appearance:none;flex:0 0 auto;border:1px solid var(--line);border-radius:20px;padding:7px 12px;background:var(--bg);color:var(--ink);font-size:11px;font-weight:700;cursor:pointer}
+.future-chart-filter[aria-pressed="true"]{background:var(--accent-bg);color:var(--accent);border-color:var(--accent)}
+.future-chart-filter:focus-visible,.future-chart-svg:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.future-chart-svg{touch-action:pan-y;cursor:crosshair;outline-offset:3px}
+.future-chart-guide{stroke:var(--muted);stroke-width:1.5;stroke-dasharray:4 4;pointer-events:none}
+.future-chart-dot{fill:var(--panel);stroke-width:4;pointer-events:none}
+.future-chart-dot-cash{stroke:var(--future-cash,#7f92af)}
+.future-chart-dot-nisa{stroke:var(--future-nisa,#c59644)}
+.future-chart-dot-base{stroke:var(--future-total,#297a70)}
+.future-chart-dot-scenario{stroke:var(--future-after,#9267bc)}
+.future-chart-help{margin:7px 0 0;color:var(--muted);font-size:10px;line-height:1.5}
+.future-chart-selection{margin-top:11px;padding:11px 13px;border:1px solid var(--line);border-radius:11px;background:var(--bg)}
+.future-chart-selection-date{display:block;margin-bottom:9px;color:var(--ink);font-size:12px}
+.future-chart-selection-values{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}
+.future-chart-selection-item{min-width:0;display:flex;flex-direction:column;gap:2px;font-size:10px;color:var(--muted)}
+.future-chart-selection-item strong{font-size:13px;color:var(--ink);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+@media(max-width:560px){.future-chart-selection-values{grid-template-columns:repeat(2,minmax(0,1fr))}.future-chart-selection{padding:10px}}

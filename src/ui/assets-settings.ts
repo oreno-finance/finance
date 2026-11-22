@@ -5,6 +5,7 @@ import type { CategoryDefinition } from '../cloud/merchant-rules.js';
 import { CARDS } from '../models/types.js';
 import { lastDayOfNextMonth, localDay, matchingNisaRows } from '../cloud/asset-projection.js';
 import { forecastBankBalances } from '../cloud/salary-projection.js';
+import { reconcileBalance, type BalanceReconciliation } from '../cloud/balance-reconciliation.js';
 import { estimateMizuhoTransferAmount } from '../cloud/mizuho-transfer.js';
 import { DEFAULT_MIZUHO_PLAN } from '../cloud/assets.js'; /* finance-v148 */
 import { PayrollReadSession } from '../cloud/payroll-bridge.js';
@@ -90,6 +91,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
   let payrollOwner:LiveVault|null=null;
   const amounts=new Map<AssetAccountId,HTMLInputElement>();
   const latestTexts=new Map<AssetAccountId,HTMLElement>();
+  const reconciliationViews=new Map<AssetAccountId,HTMLElement>();
   const histories=new Map<AssetAccountId,HTMLElement>();
   const accountDetails=new Map<AssetAccountId,HTMLElement>();
   let mizuhoPlanDirty=false;
@@ -398,6 +400,55 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
         if(account.id==='rakuten-bank'&&!data.payrollDepositAccount)details.append(make('p','','給与の振込先は「設定」で登録できます。'));
         if(!details.childElementCount)details.append(make('p','','入出金の変動なし'));
       }else label.append(make('small','assets-balance-date','まず残高を登録してください。'));
+      const reconciliation=reconciliationViews.get(account.id)!;
+      reconciliation.replaceChildren();
+      let match:BalanceReconciliation|null=null;
+      try{match=reconcileBalance(data,account.id,records,available,data.payrollDepositAccount,payrollSynced,localDay(today));}
+      catch{reconciliation.append(make('p','assets-reconcile-unavailable','過去の残高を照合できませんでした。設定と記録を確認してください。'));}
+      if(match){
+        const report=match;
+        const gap=report.difference;
+        const block=document.createElement('details');
+        block.className=`assets-reconcile-card${gap!==0?' has-difference':' is-matched'}${report.valuationMayChange?' is-investment':''}`;
+        const summary=make('summary','assets-reconcile-summary');
+        const heading=make('span','assets-reconcile-title','前回予測と今回実績');
+        const text=make('strong','assets-reconcile-difference',gap===0?'予測と一致':`${gap>0?'+':'−'}${yen(Math.abs(gap))}`);
+        summary.append(heading,text);block.append(summary);
+        const body=make('div','assets-reconcile-body');
+        const pair=make('div','assets-reconcile-figures');
+        for(const [name,value] of [['前回の確認残高',report.previous.balance],['今回の予測残高',report.predicted],['今回の実際の残高',report.actual]] as const){
+          const cell=make('div','assets-reconcile-figure');cell.append(make('span','',name),make('strong','',yen(value)));pair.append(cell);
+        }
+        body.append(make('p','assets-reconcile-period',`${report.previousDay} → ${report.latestDay} の予測を照合`),pair);
+        if(gap!==0){
+          body.append(make('p','assets-reconcile-advice',report.valuationMayChange
+            ?'NISAの評価額には相場変動が含まれるため、差額は未記録の入出金を意味しません。'
+            :'未記録の入出金がないか確認してください。予測と実際のズレは、未反映の予定や設定変更でも発生します。'));
+          const findings:string[]=[];
+          if(report.provisionalEntries)findings.push(`予定のままの単発入出金：${report.provisionalEntries}件`);
+          if(report.unmappedCard)findings.push('引落口座が未設定のカード明細があります');
+          if(report.payrollNotReady)findings.push('給与データを取得できていません');
+          if(report.sameDayEntries)findings.push('今回の確認日と同日の予定が含まれています（確認時刻より後の取引かもしれません）');
+          if(findings.length){const hints=make('ul','assets-reconcile-findings');
+            for(const item of findings)hints.append(make('li','',item));body.append(hints);}
+          if(!report.valuationMayChange){
+            const action=addButton('入出金を確認・登録',()=>{
+              openOnce();
+              if(!onceDialog.open)return;
+              const kind=gap<0?'expense':'income';
+              $<HTMLFormElement>('assets-once-form').querySelector<HTMLInputElement>(`input[name="assets-once-kind"][value="${kind}"]`)!.checked=true;
+              if(kind==='expense')$<HTMLSelectElement>('assets-once-from').value=account.id;
+              else $<HTMLSelectElement>('assets-once-to').value=account.id;
+              onceFormFields();onceBaseline=onceSnapshot();
+            });
+            action.classList.add('assets-reconcile-action');body.append(action);
+          }
+        }
+        body.append(make('p','assets-reconcile-footnote','照合は日付単位の参考値です。確認当日の入出金や、後から変更した定期設定などは過去と一致しない場合があります。'));
+        block.append(body);reconciliation.append(block);
+      }else if(!reconciliation.childElementCount&&latest){
+        reconciliation.append(make('p','assets-reconcile-unavailable','前回の別日に確認した残高があると、予測と実績の差を表示します。'));
+      }
       const history=histories.get(account.id)!;history.replaceChildren();
       const items=data.snapshots.filter(x=>x.accountId===account.id).sort((a,b)=>b.observedAt.localeCompare(a.observedAt)||b.id.localeCompare(a.id));
       for(const item of items.slice(0,12)){
@@ -663,7 +714,8 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
     const count=make('span','assets-history-counter', '（0件）');count.id=`assets-history-count-${account.id}`;
     sum.append(count);historyDetails.append(sum);
     const history=make('div','assets-history-content');historyDetails.append(history);histories.set(account.id,history);
-    article.append(header,balance,fields,historyDetails);
+    const reconciliation=make('div','assets-reconciliation');reconciliationViews.set(account.id,reconciliation);
+    article.append(header,balance,reconciliation,fields,historyDetails);
     $(account.id==='rakuten-bank'||account.id==='mizuho-bank'?'assets-account-main':'assets-account-savings').append(article);
     const info=$<HTMLElement>('assets-account-info');
     const detailRow=make('div','assets-info-row');
