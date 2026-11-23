@@ -1,0 +1,63 @@
+/** Manual monthly confirmation for Rakuten -> Mizuho card funding.
+ * This is an encrypted CHECKLIST acknowledgement, never a bank transaction.
+ * Never modifies cash forecasts, bank balances or the card statement itself. */
+import {DEFAULT_MIZUHO_PLAN, type AssetsDocument} from '../cloud/assets.js';
+import {estimateMizuhoTransferAmount} from '../cloud/mizuho-transfer.js';
+import {shiftedDay} from './account-events.js';
+import type {MonthlyReport,MonthlySource} from '../summary/monthly-summary.js';
+
+export interface MizuhoFundingStatus {
+  month:string;
+  dueDate:string|null;
+  amount:number|null;
+  billConfirmed:boolean;
+  completed:boolean;
+  updatedAt:string|null;
+  periodOpen:boolean;
+  overdue:boolean;
+}
+/** The card's recorded payment date is the authority for its transfer deadline.
+ * If the bill isn't present, do NOT invent a transfer amount or due date. */
+export function mizuhoFundingStatusForMonth(
+  source:Pick<MonthlySource,'assets'>,
+  report:Pick<MonthlyReport,'period'|'cardLines'>,
+  today:string,
+):MizuhoFundingStatus|null {
+  const parsed=new Date(`${today}T00:00:00Z`);
+  if(!/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(today)||
+    !Number.isFinite(parsed.getTime())||parsed.toISOString().slice(0,10)!==today)
+    throw new Error('送金確認の日付が不正です。');
+  const plan=source.assets.mizuhoTransferPlan??DEFAULT_MIZUHO_PLAN;
+  if(!plan.enabled||source.assets.cardDebitAccounts?.['rakuten-mizuho']!=='mizuho-bank')return null;
+  const month=report.period;
+  if(!/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(month)||month>today.slice(0,7))
+    throw new Error('送金確認の対象月が不正です。');
+  const cards=report.cardLines.filter(c=>c.cardId==='rakuten-mizuho');
+  // Multiple different bills in one payment month make the target ambiguous.
+  const card=cards.length===1?cards[0]:null;
+  const dueDate=card?shiftedDay(card.paymentDate,-plan.leadDays):null;
+  const amount=card&&card.amount>0?estimateMizuhoTransferAmount(card.amount,plan.extraForSmallBills):null;
+  const receipt=source.assets.mizuhoFundingChecks?.[month];
+  const completed=receipt?.done===true;
+  const periodOpen=today>=`${month}-12`;
+  return {month,dueDate,amount,billConfirmed:card?.confirmation==='confirmed',
+    completed,updatedAt:completed?receipt?.updatedAt??null:null,periodOpen,
+    overdue:periodOpen&&!completed&&dueDate!==null&&today>dueDate};
+}
+/** Current-month UI keeps its original strict month contract. */
+export function mizuhoFundingStatus(
+  source:Pick<MonthlySource,'assets'>,
+  report:Pick<MonthlyReport,'period'|'cardLines'>,
+  today:string,
+):MizuhoFundingStatus|null {
+  if(report.period!==today.slice(0,7))throw new Error('送金確認の対象月が一致しません。');
+  return mizuhoFundingStatusForMonth(source,report,today);
+}
+
+/** Read-only. Confirmation does NOT count as proof of a completed bank transfer. */
+export function mizuhoFundingDescription(status:MizuhoFundingStatus):string {
+  if(status.completed)return '送金済みとして記録済み（手動確認）';
+  if(!status.periodOpen)return '毎月12日から送金確認できます';
+  if(status.overdue)return '送金期限を過ぎています。実際の振替を確認してください';
+  return status.dueDate===null?'請求明細未取得：送金期限・金額は確認できません':'送金の完了を確認してください';
+}

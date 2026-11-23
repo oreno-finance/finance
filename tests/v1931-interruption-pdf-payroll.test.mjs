@@ -48,8 +48,8 @@ test('oversized and excessive-page PDFs are rejected before extraction',async()=
   await assert.rejects(parsePdfFile({size:MAX_PDF_BYTES+1}),/15MB/);
   const code=readFileSync(new URL('../src/importers/pdf-reader.ts',import.meta.url),'utf8');
   assert.ok(code.indexOf('assertPdfLimits(file.size)')<code.indexOf('file.arrayBuffer()'));
-  assert.match(code,/try \{\s*assertPdfLimits\(file.size,pdf.numPages\)/);
-  assert.match(code,/finally \{ await pdf.destroy\(\); \}/);
+  assert.match(code,/try \{\s*const pdf\s*=\s*await task.promise;\s*assertPdfLimits\(file.size,pdf.numPages\)/);
+  assert.match(code,/finally \{ await task.destroy\(\); \}/);
 });
 
 test('stale Payroll data are retained in memory but excluded until explicit opt-in',()=>{

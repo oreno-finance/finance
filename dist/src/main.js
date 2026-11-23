@@ -1,6 +1,6 @@
 import { CARDS, calculatedTotal, getCard } from './models/types.js';
 import { parseStatementText } from './importers/statement-parser.js';
-import { parsePdfFile } from './importers/pdf-reader.js';
+import { parsePdfFile, assertPdfLimits } from './importers/pdf-reader.js';
 import { decodeCardCsv, identifyCardCsv, parseCardCsv } from './importers/card-csv.js';
 import { cardPaymentDate } from './importers/payment-date.js';
 import { prepareStatementRevision } from './importers/revision-review.js';
@@ -18,6 +18,7 @@ import { calendarBillingPeriod, filteredStatementIndices } from './ui/manage-fil
 import { recentMerchants } from './ui/recent-merchants.js';
 import { planCategoryBatch, categoryBatchChanged } from './ui/category-draft.js';
 import { initAssetsSettings } from './ui/assets-settings.js';
+import { measureFinancePhase } from './cloud/performance-diagnostics.js';
 import { initFutureProjection } from './ui/future-projection.js'; /* finance-v143 */
 import { canonicalStatementFilename } from './ui/statement-filename.js';
 import { initMonthlySummary } from './ui/monthly-summary.js'; /* finance-monthly-v140 */
@@ -118,7 +119,7 @@ function interruptionState() {
     if (cardSettingsUi?.isBusy())
         busy.push('カード設定の保存');
     if (subscriptionsUi?.isBusy())
-        busy.push('定期支出の保存');
+        busy.push('固定費の保存');
     if (reportsUi?.isBusy())
         busy.push('月次レポートの処理');
     if (cleanupBusy)
@@ -139,6 +140,8 @@ function interruptionState() {
         unsaved.push('カード設定');
     if (reportsUi?.isDirty())
         unsaved.push('月次レポートのメモ');
+    if (subscriptionsUi?.isDirty())
+        unsaved.push('固定費の編集');
     if (categoryDraft) {
         try {
             if (categoryBatchChanged(categoryPlan()))
@@ -884,12 +887,22 @@ function updateBatchStatus() {
     $('batch-description').textContent = otherErrors ? '不備がある明細は保存できません。' : '';
 }
 function render() {
-    applyCsvPaymentSettings();
-    refreshCardOptionLabels();
-    buildStatementList();
-    renderSummary();
-    renderRows();
-    updateBatchStatus();
+    // While parsing a batch, preserve draft state but defer expensive full
+    // rebuilds until it finishes. Revision confirmation remains interactive.
+    if (filesBusy && !revisionBusy) {
+        updateImportUploadFeedback();
+        return;
+    }
+    // Imports are expensive DOM work. Navigation back to Import calls render()
+    // explicitly, so hidden screens never need to rebuild their draft tables.
+    if (!$('import-view').classList.contains('hidden')) {
+        applyCsvPaymentSettings();
+        refreshCardOptionLabels();
+        buildStatementList();
+        renderSummary();
+        renderRows();
+        updateBatchStatus();
+    }
     if (!$('manage-view').classList.contains('hidden'))
         renderManager();
     if (!$('rules-view').classList.contains('hidden'))
@@ -1032,7 +1045,7 @@ async function startCloud() {
         showActivity('OneDriveの接続に時間がかかっています', 'working');
     }, 12000);
     try {
-        const client = await graphClientWithoutRedirect();
+        const client = await measureFinancePhase('startup.auth', () => graphClientWithoutRedirect());
         liveVault = new LiveVault(client);
         const authAccountId = activeMicrosoftAccountId();
         liveVaultRememberContext = authAccountId ? { clientId: clientIdForTab(), homeAccountId: authAccountId } : null;
@@ -1045,7 +1058,7 @@ async function startCloud() {
         assetsUi?.render();
         futureUi?.render();
         cardSettingsUi?.render();
-        const exists = await liveVault.discover();
+        const exists = await measureFinancePhase('startup.discover', () => liveVault.discover());
         vaultDiscoveryCompleted = true;
         finishActivity('OneDrive');
         updateCloudStatus();
@@ -1064,7 +1077,8 @@ async function startCloud() {
                             liveVault.lock();
                             return;
                         }
-                        appendCloudRecordsKeepingDrafts(liveVault.records());
+                        const restoredRecords = liveVault.records();
+                        appendCloudRecordsKeepingDrafts(restoredRecords);
                         lastCloudCheckAt = Date.now();
                         renderRules();
                         assetsUi?.render();
@@ -1072,7 +1086,7 @@ async function startCloud() {
                         cardSettingsUi?.render();
                         void assetsUi?.refreshPayroll();
                         updateCloudStatus();
-                        operationResult(`このブラウザの保存鍵で自動復号しました（${liveVault.records().length}件）。`);
+                        operationResult(`このブラウザの保存鍵で自動復号しました（${restoredRecords.length}件）。`);
                         restored = true;
                     }
                 }
@@ -1730,7 +1744,7 @@ function renderManager() {
     const originalButton = $('manage-original-download');
     const savedId = savedIds.get(s);
     originalButton.disabled = batchBusy || filesBusy || !liveVault?.unlocked || !savedId ||
-        !liveVault.records().some(record => record.id === savedId && !!record.originalId);
+        !liveVault.readonlyRecords().some(record => record.id === savedId && !!record.originalId);
     originalButton.title = s.sourceKind === 'pdf' ? '復号したPDFが端末のダウンロード先に保存されます。' : 'CSV・テキスト貼り付け明細にPDF原本はありません。';
     $('manage-add-row').disabled = !!activeAnalysisDrilldown;
     $('manage-delete').disabled = batchBusy || filesBusy;
@@ -2686,7 +2700,10 @@ async function handleFiles(files) {
     showActivity('明細を読み込み中…', 'working');
     let accepted = 0, rejected = 0, failed = 0;
     try {
+        let processed = 0;
         for (const file of chosen) {
+            processed++;
+            showActivity(`明細を読み込み中… (${processed}/${chosen.length})`, 'working');
             const name = file.name.toLowerCase();
             if (!name.endsWith('.pdf') && !name.endsWith('.csv')) {
                 const reason = `${file.name}: CSVまたはPDF形式ではありません。`;
@@ -2707,8 +2724,13 @@ async function handleFiles(files) {
                     result = await acceptStatement(parseCardCsv(text, file.name, date));
                 }
                 else {
-                    const parsed = await parsePdfFile(file);
-                    result = await acceptStatement(parsed, { bytes: new Uint8Array(await file.arrayBuffer()), mime: 'application/pdf' });
+                    // Check the 15 MB limit BEFORE allocating a byte buffer.
+                    assertPdfLimits(file.size);
+                    // Read the Blob once. PDF.js receives its own copy because its
+                    // worker may transfer (detach) the buffer during extraction.
+                    const originalBytes = new Uint8Array(await file.arrayBuffer());
+                    const parsed = await parsePdfFile(file, originalBytes);
+                    result = await acceptStatement(parsed, { bytes: originalBytes, mime: 'application/pdf' });
                 }
                 if (result)
                     accepted++;
@@ -2897,18 +2919,17 @@ function init() {
             setMobileMenuOpen(false);
     });
     futureUi = initFutureProjection(() => !liveVault?.unlocked ? null : { assets: liveVault.assetSettings(), records: liveVault.records() });
-    cardSettingsUi = initCardSettings(() => liveVault, () => { render(); summaryUi?.render(); homeUi?.render(); analysisUi?.render(); });
+    cardSettingsUi = initCardSettings(() => liveVault, () => { render(); });
     assetsUi = initAssetsSettings(() => liveVault, categories, message => {
         operationResult(message);
-        summaryUi?.render();
-        futureUi?.render();
-        homeUi?.render();
-        analysisUi?.render();
-    }, () => { summaryUi?.render(); homeUi?.render(); analysisUi?.render(); });
+        // showView() always renders the destination on entry. Update only the
+        // currently visible view rather than rebuilding four hidden pages.
+        render();
+    }, () => { render(); });
     const homeSource = () => {
         if (!liveVault?.unlocked)
             return null;
-        return { records: liveVault.records(), rules: liveVault.merchantRules(),
+        return { records: liveVault.readonlyRecords(), rules: liveVault.merchantRules(),
             categories: liveVault.merchantCategories(), assets: liveVault.assetSettings(),
             payroll: assetsUi?.payrollSnapshot() ?? { ready: false, syncedAt: null, entries: [] } };
     };
@@ -2928,6 +2949,10 @@ function init() {
             }
             homeNavigationPending = true;
             showView(destination);
+        }, saveMizuhoFunding: async (month, done) => {
+            if (!liveVault?.unlocked)
+                throw new Error('OneDrive保管庫を解除してください。');
+            await liveVault.setMizuhoFundingChecked(month, done);
         } });
     analysisUi = initAnalysis({ source: homeSource, openMonth: (period) => { summaryUi?.setPeriod(period); showView('summary'); },
         openDrilldown: (request) => {
@@ -2944,12 +2969,22 @@ function init() {
             showView('manage');
         }, openSettings: () => showView('settings') });
     subscriptionsUi = initSubscriptions({ source: homeSource, vault: () => liveVault,
-        onSaved: () => { homeUi?.render(); }, openAccountSettings: () => showView('assets') });
+        onSaved: () => {
+            if (!$('home-view').classList.contains('hidden'))
+                homeUi?.render();
+            if (!$('summary-view').classList.contains('hidden'))
+                summaryUi?.render();
+            if (!$('analysis-view').classList.contains('hidden'))
+                analysisUi?.render();
+            if (!$('assets-page').classList.contains('hidden'))
+                assetsUi?.render();
+        }, openAccountSettings: () => showView('assets') });
     reportsUi = initMonthlyReports({ source: homeSource, vault: () => liveVault, openMonth: (period) => { summaryUi?.setPeriod(period); showView('summary'); } });
     summaryUi = initMonthlySummary({
         source: homeSource,
         openReport: (period) => { reportsUi?.openPeriod(period); showView('reports'); },
         openRecurring: openRecurringForReview,
+        openFixedCost: (id) => { showView('subscriptions'); subscriptionsUi?.openFixedCost(id); },
         openDrilldown: (request) => {
             if (!homeSource()) {
                 toast('先にOneDrive保管庫を解除してください。');
@@ -3468,7 +3503,8 @@ function init() {
                 if (browserSaveFailure)
                     $('cloud-remember-status').textContent = browserSaveFailure;
                 modalClose(true);
-                appendCloudRecordsKeepingDrafts(liveVault.records());
+                const unlockedRecords = liveVault.records();
+                appendCloudRecordsKeepingDrafts(unlockedRecords);
                 lastCloudCheckAt = Date.now();
                 renderRules();
                 assetsUi?.render();
@@ -3480,7 +3516,7 @@ function init() {
                 if (browserSaveFailure)
                     operationResult(browserSaveFailure, 'bad');
                 else if (mode === 'unlock')
-                    toast(`OneDriveから${liveVault.records().length}件を復号しました。`);
+                    toast(`OneDriveから${unlockedRecords.length}件を復号しました。`);
             }
             catch (error) {
                 $('vault-error').textContent = error instanceof Error ? error.message : '認証できませんでした。';

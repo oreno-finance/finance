@@ -1,6 +1,6 @@
 /** Read-only asset forecast: no remote writes, guessed debit accounts, or future salary estimates. */
 import { ASSET_ACCOUNTS, latestBalance, oneTimeAccountDelta, recurringCoveredByOneTime, nisaRuleOnDay, type AssetAccountId, type AssetsDocument, type BalanceSnapshot, type RecurringEntry } from './assets.js';
-import { recurringOccursOn } from './recurring-schedule.js'; /* finance-monthly-v142 */
+import { recurringOccursOn, recurringEffectiveAmount } from './recurring-schedule.js'; /* finance-monthly-v142 */
 import type { CloudRecord } from './merge.js';
 import { depositedIncomeBetween, type PayrollIncomeEntry } from './payroll-income.js';
 
@@ -79,8 +79,11 @@ export function forecastAssets(
     for(let t=from+86400000;t<=to;t+=86400000){
       const day=new Date(t).toISOString().slice(0,10);
       for(const entry of doc.recurring){
-        const delta=accountDelta(entry,account.id);
-        if(delta!==0&&recurringOccursOn(entry,day)&&!recurringCoveredByOneTime(entry,day,doc.oneTime)){recurringDelta+=delta;forecastEvents++;}
+        if(entry.fromAccountId!==account.id&&entry.toAccountId!==account.id)continue;
+        if(!recurringOccursOn(entry,day))continue;
+        const historic={...entry,amount:recurringEffectiveAmount(entry,day)};
+        const delta=accountDelta(historic,account.id);
+        if(delta!==0&&!recurringCoveredByOneTime(historic,day,doc.oneTime)){recurringDelta+=delta;forecastEvents++;}
       }
     }
     // Do not replay movements already incorporated in a manually checked balance.

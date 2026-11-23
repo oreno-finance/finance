@@ -1,6 +1,6 @@
 /** Read-only cross-period analysis. Finance's payment-date monthlyReport remains the source of truth.
  * Never turn absent statements, income or future projections into verified zeroes. */
-import { changePeriod, monthlyReport, isValidPeriod } from '../summary/monthly-summary.js';
+import { changePeriod, monthlyReport, isValidPeriod, prepareMonthlyReports } from '../summary/monthly-summary.js';
 const add = (a, b) => {
     const result = a + b;
     if (!Number.isSafeInteger(result))
@@ -20,8 +20,8 @@ function status(report, period) {
         return 'provisional';
     return 'registered';
 }
-function asMonth(period, source) {
-    const report = monthlyReport(period, source);
+function asMonth(period, source, prepared) {
+    const report = monthlyReport(period, source, prepared);
     const coverage = status(report, period);
     const expense = report.cardOutflow === null ? null : add(add(report.cardOutflow, report.recurringExpense), report.oneTimeExpense);
     const livingExpense = report.livingOutflow === null ? null : add(add(report.livingOutflow, report.recurringExpense), report.oneTimeExpense);
@@ -62,7 +62,10 @@ export function analyzePeriods(source, periods, currentPeriod) {
         throw new Error('分析対象の年月が不正です。');
     }
     const adjusted = { ...source, currentPeriod };
-    const months = periods.map(period => asMonth(period, adjusted));
+    // Previously this recreated the global duplicate-index and scanned every
+    // saved statement for EACH month, including a 12-month analysis.
+    const prepared = prepareMonthlyReports(source.records);
+    const months = periods.map(period => asMonth(period, adjusted, prepared));
     const knownExpenses = months.filter(month => month.expense !== null).map(month => ({ period: month.period, amount: month.expense }));
     const income = sum(months.map(month => month.income)), expense = sum(months.map(month => month.expense));
     const livingExpense = sum(months.map(month => month.livingExpense)), balance = sum(months.map(month => month.balance));

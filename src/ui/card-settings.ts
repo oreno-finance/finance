@@ -1,6 +1,7 @@
 /** Flat card settings: select one card, edit only its actual properties.
  * Card preference writes remain a single encrypted OneDrive assets update. */
 import {CARDS} from '../models/types.js';
+import {DEFAULT_POINT_RATES} from '../summary/point-benefits.js';
 import {validateCardPreferences,type CardPreference,type AssetAccountId} from '../cloud/assets.js';
 import {CloudWriteUncertainError,type LiveVault} from '../cloud/live-vault.js';
 import { showActivity, simpleActivity } from './activity-feedback.js';
@@ -20,7 +21,7 @@ function dayInput(value:string):HTMLInputElement{
   const el=document.createElement('input');el.type='number';el.min='1';el.max='31';el.step='1';el.inputMode='numeric';el.value=value;return el;
 }
 interface Controls {name:HTMLInputElement;mode:HTMLSelectElement;month:HTMLSelectElement;day:HTMLInputElement;
- paymentMonth?:HTMLSelectElement;paymentDay?:HTMLInputElement;rate:HTMLInputElement;debit:HTMLSelectElement;panel:HTMLElement}
+ paymentMonth?:HTMLSelectElement;paymentDay?:HTMLInputElement;rate:HTMLInputElement;effectiveOn:HTMLInputElement;debit:HTMLSelectElement;panel:HTMLElement}
 export function initCardSettings(getVault:()=>LiveVault|null,onSaved:()=>void):CardSettingsUi{
   const form=document.getElementById('settings-card-form') as HTMLFormElement;
   const list=document.getElementById('settings-card-list')!;
@@ -76,6 +77,10 @@ export function initCardSettings(getVault:()=>LiveVault|null,onSaved:()=>void):C
       const points=make('div','card-setting-extra card-setting-points');
       const rate=document.createElement('input');rate.type='number';rate.min='0';rate.max='100';rate.step='0.01';rate.inputMode='decimal';rate.placeholder='1.2';rate.value=pref?.pointRatePercent===undefined?'':String(pref.pointRatePercent);
       points.append(field('還元率（%）',rate));
+      const effectiveOn=document.createElement('input');effectiveOn.type='date';
+      const today=new Date();effectiveOn.value=`${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+      effectiveOn.setAttribute('aria-label',`${card.name}の還元率の適用開始日`);
+      points.append(field('変更の適用開始日',effectiveOn));
 
       const reminder=make('div','card-setting-extra card-setting-reminder');
       const mode=select([['auto','自動で案内'],['custom','案内日を指定'],['none','案内しない']],pref?.review===null?'none':pref?.review?'custom':'auto');
@@ -88,7 +93,7 @@ export function initCardSettings(getVault:()=>LiveVault|null,onSaved:()=>void):C
       extras.append(points,reminder);panel.append(extras);
       panels.append(panel);
       const pc=(panel as HTMLElement & {paymentControls?:[HTMLSelectElement,HTMLInputElement]}).paymentControls;
-      rows.set(card.id,{name,mode,month,day,paymentMonth:pc?.[0],paymentDay:pc?.[1],rate,debit,panel});
+      rows.set(card.id,{name,mode,month,day,paymentMonth:pc?.[0],paymentDay:pc?.[1],rate,effectiveOn,debit,panel});
     }
     list.append(picker,panels);if(!CARDS.some(c=>c.id===selectedCardId))selectedCardId=CARDS[0]!.id;
     activate(selectedCardId);
@@ -126,12 +131,22 @@ export function initCardSettings(getVault:()=>LiveVault|null,onSaved:()=>void):C
             if(!/^\d{1,2}$/.test(row.paymentDay.value)||n<1||n>31)throw new Error(`${card.name}の引落日を1〜31日で入力してください。`);
             pref.payment={monthOffset:Number(row.paymentMonth.value) as 0|1,day:n};
           }
-          if(row.rate.value.trim()){
-            const rate=Number(row.rate.value);
-            if(!Number.isFinite(rate)||rate<0||rate>100||Math.abs(rate*100-Math.round(rate*100))>1e-8)
-              throw new Error(`${card.name}の還元率は0〜100%、小数第2位までで入力してください。`);
-            pref.pointRatePercent=rate;
+          const old=prior[card.id];
+          const oldRate=old?.pointRatePercent??DEFAULT_POINT_RATES[card.id]??0;
+          const rate=row.rate.value.trim()?Number(row.rate.value):(DEFAULT_POINT_RATES[card.id]??0);
+          if(!Number.isFinite(rate)||rate<0||rate>100||Math.abs(rate*100-Math.round(rate*100))>1e-8)
+            throw new Error(`${card.name}の還元率は0〜100%、小数第2位までで入力してください。`);
+          if(old?.pointRateHistory)pref.pointRateHistory=structuredClone(old.pointRateHistory);
+          if(rate!==oldRate){
+            const effectiveOn=row.effectiveOn.value;
+            if(!/^\d{4}-\d{2}-\d{2}$/.test(effectiveOn))throw new Error(`${card.name}の適用開始日を確認してください。`);
+            const history=pref.pointRateHistory??[{effectiveOn:'1900-01-01',ratePercent:oldRate}];
+            if(effectiveOn<history.at(-1)!.effectiveOn)throw new Error(`${card.name}の適用日は直近の変更日以降にしてください。`);
+            if(effectiveOn===history.at(-1)!.effectiveOn)history[history.length-1]={effectiveOn,ratePercent:rate};
+            else history.push({effectiveOn,ratePercent:rate});
+            pref.pointRateHistory=history;
           }
+          if(row.rate.value.trim()||old?.pointRatePercent!==undefined||rate!==oldRate)pref.pointRatePercent=rate;
           if(Object.keys(pref).length)next[card.id]=pref;
         }
         validateCardPreferences(next);

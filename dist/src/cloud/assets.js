@@ -1,4 +1,5 @@
 import { CARDS } from '../models/types.js';
+import { validateFixedCosts, validatePricing, validatePauses } from '../fixed-costs/contracts.js';
 /** Finance assets settings are independent from statements and merchant rules.
  * Snapshots are confirmed balances, not reconstructed transactions. */
 export const ASSET_ACCOUNTS = [
@@ -24,6 +25,25 @@ export function recurringCoveredByOneTime(occurrence, day, entries = []) {
     return entries.some(entry => entry.date === day && entry.kind === occurrence.kind &&
         entry.amount === occurrence.amount && entry.fromAccountId === occurrence.fromAccountId &&
         entry.toAccountId === occurrence.toAccountId && entry.name.normalize('NFKC').trim().toLocaleLowerCase() === name);
+}
+/** Each month is independently merged between devices. */
+export function validateMizuhoFundingChecks(raw) {
+    if (raw === undefined)
+        return undefined;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.keys(raw).length > 240)
+        throw new Error('みずほ送金確認の設定が不正です。');
+    const result = Object.create(null);
+    for (const [month, item] of Object.entries(raw)) {
+        if (!/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(month) || !item || typeof item !== 'object' || Array.isArray(item))
+            throw new Error('みずほ送金確認の年月が不正です。');
+        const v = item;
+        if (typeof v.done !== 'boolean' || typeof v.updatedAt !== 'string' || v.updatedAt.length > 35 ||
+            !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(v.updatedAt) ||
+            !Number.isFinite(Date.parse(v.updatedAt)) || new Date(v.updatedAt).toISOString() !== v.updatedAt)
+            throw new Error('みずほ送金確認の記録が不正です。');
+        result[month] = { done: v.done, updatedAt: v.updatedAt };
+    }
+    return result;
 }
 export const DEFAULT_MIZUHO_PLAN = { enabled: false, leadDays: 3, extraForSmallBills: true };
 export function validateMizuhoPlan(value) {
@@ -76,6 +96,23 @@ export function validateCardPreferences(raw) {
                 item.pointRatePercent < 0 || item.pointRatePercent > 100 || Math.abs(Math.round(item.pointRatePercent * 100) - item.pointRatePercent * 100) > 1e-8)
                 throw new Error('ポイント概算還元率は0〜100%、小数第2位までで入力してください。');
             entry.pointRatePercent = item.pointRatePercent;
+        }
+        if (item.pointRateHistory !== undefined) {
+            if (!Array.isArray(item.pointRateHistory) || item.pointRateHistory.length < 1 || item.pointRateHistory.length > 256)
+                throw new Error('ポイント還元率の履歴が不正です。');
+            let previous = '';
+            entry.pointRateHistory = item.pointRateHistory.map(change => {
+                if (!change || typeof change !== 'object' || typeof change.effectiveOn !== 'string' ||
+                    !/^\d{4}-\d{2}-\d{2}$/.test(change.effectiveOn) ||
+                    Number.isNaN(Date.parse(`${change.effectiveOn}T00:00:00Z`)) ||
+                    new Date(`${change.effectiveOn}T00:00:00Z`).toISOString().slice(0, 10) !== change.effectiveOn ||
+                    change.effectiveOn <= previous || typeof change.ratePercent !== 'number' ||
+                    !Number.isFinite(change.ratePercent) || change.ratePercent < 0 || change.ratePercent > 100 ||
+                    Math.abs(Math.round(change.ratePercent * 100) - change.ratePercent * 100) > 1e-8)
+                    throw new Error('ポイント還元率の履歴が不正です。');
+                previous = change.effectiveOn;
+                return { effectiveOn: change.effectiveOn, ratePercent: change.ratePercent };
+            });
         }
         if (Object.keys(entry).length)
             result[id] = entry;
@@ -180,7 +217,15 @@ export function validateRecurring(raw) {
             (raw.frequency === 'monthly' ? raw.monthOfYear !== null : !Number.isInteger(raw.monthOfYear) || raw.monthOfYear === null || raw.monthOfYear < 1 || raw.monthOfYear > 12))
             throw new Error('定期入出金の日付設定が不正です。');
     }
-    return { ...raw, name: raw.name.trim() };
+    if (raw.priceKind !== undefined && !['fixed', 'variable'].includes(raw.priceKind))
+        throw new Error('定期支出の金額種類が不正です。');
+    if (raw.note !== undefined && (typeof raw.note !== 'string' || raw.note.length > 500))
+        throw new Error('定期支出のメモが不正です。');
+    const pricing = raw.pricing === undefined ? undefined : validatePricing(raw.pricing, raw.startOn);
+    const pauses = raw.pauses === undefined ? undefined : validatePauses(raw.pauses, raw.startOn, raw.endOn);
+    if (pricing && pricing.at(-1).amount !== raw.amount)
+        throw new Error('定期支出の料金履歴と最新金額が一致しません。');
+    return { ...raw, name: raw.name.trim(), ...(pricing ? { pricing } : {}), ...(pauses ? { pauses } : {}) };
 }
 export function validateNisaCardRule(raw) {
     if (raw == null)
@@ -309,11 +354,13 @@ export function validateAssets(raw) {
     return { format: 'finance-assets-v1', snapshots, recurring, deletedSnapshots, deletedRecurring, conflicts: clone(doc.conflicts), nisaCardRule: validateNisaCardRule(doc.nisaCardRule),
         ...(doc.nisaCardRuleHistory !== undefined ? { nisaCardRuleHistory: validateNisaRuleHistory(doc.nisaCardRuleHistory) } : {}), payrollDepositAccount: validatePayrollDepositAccount(doc.payrollDepositAccount),
         ...(validateMizuhoPlan(doc.mizuhoTransferPlan) ? { mizuhoTransferPlan: validateMizuhoPlan(doc.mizuhoTransferPlan) } : {}),
+        ...(doc.mizuhoFundingChecks !== undefined ? { mizuhoFundingChecks: validateMizuhoFundingChecks(doc.mizuhoFundingChecks) } : {}),
         payrollAutoPassphrase: validatePayrollAutoPassphrase(doc.payrollAutoPassphrase),
         ...(validateBirthMonth(doc.birthMonth) ? { birthMonth: validateBirthMonth(doc.birthMonth) } : {}),
         ...(doc.cardDebitAccounts !== undefined ? { cardDebitAccounts: validateCardDebitAccounts(doc.cardDebitAccounts) } : {}),
         ...(doc.cardPreferences !== undefined ? { cardPreferences: validateCardPreferences(doc.cardPreferences) } : {}),
         ...(doc.cardRecurringDecisions !== undefined ? { cardRecurringDecisions: validateCardRecurringDecisions(doc.cardRecurringDecisions) } : {}),
+        ...(doc.fixedCosts !== undefined ? { fixedCosts: validateFixedCosts(doc.fixedCosts) } : {}),
         ...(doc.oneTime !== undefined ? { oneTime } : {}), ...(doc.deletedOneTime !== undefined ? { deletedOneTime } : {}) };
 }
 export function latestBalance(doc, account, asOf) {
@@ -351,8 +398,9 @@ export function detectAssetsEditCollisions(base, local, remote) {
         }
     };
     collection(base.snapshots, local.snapshots, remote.snapshots, base.deletedSnapshots, local.deletedSnapshots, remote.deletedSnapshots, ['accountId', 'balance', 'observedAt']);
-    collection(base.recurring, local.recurring, remote.recurring, base.deletedRecurring, local.deletedRecurring, remote.deletedRecurring, ['name', 'amount', 'kind', 'fromAccountId', 'toAccountId', 'frequency', 'dayOfMonth', 'monthOfYear', 'weekday', 'startOn', 'endOn', 'categoryId', 'enabled']);
+    collection(base.recurring, local.recurring, remote.recurring, base.deletedRecurring, local.deletedRecurring, remote.deletedRecurring, ['name', 'amount', 'kind', 'fromAccountId', 'toAccountId', 'frequency', 'dayOfMonth', 'monthOfYear', 'weekday', 'startOn', 'endOn', 'categoryId', 'enabled', 'pricing', 'pauses', 'priceKind', 'note']);
     collection(base.oneTime ?? [], local.oneTime ?? [], remote.oneTime ?? [], base.deletedOneTime ?? [], local.deletedOneTime ?? [], remote.deletedOneTime ?? [], ['date', 'name', 'amount', 'kind', 'status', 'fromAccountId', 'toAccountId', 'cardFunding']);
+    collection(base.fixedCosts ?? [], local.fixedCosts ?? [], remote.fixedCosts ?? [], [], [], [], ['name', 'payment', 'cardId', 'merchantKey', 'categoryId', 'frequency', 'dayOfMonth', 'monthOfYear', 'weekday', 'startOn', 'endOn', 'amount', 'priceKind', 'pricing', 'pauses', 'note', 'updatedAt']);
     sameEdit('nisa-card-rule', 'nisaCardRule', nisaSettings(base), nisaSettings(local), nisaSettings(remote));
     sameEdit('payroll-deposit-account', 'payrollDepositAccount', base.payrollDepositAccount ?? null, local.payrollDepositAccount ?? null, remote.payrollDepositAccount ?? null);
     sameEdit('payroll-auto-credential', 'payrollAutoPassphrase', base.payrollAutoPassphrase ?? null, local.payrollAutoPassphrase ?? null, remote.payrollAutoPassphrase ?? null);
@@ -363,6 +411,8 @@ export function detectAssetsEditCollisions(base, local, remote) {
         sameEdit('card-preferences', id, base.cardPreferences?.[id], local.cardPreferences?.[id], remote.cardPreferences?.[id]);
     for (const id of new Set([...Object.keys(base.cardRecurringDecisions ?? {}), ...Object.keys(local.cardRecurringDecisions ?? {}), ...Object.keys(remote.cardRecurringDecisions ?? {})]))
         sameEdit('card-recurring-decisions', id, base.cardRecurringDecisions?.[id], local.cardRecurringDecisions?.[id], remote.cardRecurringDecisions?.[id]);
+    for (const month of new Set([...Object.keys(base.mizuhoFundingChecks ?? {}), ...Object.keys(local.mizuhoFundingChecks ?? {}), ...Object.keys(remote.mizuhoFundingChecks ?? {})]))
+        sameEdit('mizuho-funding', month, base.mizuhoFundingChecks?.[month], local.mizuhoFundingChecks?.[month], remote.mizuhoFundingChecks?.[month]);
     sameEdit('mizuho-transfer-plan', 'mizuhoTransferPlan', base.mizuhoTransferPlan, local.mizuhoTransferPlan, remote.mizuhoTransferPlan);
     return collisions;
 }
@@ -439,8 +489,9 @@ export function mergeAssets(base, local, remote, now = new Date().toISOString(),
         return { entries, deleted: [...deleted] };
     };
     const snapshots = mergeGroup(base.snapshots, local.snapshots, remote.snapshots, base.deletedSnapshots, local.deletedSnapshots, remote.deletedSnapshots, ['accountId', 'balance', 'observedAt']);
-    const recurring = mergeGroup(base.recurring, local.recurring, remote.recurring, base.deletedRecurring, local.deletedRecurring, remote.deletedRecurring, ['name', 'amount', 'kind', 'fromAccountId', 'toAccountId', 'frequency', 'dayOfMonth', 'monthOfYear', 'weekday', 'startOn', 'endOn', 'categoryId', 'enabled']);
+    const recurring = mergeGroup(base.recurring, local.recurring, remote.recurring, base.deletedRecurring, local.deletedRecurring, remote.deletedRecurring, ['name', 'amount', 'kind', 'fromAccountId', 'toAccountId', 'frequency', 'dayOfMonth', 'monthOfYear', 'weekday', 'startOn', 'endOn', 'categoryId', 'enabled', 'pricing', 'pauses', 'priceKind', 'note']);
     const oneTimes = mergeGroup(base.oneTime ?? [], local.oneTime ?? [], remote.oneTime ?? [], base.deletedOneTime ?? [], local.deletedOneTime ?? [], remote.deletedOneTime ?? [], ['date', 'name', 'amount', 'kind', 'status', 'fromAccountId', 'toAccountId', 'cardFunding']);
+    const fixedCosts = mergeGroup(base.fixedCosts ?? [], local.fixedCosts ?? [], remote.fixedCosts ?? [], [], [], [], ['name', 'payment', 'cardId', 'merchantKey', 'categoryId', 'frequency', 'dayOfMonth', 'monthOfYear', 'weekday', 'startOn', 'endOn', 'amount', 'priceKind', 'pricing', 'pauses', 'note', 'updatedAt']);
     const baseline = nisaSettings(base), left = nisaSettings(local), right = nisaSettings(remote);
     let nisa;
     if (same(left, baseline))
@@ -506,6 +557,15 @@ export function mergeAssets(base, local, remote, now = new Date().toISOString(),
         if (!same(left, original) && !same(right, original) && !same(left, right))
             conflicts.push({ itemId: 'card-recurring-decisions', field: id, discarded: right ?? null, chosen: left ?? null, at: now });
     }
+    const mizuhoFundingChecks = {};
+    for (const month of new Set([...Object.keys(base.mizuhoFundingChecks ?? {}), ...Object.keys(local.mizuhoFundingChecks ?? {}), ...Object.keys(remote.mizuhoFundingChecks ?? {})])) {
+        const original = base.mizuhoFundingChecks?.[month], left = local.mizuhoFundingChecks?.[month], right = remote.mizuhoFundingChecks?.[month];
+        const value = same(left, original) ? right : left;
+        if (value)
+            mizuhoFundingChecks[month] = clone(value);
+        if (!same(left, original) && !same(right, original) && !same(left, right))
+            conflicts.push({ itemId: 'mizuho-funding', field: month, discarded: right ?? null, chosen: left ?? null, at: now });
+    }
     const bPlan = base.mizuhoTransferPlan, lPlan = local.mizuhoTransferPlan, rPlan = remote.mizuhoTransferPlan;
     const plan = same(lPlan, bPlan) ? rPlan : lPlan;
     if (!same(lPlan, bPlan) && !same(rPlan, bPlan) && !same(lPlan, rPlan))
@@ -514,7 +574,10 @@ export function mergeAssets(base, local, remote, now = new Date().toISOString(),
         deletedSnapshots: snapshots.deleted, deletedRecurring: recurring.deleted, conflicts: conflicts.slice(-200), nisaCardRule, ...(nisa.nisaCardRuleHistory ? { nisaCardRuleHistory: nisa.nisaCardRuleHistory } : {}), payrollDepositAccount, payrollAutoPassphrase,
         ...(birthMonth ? { birthMonth } : {}), ...(Object.keys(accounts).length ? { cardDebitAccounts: accounts } : {}),
         ...(Object.keys(cardPreferences).length ? { cardPreferences } : {}),
-        ...(Object.keys(cardRecurringDecisions).length ? { cardRecurringDecisions } : {}), ...(plan ? { mizuhoTransferPlan: plan } : {}), ...(base.oneTime !== undefined || local.oneTime !== undefined || remote.oneTime !== undefined ? { oneTime: oneTimes.entries } : {}),
+        ...(Object.keys(cardRecurringDecisions).length ? { cardRecurringDecisions } : {}),
+        ...(base.fixedCosts !== undefined || local.fixedCosts !== undefined || remote.fixedCosts !== undefined ? { fixedCosts: fixedCosts.entries } : {}),
+        ...(plan ? { mizuhoTransferPlan: plan } : {}),
+        ...(base.mizuhoFundingChecks !== undefined || local.mizuhoFundingChecks !== undefined || remote.mizuhoFundingChecks !== undefined ? { mizuhoFundingChecks } : {}), ...(base.oneTime !== undefined || local.oneTime !== undefined || remote.oneTime !== undefined ? { oneTime: oneTimes.entries } : {}),
         ...(base.deletedOneTime !== undefined || local.deletedOneTime !== undefined || remote.deletedOneTime !== undefined ? { deletedOneTime: oneTimes.deleted } : {}) });
 }
 export function describeAssetsEditCollisions(base, local, remote, collisions) {
@@ -549,6 +612,8 @@ export function describeAssetsEditCollisions(base, local, remote, collisions) {
         }
         else if (item.itemId === 'mizuho-transfer-plan')
             label = 'みずほ送金予測';
+        else if (item.itemId === 'mizuho-funding')
+            label = `みずほ銀行への${item.field}分送金確認`;
         else if (item.itemId === 'card-preferences')
             label = `カード設定（${CARDS.find(c => c.id === item.field)?.name ?? item.field}）`;
         else if (item.itemId === 'card-recurring-decisions')
@@ -586,6 +651,10 @@ export function describeAssetsEditCollisions(base, local, remote, collisions) {
         else if (item.itemId === 'card-debit-accounts') {
             left = local.cardDebitAccounts?.[item.field];
             right = remote.cardDebitAccounts?.[item.field];
+        }
+        else if (item.itemId === 'mizuho-funding') {
+            left = local.mizuhoFundingChecks?.[item.field];
+            right = remote.mizuhoFundingChecks?.[item.field];
         }
         else {
             const name = item.field;

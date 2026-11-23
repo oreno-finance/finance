@@ -1,7 +1,7 @@
 /** Monthly summary view. DOM updates only; all financial figures are computed from vault snapshots. */
-import { monthlyReport, changePeriod } from '../summary/monthly-summary.js';
+import { monthlyReport, prepareMonthlyReports, changePeriod } from '../summary/monthly-summary.js';
 import { PALETTE } from '../cloud/merchant-rules.js';
-import { monthlyPointBenefits } from '../summary/point-benefits.js';
+import { pointBenefitsFromMonthlyReport } from '../summary/point-benefits.js';
 import { pointBenefitsSection } from './point-benefits.js';
 import { bankTimeline } from '../summary/bank-timeline.js';
 import { bankChartData } from './bank-chart-data.js';
@@ -248,8 +248,9 @@ export function initMonthlySummary(deps) {
         }
         let report, prev;
         try {
-            report = monthlyReport(period, source);
-            prev = monthlyReport(changePeriod(period, -1), source);
+            const prepared = prepareMonthlyReports(source.records);
+            report = monthlyReport(period, source, prepared);
+            prev = monthlyReport(changePeriod(period, -1), source, prepared);
         }
         catch (err) {
             main.append(element('div', 'panel monthly-lock', `集計できませんでした：${err instanceof Error ? err.message : 'データエラー'}`));
@@ -268,16 +269,19 @@ export function initMonthlySummary(deps) {
         if (report.cardOutflow === null)
             alert.append(element('p', '', 'この月に集計できるカード明細がありません（未登録または要修正）。計算上の引落額は0円として扱いますが、実際に0円とは確認できていません。'));
         if (report.recurringCardOverlap) {
-            alert.prepend(element('strong', 'monthly-overlap-warning', '要確認：カードと銀行の定期支出が重複している可能性があります。収支は両方を含む暫定的な登録額です。'));
-            alert.append(element('p', '', `名称・金額が一致する定期支出が${report.recurringCardOverlap}件あります。実際の支払いを照合し、二重登録なら口座管理で修正してください。`));
+            alert.prepend(element('strong', 'monthly-overlap-warning', '要確認：カードと定期支出が重複している可能性があります。収支は両方を含む暫定的な登録額です。'));
+            alert.append(element('p', '', `名称・金額が一致する定期支出が${report.recurringCardOverlap}件あります。実際の支払いを照合し、二重登録なら支出の登録内容を修正してください。`));
             for (const entry of report.recurringLines.filter(item => item.cardOverlap)) {
-                line(alert, `確認・修正：${entry.name}（${entry.date}）`, yen(entry.amount), deps.openRecurring ? () => deps.openRecurring(entry.entryId) : undefined);
+                const open = entry.entryId.startsWith('cash:')
+                    ? (deps.openFixedCost ? () => deps.openFixedCost(entry.entryId.slice(5)) : undefined)
+                    : (deps.openRecurring ? () => deps.openRecurring(entry.entryId) : undefined);
+                line(alert, `確認・修正：${entry.name}（${entry.date}）`, yen(entry.amount), open);
             }
         }
         if (report.recurringSalaryExcluded)
             alert.append(element('p', '', `給与に見える定期収入${report.recurringSalaryExcluded}件は、Payrollとの二重計上を防ぐため除外しました。`));
         main.append(alert);
-        main.append(pointBenefitsSection('獲得ポイント', monthlyPointBenefits(period, source)));
+        main.append(pointBenefitsSection('獲得ポイント', pointBenefitsFromMonthlyReport(report, source)));
         // Bank cash flow is separate from whole-household monthly income/expense.
         // It starts from a manually confirmed bank balance, never a fabricated zero.
         const bank = section('楽天銀行の残高推移');
@@ -364,7 +368,7 @@ export function initMonthlySummary(deps) {
         if (!report.recurringLines.length && !report.oneTimeLines.length)
             empty(debits.body, 'この月の入出金予定はありません。');
         for (const item of expenseItems)
-            scheduledLine(debits.body, item.date, item.name, `${accountName(item.fromAccountId)} → 支出`, item.amount);
+            scheduledLine(debits.body, item.date, item.name, item.entryId.startsWith('cash:') ? '現金支出予定' : `${accountName(item.fromAccountId)} → 支出`, item.amount);
         if (expenseItems.length)
             line(debits.body, '定期支出合計', yen(report.recurringExpense));
         const transfers = report.recurringLines.filter(e => e.kind === 'transfer');

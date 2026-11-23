@@ -14,7 +14,7 @@ export function pointBenefitsSection(title:string,data:PointBenefits):HTMLElemen
   for(const item of data.cards){
     const row=document.createElement('div');row.className='points-benefits-row';
     const name=document.createElement('span');name.textContent=item.name;
-    const detail=document.createElement('small');detail.textContent=`${fmt(item.amount)}円 · ${item.ratePercent}%`;
+    const detail=document.createElement('small');detail.textContent=`${fmt(item.amount)}円 · ${item.rateLabel??`${item.ratePercent}%`}`;
     const left=document.createElement('div');left.className='points-benefits-card';left.append(name,detail);
     const points=document.createElement('strong');points.textContent=`${fmt(item.points)} pt`;
     row.append(left,points);list.append(row);

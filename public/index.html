@@ -36,7 +36,7 @@
           <button type="button" id="nav-manage" class="nav-entry" data-nav-label="明細管理"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span><span class="nav-text">明細管理</span></button>
       <button type="button" id="nav-summary" class="nav-entry" data-nav-label="月別サマリー"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4m8-4v4M3 9h18M8 14h3m-3 3h3"/></svg></span><span class="nav-text">月別サマリー</span></button>
       <button type="button" id="nav-analysis" class="nav-entry" data-nav-label="収支分析"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V11h4v9M10 20V4h4v16M16 20v-7h4v7M2 20h20"/></svg></span><span class="nav-text">収支分析</span></button>
-      <button type="button" id="nav-subscriptions" class="nav-entry" data-nav-label="カードの定期支出"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 8a8 8 0 0 0-14-2L4 8m0 0V3m0 5h5M4 16a8 8 0 0 0 14 2l2-2m0 0v5m0-5h-5"/></svg></span><span class="nav-text">カードの定期支出</span></button>
+      <button type="button" id="nav-subscriptions" class="nav-entry" data-nav-label="固定費・サブスク管理"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 8a8 8 0 0 0-14-2L4 8m0 0V3m0 5h5M4 16a8 8 0 0 0 14 2l2-2m0 0v5m0-5h-5"/></svg></span><span class="nav-text">固定費・サブスク管理</span></button>
       <button type="button" id="nav-reports" class="nav-entry" data-nav-label="月次レポート"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2h8l5 5v15H6zM14 2v6h5M9 13h6M9 17h6"/></svg></span><span class="nav-text">月次レポート</span></button>
       <button type="button" id="nav-rules" class="nav-entry" data-nav-label="ルール"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16M7 12h10M10 19h4"/><circle cx="9" cy="5" r="2" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/></svg></span><span class="nav-text">ルール</span></button>
       <button type="button" id="nav-assets" class="nav-entry" data-nav-label="口座管理"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="14" rx="2"/><path d="M3 11h18m-13 5h4"/></svg></span><span class="nav-text">口座管理</span></button>
@@ -55,7 +55,7 @@
             </svg>
           </button>
         </div>
-        <div class="sidebar-meta"><span>Finance v1.9.43</span><time id="app-updated-at" datetime="2026-11-22">更新 2026/11/22 JST</time></div>
+        <div class="sidebar-meta"><span>Finance v1.9.43</span><time id="app-updated-at" datetime="2026-11-23">更新 2026/11/23 JST</time></div>
       </div>
       </div>
     </aside>
@@ -163,19 +163,19 @@
           <div class="monthly-heading finance-page-heading">
             <div><div class="eyebrow">MONTHLY SUMMARY</div><h1>月別サマリー<span class="accent-dot">.</span></h1>
               <p class="lead"><span id="monthly-heading-period">今月</span> · 口座引落月基準（カードは明細記載の支払日）</p></div>
-            <div class="monthly-controls finance-period-nav" aria-label="表示年月を切り替える">
+          </div>
+          <div class="monthly-controls finance-period-nav" aria-label="表示年月を切り替える">
               <button type="button" id="monthly-prev" aria-label="前月">‹</button>
               <label for="monthly-period" class="sr-only">集計年月</label><input id="monthly-period" type="month" aria-label="集計年月">
               <button type="button" id="monthly-next" aria-label="翌月">›</button>
               <button type="button" id="monthly-today">今月</button>
               <button type="button" id="monthly-report-open" class="secondary-action">レポート</button>
-            </div>
           </div>
           <div id="monthly-content" aria-live="polite"></div>
         </section>
 
-        <section id="subscriptions-view" class="hidden subscriptions-view" aria-label="カードの定期支出">
-          <header class="finance-page-heading"><div class="eyebrow">SUBSCRIPTIONS</div><h1>カードの定期支出<span class="accent-dot">.</span></h1><p class="lead">カード明細から継続課金を確認</p></header>
+        <section id="subscriptions-view" class="hidden subscriptions-view" aria-label="固定費・サブスク管理">
+          <header class="finance-page-heading"><div class="eyebrow">SUBSCRIPTIONS</div><h1>固定費・サブスク管理<span class="accent-dot">.</span></h1><p class="lead">カード・銀行・現金の継続支出を管理</p></header>
           <div id="subscriptions-content" class="subscriptions-content"></div>
         </section>
 

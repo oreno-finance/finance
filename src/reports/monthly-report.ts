@@ -36,7 +36,7 @@ export function validateReportDocument(raw:unknown,expectedPeriod?:string):Month
       !integer(s.nisaOutflow)||!Array.isArray(s.cards)||s.cards.length>80||!s.cards.every(amount)||
       !Array.isArray(s.categories)||s.categories.length>200||!s.categories.every(amount)||
       !Array.isArray(s.merchants)||s.merchants.length>200||!s.merchants.every(amount)||
-      (s.points!==undefined&&(!s.points||!integer(s.points.total)||s.points.total<0||!Array.isArray(s.points.cards)||s.points.cards.length>80||!s.points.cards.every(c=>string(c.cardId,50)&&string(c.name,120)&&integer(c.amount)&&integer(c.points)&&c.points>=0&&typeof c.ratePercent==='number'&&Number.isFinite(c.ratePercent)&&c.ratePercent>=0&&c.ratePercent<=100)))||
+      (s.points!==undefined&&(!s.points||!integer(s.points.total)||s.points.total<0||!Array.isArray(s.points.cards)||s.points.cards.length>80||!s.points.cards.every(c=>string(c.cardId,50)&&string(c.name,120)&&integer(c.amount)&&integer(c.points)&&c.points>=0&&typeof c.ratePercent==='number'&&Number.isFinite(c.ratePercent)&&c.ratePercent>=0&&c.ratePercent<=100&&(c.rateLabel===undefined||(typeof c.rateLabel==='string'&&c.rateLabel.length<=256&&/^[0-9.%\s/]+$/.test(c.rateLabel))))))||
       !Array.isArray(s.reasons)||s.reasons.length>8||!s.reasons.every(x=>string(x,200))||
       !Array.isArray(s.quality)||s.quality.length>20||!s.quality.every(x=>string(x,200))||
       !Array.isArray(s.balances)||s.balances.length>8||!s.balances.every(x=>!!x&&string(x.name,80)&&integer(x.balance)&&iso(x.observedAt)))
