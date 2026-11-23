@@ -4,7 +4,7 @@ import { changePeriod, monthlyReport, prepareMonthlyReports, type MonthlyReport,
 import { forecastAccounts, type AccountForecasts } from './account-events.js';
 import { homeActions, type HomeAction } from './action-items.js';
 import {pendingCardSubscriptions} from '../subscriptions/detect.js';
-export type HomeCoverage='missing'|'needs-review'|'provisional'|'registered';
+export type HomeCoverage='missing'|'partial'|'needs-review'|'provisional'|'registered';
 export interface HomeAccount {
   id:AssetAccountId; name:string; snapshot:BalanceSnapshot|null;
   predicted:number|null; predictedReliable:boolean; projectedAt:string|null;
@@ -12,7 +12,7 @@ export interface HomeAccount {
 export interface HomeOverview {
   today:string; period:string; report:MonthlyReport; coverage:HomeCoverage;
   outflow:number|null; cardNames:Record<string,string>; accounts:HomeAccount[]; forecast:AccountForecasts; actions:HomeAction[];
-  /** Only the prior month's unresolved funding; no synthetic amount if the bill is missing. */
+  /** Prior-month card report for stale/unfinished funding reminders. */
   priorFundingReport:MonthlyReport|null;
 }
 export function homeOverview(source:MonthlySource,today:string):HomeOverview {
@@ -28,13 +28,13 @@ export function homeOverview(source:MonthlySource,today:string):HomeOverview {
   const report=reportForMonth(currentPeriod);
   const forecast=forecastAccounts(source,today,45,reportForMonth);
   const previousPeriod=changePeriod(currentPeriod,-1);
+  // Even a prior 'done' needs revalidation after a bill has changed.
   const priorFundingReport=source.assets.mizuhoTransferPlan?.enabled&&
-    source.assets.cardDebitAccounts?.['rakuten-mizuho']==='mizuho-bank'&&
-    !source.assets.mizuhoFundingChecks?.[previousPeriod]?.done
+    source.assets.cardDebitAccounts?.['rakuten-mizuho']==='mizuho-bank'
       ?reportForMonth(previousPeriod):null;
-  const coverage:HomeCoverage=report.cardLines.length===0?'missing':report.issues.length||report.unknownConfirmationCount?'needs-review':
+  const coverage:HomeCoverage=report.cardOutflow===null?(report.recurringExpense+report.oneTimeExpense>0?'partial':'missing'):report.issues.length||report.unknownConfirmationCount?'needs-review':
     report.provisional.length?'provisional':'registered';
-  const outflow=report.cardOutflow===null?null:report.cardOutflow+report.recurringExpense+report.oneTimeExpense;
+  const outflow=report.cardOutflow===null?(report.recurringExpense+report.oneTimeExpense||null):report.cardOutflow+report.recurringExpense+report.oneTimeExpense;
   if(outflow!==null&&!Number.isSafeInteger(outflow))throw new Error('ホームの支出額が大きすぎます。');
   const bankAccountIds:AssetAccountId[]=['rakuten-bank','mizuho-bank','cash-savings','nisa'];
   const labels:Record<AssetAccountId,string>={'rakuten-bank':'楽天銀行','mizuho-bank':'みずほ銀行',

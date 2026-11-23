@@ -260,14 +260,41 @@ export function initMonthlySummary(deps) {
         main.append(grid);
         metric(grid, report.incomeEstimates.length ? '月間収入（給与見込み含む）' : '月間収入', yen(report.income), `定期入金 ${yen(report.recurringIncome)} · 単発入金 ${yen(report.oneTimeIncome)}`);
         metric(grid, 'カード引落予定額', yen(report.cardOutflow), report.provisional.length ? '暫定明細を含む · 支払日基準' : '登録済み明細 · 支払日基準');
-        metric(grid, '定期・単発支出', yen(report.recurringExpense + report.oneTimeExpense), `定期 ${yen(report.recurringExpense)} · 単発 ${yen(report.oneTimeExpense)}`);
+        metric(grid, '定期・単発支出', yen(report.recurringExpense + report.oneTimeExpense), `定期予定 ${yen(report.recurringExpense)} · 単発実行済み ${yen(report.oneTimeExpense)}`);
         metric(grid, '月間収支', report.monthlyBalance === null ? '算出不可' : yen(report.monthlyBalance), '収入 − カード − 定期・単発支出', report.monthlyBalance !== null ? (report.monthlyBalance >= 0 ? 'monthly-positive' : 'monthly-negative') : '');
         const delta = report.monthlyBalance === null || prev.monthlyBalance === null ? null : report.monthlyBalance - prev.monthlyBalance;
         const alert = element('div', 'monthly-alert');
         alert.append(element('strong', '', statusText(report)));
         alert.append(element('p', '', `前月比：${delta === null ? '比較不可' : yen(delta)} · 内部振替は月間収支に含めません。`));
         if (report.cardOutflow === null)
-            alert.append(element('p', '', 'この月に集計できるカード明細がありません（未登録または要修正）。計算上の引落額は0円として扱いますが、実際に0円とは確認できていません。'));
+            alert.append(element('p', '', 'カード明細が未取得です。登録済みの銀行定期支出・単発支出は別に確認できますが、月の支出総額は確定していません。'));
+        if (report.cardNoUseConfirmed)
+            alert.append(element('p', '', 'カード利用なしを手動確認済み。この月のカード支出は0円として扱っています。'));
+        if (report.pastUnconfirmedOneTime) {
+            const warning = element('p', 'monthly-overlap-warning', `過去の未実行予定が${report.pastUnconfirmedOneTime}件あります。実績には含めていません。単発入出金の記録を確認してください。`);
+            warning.setAttribute('role', 'alert');
+            alert.append(warning);
+        }
+        if (report.oneTimePlannedExpense || report.oneTimePlannedIncome)
+            alert.append(element('p', '', `実績と別の予定：支出 ${yen(report.oneTimePlannedExpense)} ／ 入金 ${yen(report.oneTimePlannedIncome)}。予定を含む月間収支見込み：${report.monthlyBalance === null ? '算出不可' : yen(report.monthlyBalance + report.oneTimePlannedIncome - report.oneTimePlannedExpense)}`));
+        if (deps.saveCardNoUseMonth && period <= localPeriod() && (report.cardOutflow === null || report.cardNoUseConfirmed) && report.issues.every(issue => issue.month !== period)) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'secondary-action';
+            button.textContent = report.cardNoUseConfirmed ? '「カード利用なし」を取り消す' : 'この月はカード利用なしと確認';
+            button.addEventListener('click', () => {
+                if (!window.confirm(report.cardNoUseConfirmed ? 'カード利用なし確認を取り消しますか？' : 'この月の全カードについて、利用・引落がなかったことを確認しましたか？'))
+                    return;
+                button.disabled = true;
+                void deps.saveCardNoUseMonth(period, !report.cardNoUseConfirmed).then(() => render()).catch(error => {
+                    button.disabled = false;
+                    const warning = element('p', 'monthly-overlap-warning', error instanceof Error ? error.message : '確認を保存できませんでした。');
+                    warning.setAttribute('role', 'alert');
+                    alert.append(warning);
+                });
+            });
+            alert.append(button);
+        }
         if (report.recurringCardOverlap) {
             alert.prepend(element('strong', 'monthly-overlap-warning', '要確認：カードと定期支出が重複している可能性があります。収支は両方を含む暫定的な登録額です。'));
             alert.append(element('p', '', `名称・金額が一致する定期支出が${report.recurringCardOverlap}件あります。実際の支払いを照合し、二重登録なら支出の登録内容を修正してください。`));
@@ -389,10 +416,10 @@ export function initMonthlySummary(deps) {
             insightGrid.append(result.box);
             return result;
         };
-        const category = insightSection('カテゴリー別支出（カード＋定期支出）');
-        if (!report.categories.length && !report.nisaOutflow)
-            empty(category.body, '分類できるカード・定期支出がありません。');
-        const largest = Math.max(1, ...report.categories.map(item => Math.max(0, item.amount)), Math.max(0, report.nisaOutflow));
+        const category = insightSection('カテゴリー別支出（カード＋定期支出＋実行済み単発支出）');
+        if (!report.categories.length)
+            empty(category.body, '分類できる支出はありません。');
+        const largest = Math.max(1, ...report.categories.map(item => Math.max(0, item.amount)));
         for (const item of report.categories) {
             const wrapper = element('div', 'monthly-bar-line');
             const head = element('div', 'monthly-bar-head');
@@ -403,25 +430,14 @@ export function initMonthlySummary(deps) {
             head.append(categoryLink, element('strong', '', yen(item.amount)));
             const track = element('div', 'monthly-bar-track'), fill = element('div', 'monthly-bar-fill');
             fill.style.width = `${Math.max(0, item.amount) / largest * 100}%`;
-            const color = PALETTE.find(p => p.id === item.color)?.hex;
+            const color = item.id === '__nisa' ? '#43A778' : PALETTE.find(p => p.id === item.color)?.hex;
             if (color)
                 fill.style.backgroundColor = color;
             track.append(fill);
             wrapper.append(head, track);
             category.body.append(wrapper);
         }
-        if (report.nisaOutflow !== 0) {
-            const wrapper = element('div', 'monthly-bar-line');
-            const head = element('div', 'monthly-bar-head');
-            head.append(element('span', '', 'NISA積立（資産移動）'), element('strong', '', yen(report.nisaOutflow)));
-            const track = element('div', 'monthly-bar-track'), fill = element('div', 'monthly-bar-fill');
-            fill.style.width = `${Math.max(0, report.nisaOutflow) / largest * 100}%`;
-            fill.style.backgroundColor = '#43A778';
-            track.append(fill);
-            wrapper.append(head, track);
-            category.body.append(wrapper);
-        }
-        category.body.append(element('p', 'monthly-muted', 'NISAはカード資金流出に含め、生活費カテゴリーの集計からは除外しています。'));
+        category.body.append(element('p', 'monthly-muted', '支出総額とこの内訳は同じ計上範囲です。NISA積立は資産移動として独立表示し、生活費からは除外しています。'));
         const merchants = insightSection('カード利用先ランキング');
         if (!report.merchants.length)
             empty(merchants.body, '対象となる利用先はありません。');

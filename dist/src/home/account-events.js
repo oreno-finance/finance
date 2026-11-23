@@ -2,6 +2,7 @@
  * observed snapshot, never a bank API balance. No assets or statements are mutated. */
 import { ASSET_ACCOUNTS, recurringCoveredByOneTime } from '../cloud/assets.js';
 import { recurringInMonth } from '../cloud/recurring-schedule.js';
+import { estimatedCardFixedBills } from '../cloud/card-fixed-estimates.js';
 import { mizuhoTransferForBill } from '../cloud/mizuho-transfer.js';
 import { expectedMainSalaries } from '../cloud/salary-projection.js';
 import { changePeriod, monthlyReport } from '../summary/monthly-summary.js';
@@ -101,6 +102,16 @@ export function forecastAccounts(source, today, horizonDays = 45, reportForMonth
             addMovement(`recurring:${occurrence.id}`, occurrence.date, entry.name, entry.amount, 'recurring', entry.fromAccountId, entry.toAccountId);
         }
     }
+    const estimates = estimatedCardFixedBills(source.assets, source.records, today, until);
+    for (const item of estimates) {
+        const assigned = source.assets.cardDebitAccounts?.[item.cardId];
+        if (!assigned || assigned === 'nisa') {
+            missingCardIds.add(item.cardId);
+            continue;
+        }
+        push({ id: item.id, date: item.paymentDate, accountId: assigned, amount: -item.amount,
+            title: item.name, kind: 'card-estimate', cardId: item.cardId, confirmation: 'unknown', estimated: true });
+    }
     for (const entry of source.assets.oneTime ?? [])
         addMovement(`once:${entry.id}`, entry.date, entry.name, entry.amount, 'one-time', entry.fromAccountId, entry.toAccountId);
     const payrollAccount = source.assets.payrollDepositAccount;
@@ -128,8 +139,9 @@ export function forecastAccounts(source, today, horizonDays = 45, reportForMonth
         const affectedInvalid = start && invalidMonths.some(month => month >= period(start));
         const reason = !start ? 'no-snapshot' : start < cutoff ? 'stale-snapshot' : unknownAfterBaseline ? 'missing-card-account' :
             affectedOverlap ? 'possible-duplicate' : affectedInvalid ? 'invalid-statement' : unverified ? 'unverified-debit' :
-                ((!source.payroll.ready || payrollStale) && (!source.assets.payrollDepositAccount || source.assets.payrollDepositAccount === accountId)) ||
-                    (source.payroll.entries.length > 0 && !source.assets.payrollDepositAccount) ? 'payroll-unavailable' : null;
+                events.some(e => e.accountId === accountId && e.kind === 'card-estimate') ? 'estimated-card-debit' :
+                    ((!source.payroll.ready || payrollStale) && (!source.assets.payrollDepositAccount || source.assets.payrollDepositAccount === accountId)) ||
+                        (source.payroll.entries.length > 0 && !source.assets.payrollDepositAccount) ? 'payroll-unavailable' : null;
         if (!snapshot || !start || start < cutoff)
             return { accountId, name, observed: snapshot, projected: null, projectedAt: until,
                 reliable: false, days: [], reason };
@@ -150,14 +162,16 @@ export function forecastAccounts(source, today, horizonDays = 45, reportForMonth
         return { accountId, name, observed: snapshot, projected: balance, projectedAt: until,
             reliable: reason === null, days, reason };
     });
-    const debits = cardLines.filter(card => card.paymentDate >= today && card.paymentDate <= until)
+    const predictedCards = estimates.map(e => ({ id: e.id, cardId: e.cardId, name: e.name,
+        billingMonth: null, paymentDate: e.paymentDate, amount: e.amount, confirmation: 'unknown' }));
+    const debits = [...cardLines, ...predictedCards].filter(card => card.paymentDate >= today && card.paymentDate <= until)
         .map(card => {
         const assigned = source.assets.cardDebitAccounts?.[card.cardId];
         const accountId = assigned && assigned !== 'nisa' ? assigned : null;
         const forecast = forecasts.find(a => a.accountId === accountId);
         const day = forecast?.days.find(d => d.date === card.paymentDate);
         return { id: card.id, cardId: card.cardId, name: card.name, date: card.paymentDate, amount: card.amount,
-            confirmation: card.confirmation, accountId, afterBalance: forecast?.reliable && day ? day.balance : null,
+            confirmation: card.confirmation, accountId, estimated: card.id.startsWith('estimate:'), afterBalance: forecast?.reliable && day ? day.balance : null,
             balanceReliable: !!forecast?.reliable && !!day };
     })
         .sort((a, b) => a.date.localeCompare(b.date) || a.cardId.localeCompare(b.cardId) || a.id.localeCompare(b.id));

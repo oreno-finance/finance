@@ -59,8 +59,7 @@ function renderSnapshot(root, snapshot, showMetrics = true) {
     const cats = section('カテゴリー別支出');
     for (const item of snapshot.categories)
         row(cats.body, item.name, yen(item.amount));
-    if (snapshot.nisaOutflow)
-        row(cats.body, 'NISA積立（資産移動）', yen(snapshot.nisaOutflow));
+    // NISA is already a row of snapshot.categories; do not append it twice.
     if (!cats.body.childNodes.length)
         cats.body.append(el('p', 'reports-muted', '登録済みの内訳はありません。'));
     root.append(cats.root);
@@ -244,6 +243,14 @@ export function initMonthlyReports(deps) {
         refresh.disabled = busy;
         top.append(nav, refresh);
         container.append(top);
+        // Suggest preserving the previous month's point-in-time view after rollover;
+        // never create an archive without a deliberate Save action.
+        const current = today(), previous = (() => { const [y, m] = current.split('-').map(Number); const d = new Date(Date.UTC(y, m - 2, 1)); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`; })();
+        if (!busy && !loadFailed && loadedPeriod === selected && selected === current && !periods.includes(previous)) {
+            const reminder = el('div', 'panel reports-quality');
+            reminder.append(el('strong', '', '前月のレポートはまだ保存されていません。'), el('p', '', '過去の集計状態を残しておく場合は、前月を開いて手動で保存してください。'), button(`${month(previous)}を開く`, () => choosePeriod(previous)));
+            container.append(reminder);
+        }
         // Keep failures beside the operation, even after the activity card expires.
         if (busy)
             return;

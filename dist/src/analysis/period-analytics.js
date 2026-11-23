@@ -13,7 +13,7 @@ function sum(values) {
 }
 function status(report, period) {
     if (report.cardOutflow === null)
-        return 'missing';
+        return report.recurringExpense + report.oneTimeExpense > 0 ? 'partial' : 'missing';
     if (report.issues.some(item => item.month === period) || report.unknownConfirmationCount || report.recurringCardOverlap)
         return 'review';
     if (report.provisional.length)
@@ -23,8 +23,12 @@ function status(report, period) {
 function asMonth(period, source, prepared) {
     const report = monthlyReport(period, source, prepared);
     const coverage = status(report, period);
-    const expense = report.cardOutflow === null ? null : add(add(report.cardOutflow, report.recurringExpense), report.oneTimeExpense);
-    const livingExpense = report.livingOutflow === null ? null : add(add(report.livingOutflow, report.recurringExpense), report.oneTimeExpense);
+    const expense = report.cardOutflow === null ?
+        (report.recurringExpense + report.oneTimeExpense > 0 ? add(report.recurringExpense, report.oneTimeExpense) : null) :
+        add(add(report.cardOutflow, report.recurringExpense), report.oneTimeExpense);
+    const livingExpense = report.livingOutflow === null ?
+        (report.recurringExpense + report.oneTimeExpense > 0 ? add(report.recurringExpense, report.oneTimeExpense) : null) :
+        add(add(report.livingOutflow, report.recurringExpense), report.oneTimeExpense);
     const income = report.income;
     return { period, report, coverage, income, expense, livingExpense,
         balance: income === null || expense === null || report.monthlyBalance === null ? null : report.monthlyBalance,
@@ -37,7 +41,7 @@ function createGroups(months, dimension) {
             item.report.merchants.map(merchant => ({ id: merchant.name, label: merchant.name, amount: merchant.amount })));
     records.forEach((items, index) => {
         for (const item of items) {
-            const group = groups.get(item.id) ?? { id: item.id, label: item.label, amounts: months.map(m => dimension === 'card' || m.coverage === 'missing' ? null : 0) };
+            const group = groups.get(item.id) ?? { id: item.id, label: item.label, amounts: months.map(m => dimension === 'card' && (m.report.cardOutflow === null) || m.coverage === 'missing' ? null : 0) };
             group.label = item.label; // Latest configured display name.
             group.amounts[index] = add(group.amounts[index] ?? 0, item.amount);
             groups.set(item.id, group);
@@ -66,7 +70,7 @@ export function analyzePeriods(source, periods, currentPeriod) {
     // saved statement for EACH month, including a 12-month analysis.
     const prepared = prepareMonthlyReports(source.records);
     const months = periods.map(period => asMonth(period, adjusted, prepared));
-    const knownExpenses = months.filter(month => month.expense !== null).map(month => ({ period: month.period, amount: month.expense }));
+    const knownExpenses = months.filter(month => month.expense !== null && month.coverage !== 'partial').map(month => ({ period: month.period, amount: month.expense }));
     const income = sum(months.map(month => month.income)), expense = sum(months.map(month => month.expense));
     const livingExpense = sum(months.map(month => month.livingExpense)), balance = sum(months.map(month => month.balance));
     const nisa = sum(months.map(month => month.nisa));
@@ -78,7 +82,7 @@ export function analyzePeriods(source, periods, currentPeriod) {
         missingMonths: months.filter(month => month.coverage === 'missing').length,
         provisionalMonths: months.filter(month => month.coverage === 'provisional').length,
         reviewMonths: months.filter(month => month.coverage === 'review').length,
-        avgExpense: validExpenses.length ? expense / validExpenses.length : null,
+        avgExpense: validExpenses.length ? validExpenses.reduce(add, 0) / validExpenses.length : null,
         maxExpense: knownExpenses.length ? knownExpenses.reduce((a, b) => b.amount > a.amount ? b : a) : null,
         minExpense: knownExpenses.length ? knownExpenses.reduce((a, b) => b.amount < a.amount ? b : a) : null,
         comparable };

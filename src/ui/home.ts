@@ -1,4 +1,5 @@
 import type { MonthlySource } from '../summary/monthly-summary.js';
+import type { MizuhoBillSnapshot } from '../cloud/assets.js';
 import { pointBenefitsFromMonthlyReport } from '../summary/point-benefits.js';
 import { pointBenefitsSection } from './point-benefits.js';
 import { homeOverview, type HomeOverview } from '../home/overview.js';
@@ -11,7 +12,7 @@ export interface HomeUi {render():void; reset():void}
 export interface HomeDeps {
   source():MonthlySource|null;
   navigate(destination:HomeDestination,recordId?:string,drilldown?:AnalysisDrilldown):void;
-  saveMizuhoFunding?(month:string,done:boolean):Promise<void>;
+  saveMizuhoFunding?(month:string,done:boolean,snapshot?:MizuhoBillSnapshot):Promise<void>;
 }
 function element(tag:string,className='',content?:string):HTMLElement {
   const node=document.createElement(tag);if(className)node.className=className;
@@ -56,21 +57,30 @@ export function initHome(deps:HomeDeps):HomeUi {
     facts.textContent=`${status.month.slice(5)}月の送金 · 送金目安：${status.dueDate??'請求明細待ち'} · `+
       `送金予定：${status.amount===null?'金額未取得':yen(status.amount)}`;
     section.append(facts);
+    if(status.changedSinceCheck){
+      const warning=element('p','home-funding-error',
+        '以前の「送金済み」確認は無効です。請求額・支払日・送金予定額を確認し、不足額があれば送金してください。');
+      warning.setAttribute('role','alert');section.append(warning);
+    }
     if(!status.billConfirmed)section.append(element('p','home-muted home-funding-facts',
       '確定済みのカード明細がないため、表示金額は未確定です。'));
     if(status.completed&&status.updatedAt)section.append(element('p','home-muted home-funding-facts',
       `確認日時：${new Date(status.updatedAt).toLocaleString('ja-JP')}`));
     const controls=element('div','home-funding-controls');
     if(status.periodOpen&&deps.saveMizuhoFunding){
-      const button=link(fundingBusy?'保存中…':status.completed?'送金済みを取り消す':'送金済みにする',()=>{
+      const button=link(fundingBusy?'保存中…':status.completed?'送金済みを取り消す':status.changedSinceCheck?'再確認して送金済みにする':'送金済みにする',()=>{
         if(fundingBusy)return;
         if(status.completed&&!window.confirm('今月の送金済み記録を取り消しますか？'))return;
+        if(!status.completed){
+          if(!status.billConfirmed||!status.billSnapshot)return;
+          if(!window.confirm(`確定請求額 ${yen(status.billSnapshot.billAmount)}、支払日 ${status.billSnapshot.paymentDate}、送金目安 ${yen(status.billSnapshot.transferAmount)}を確認しましたか？実際の送金完了後に記録してください。`))return;
+        }
         fundingBusy=true;fundingError='';render();
-        void deps.saveMizuhoFunding!(status.month,!status.completed)
+        void deps.saveMizuhoFunding!(status.month,!status.completed,status.completed?undefined:status.billSnapshot??undefined)
           .catch(error=>{fundingError=error instanceof Error?error.message:'保存できませんでした。';})
           .finally(()=>{fundingBusy=false;render();});
       },status.completed?'home-funding-revoke':'home-funding-save');
-      button.disabled=fundingBusy;controls.append(button);
+      button.disabled=fundingBusy||(!status.completed&&!status.billConfirmed);controls.append(button);
     }
     if(controls.childElementCount)section.append(controls);
     if(fundingError){const error=element('p','home-funding-error',fundingError);error.setAttribute('role','alert');section.append(error);}
@@ -81,7 +91,7 @@ export function initHome(deps:HomeDeps):HomeUi {
   function renderOverview(model:HomeOverview,source:MonthlySource):void {
     const {report,forecast,accounts,actions}=model;
     const metrics=element('div','home-metrics');
-    const dataNotice=model.coverage==='missing'?'カード明細未取得':model.coverage==='needs-review'?'明細要確認':
+    const dataNotice=model.coverage==='missing'?'カード明細未取得':model.coverage==='partial'?'一部未取得・銀行支出は反映':model.coverage==='needs-review'?'明細要確認':
       model.coverage==='provisional'?'暫定明細を含む':'登録済みの明細';
     metrics.append(
       metric('今月の収入',yen(report.income),report.incomeEstimates.length?'給与見込みを含む':'給与・入金',()=>go('summary')),
@@ -112,9 +122,9 @@ export function initHome(deps:HomeDeps):HomeUi {
     const next=forecast.debits.slice(0,3);
     if(!next.length)debitSection.body.append(element('p','home-empty','直近の登録済み引落予定はありません。'));
     for(const debit of next){
-      const item=link('',()=>go('manage',debit.id),'home-list-row home-debit');
+      const item=debit.estimated?element('div','home-list-row home-debit'):link('',()=>go('manage',debit.id),'home-list-row home-debit');
       const left=element('span','home-debit-main');
-      left.append(element('strong','',(model.cardNames[debit.cardId]??debit.name)),element('small','home-muted',`${shortDay(debit.date)} · ${confirmationLabel(debit.confirmation)}`));
+      left.append(element('strong','',debit.estimated?debit.name:(model.cardNames[debit.cardId]??debit.name)),element('small','home-muted',`${shortDay(debit.date)} · ${debit.estimated?'固定費から推定・未確定':confirmationLabel(debit.confirmation)}`));
       const right=element('span','home-debit-amount');
       right.append(element('b','',yen(debit.amount)),element('small','home-muted',debit.accountId?
         debit.balanceReliable?`引落後 ${yen(debit.afterBalance)}`:'引落後残高は未確定':'引落口座未設定'));

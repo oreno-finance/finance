@@ -4,7 +4,7 @@ import { displayMerchant, matchingRule } from '../cloud/merchant-rules.js';
 import { monthlyReport, prepareMonthlyReports, isNisaCardRow, isValidPeriod } from '../summary/monthly-summary.js';
 export function validateAnalysisDrilldown(request) {
     if (!request || !['card', 'category', 'merchant'].includes(request.dimension) ||
-        !Array.isArray(request.periods) || !request.periods.length || request.periods.length > 12 ||
+        !Array.isArray(request.periods) || !request.periods.length || request.periods.length > 24 ||
         new Set(request.periods).size !== request.periods.length ||
         request.periods.some(p => typeof p !== 'string' || !isValidPeriod(p)) ||
         typeof request.value !== 'string' || !request.value.trim() || request.value.length > 200 ||
@@ -29,11 +29,12 @@ export function analysisDrilldownMatches(source, request, reports) {
                 continue;
             const statement = record.statement;
             for (const row of statement.rows) {
-                if (request.dimension !== 'card' && isNisaCardRow(row, statement, source.assets))
+                const nisa = isNisaCardRow(row, statement, source.assets);
+                if (request.dimension !== 'card' && nisa && request.value !== '__nisa')
                     continue;
                 if (request.dimension === 'category') {
-                    const resolved = matchingRule(row.merchant, statement.cardId, source.rules)?.categoryId;
-                    const categoryId = source.categories.some(c => c.id === resolved) ? resolved : '__unclassified';
+                    const resolved = nisa ? '__nisa' : matchingRule(row.merchant, statement.cardId, source.rules)?.categoryId;
+                    const categoryId = nisa ? '__nisa' : source.categories.some(c => c.id === resolved) ? resolved : '__unclassified';
                     if (categoryId !== request.value)
                         continue;
                 }
@@ -70,19 +71,44 @@ export function analysisDrilldownBreakdown(source, request, reports) {
             throw new Error('分析金額が安全な整数範囲を超えました。');
         return n;
     };
-    let cardAmount = 0, recurringAmount = 0;
+    let cardAmount = 0, recurringAmount = 0, oneTimeAmount = 0;
+    const byYear = new Map();
+    const yearRow = (period) => {
+        const year = period.slice(0, 4);
+        let row = byYear.get(year);
+        if (!row) {
+            row = { year, cardAmount: 0, recurringAmount: 0, oneTimeAmount: 0, total: 0 };
+            byYear.set(year, row);
+        }
+        return row;
+    };
+    for (const period of request.periods)
+        yearRow(period);
+    const periodByRecord = new Map();
+    for (const [period, report] of byPeriod) {
+        for (const card of report.cardLines)
+            periodByRecord.set(card.id, period);
+    }
     for (const record of source.records) {
         const rowIds = matches.get(record.id);
         if (!rowIds)
             continue;
+        const period = periodByRecord.get(record.id);
+        if (!period)
+            continue;
+        const year = yearRow(period);
         for (const row of record.statement.rows)
-            if (rowIds.has(row.id))
+            if (rowIds.has(row.id)) {
                 cardAmount = safeAdd(cardAmount, row.amount);
+                year.cardAmount = safeAdd(year.cardAmount, row.amount);
+                year.total = safeAdd(year.total, row.amount);
+            }
     }
-    const recurring = [];
+    const recurring = [], oneTime = [];
     if (request.dimension === 'category') {
         for (const period of request.periods) {
             const report = byPeriod.get(period) ?? monthlyReport(period, source);
+            const year = yearRow(period);
             for (const line of report.recurringLines) {
                 if (line.kind !== 'expense')
                     continue;
@@ -90,10 +116,26 @@ export function analysisDrilldownBreakdown(source, request, reports) {
                 if (category !== request.value)
                     continue;
                 recurringAmount = safeAdd(recurringAmount, line.amount);
+                year.recurringAmount = safeAdd(year.recurringAmount, line.amount);
+                year.total = safeAdd(year.total, line.amount);
                 recurring.push({ ...line, period });
+            }
+            for (const entry of report.oneTimeLines) {
+                if (entry.kind !== 'expense' || entry.status !== 'done')
+                    continue;
+                const category = source.categories.some(item => item.id === entry.categoryId) ? entry.categoryId : '__unclassified';
+                if (category !== request.value)
+                    continue;
+                oneTimeAmount = safeAdd(oneTimeAmount, entry.amount);
+                year.oneTimeAmount = safeAdd(year.oneTimeAmount, entry.amount);
+                year.total = safeAdd(year.total, entry.amount);
+                oneTime.push({ id: entry.id, name: entry.name, date: entry.date, amount: entry.amount, period });
             }
         }
     }
     recurring.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
-    return { cardAmount, recurringAmount, total: safeAdd(cardAmount, recurringAmount), recurring };
+    oneTime.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+    return { cardAmount, recurringAmount, oneTimeAmount,
+        total: safeAdd(safeAdd(cardAmount, recurringAmount), oneTimeAmount), recurring, oneTime,
+        byYear: [...byYear.values()].sort((a, b) => a.year.localeCompare(b.year)) };
 }

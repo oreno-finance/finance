@@ -1,4 +1,5 @@
-import { validateMizuhoPlan } from './assets.js';
+import { validateMizuhoPlan, type MizuhoBillSnapshot } from './assets.js';
+import { estimateMizuhoTransferAmount } from './mizuho-transfer.js';
 import { measureFinancePhase } from './performance-diagnostics.js';
 import { validateFixedCosts, type FixedCostEntry } from '../fixed-costs/contracts.js';
 /** Cloud-first, annual-shard vault. IndexedDB is only opened by the explicit legacy import UI. */
@@ -917,6 +918,7 @@ export class LiveVault {
   async upsertFixedCost(entry:FixedCostEntry,decision?:CardRecurringDecision):Promise<void>{
     if(!this.key||this.rotating)throw new Error('OneDrive保管庫を解除してください。');
     const next=clone(this.assetsDocument),records=[...(next.fixedCosts??[])];
+    if(next.deletedFixedCosts?.includes(entry.id))throw new Error('削除済みの固定費IDは再利用できません。');
     const index=records.findIndex(x=>x.id===entry.id);
     if(index>=0)records[index]=entry;else records.push(entry);
     next.fixedCosts=validateFixedCosts(records)??[];
@@ -925,6 +927,19 @@ export class LiveVault {
         throw new Error('カード定期支出の対応関係が不正です。');
       const preferences=validateCardRecurringDecisions({[entry.merchantKey]:decision});
       next.cardRecurringDecisions={...(next.cardRecurringDecisions??{}),[entry.merchantKey]:preferences![entry.merchantKey]!};
+    }
+    await this.commitAssets(next);
+  }
+  /** Undo mistaken formal registrations. Ending a valid contract keeps its history. */
+  async deleteFixedCost(id:string):Promise<void>{
+    if(!this.key||this.rotating)throw new Error('OneDrive保管庫を解除してください。');
+    const next=clone(this.assetsDocument),existing=next.fixedCosts?.find(entry=>entry.id===id);
+    if(!existing)throw new Error('削除対象の固定費が見つかりません。');
+    next.fixedCosts=next.fixedCosts!.filter(entry=>entry.id!==id);
+    next.deletedFixedCosts=[...(next.deletedFixedCosts??[]),id];
+    if(existing.merchantKey&&next.cardRecurringDecisions?.[existing.merchantKey]?.state==='registered'){
+      const remainder={...next.cardRecurringDecisions};delete remainder[existing.merchantKey];
+      next.cardRecurringDecisions=remainder;
     }
     await this.commitAssets(next);
   }
@@ -956,7 +971,20 @@ export class LiveVault {
     await this.commitAssets(next);
   }
   /** Manual monthly card-funding acknowledgement, persisted ONLY in encrypted assets. */
-  async setMizuhoFundingChecked(month:string,done:boolean):Promise<void> {
+  async setCardNoUseMonth(month:string,confirmed:boolean):Promise<void> {
+    if(!this.key)throw new Error('OneDrive保管庫を解除してください。');
+    const now=new Date(),maxMonth=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    if(!/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(month)||month>maxMonth||typeof confirmed!=='boolean')
+      throw new Error('カード未利用の確認年月が不正です。');
+    if(confirmed&&this.readonlyRecords().some(record=>record.statement?.paymentDate?.slice(0,7)===month))
+      throw new Error('既にカード明細がある月は「利用なし」と確認できません。');
+    const next=clone(this.assetsDocument);
+    const months=new Set(next.cardNoUseMonths??[]);
+    if(confirmed)months.add(month);else months.delete(month);
+    next.cardNoUseMonths=[...months].sort();
+    await this.commitAssets(next);
+  }
+  async setMizuhoFundingChecked(month:string,done:boolean,snapshot?:MizuhoBillSnapshot):Promise<void> {
     if(!this.key)throw new Error('保管庫を解除してください。');
     const now=new Date(),current=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
     const previousDate=new Date(now.getFullYear(),now.getMonth()-1,1);
@@ -968,8 +996,28 @@ export class LiveVault {
     const next=clone(this.assetsDocument);
     if(!next.mizuhoTransferPlan?.enabled||next.cardDebitAccounts?.['rakuten-mizuho']!=='mizuho-bank')
       throw new Error('みずほ送金予測の設定を確認してください。');
-    if(next.mizuhoFundingChecks?.[month]?.done===done)return;
-    next.mizuhoFundingChecks={...(next.mizuhoFundingChecks??{}),[month]:{done,updatedAt:now.toISOString()}};
+    if(done){
+      if(!snapshot||!Number.isSafeInteger(snapshot.billAmount)||snapshot.billAmount<=0||
+        !Number.isSafeInteger(snapshot.transferAmount)||snapshot.transferAmount<=0||
+        typeof snapshot.billId!=='string'||typeof snapshot.paymentDate!=='string'||snapshot.paymentDate.slice(0,7)!==month)
+        throw new Error('確定済みの請求明細がないため、送金済みを記録できません。');
+      // Check the currently unlocked vault, not a stale UI summary.
+      const matches=this.readonlyRecords().filter(record=>record.statement.cardId==='rakuten-mizuho'&&
+        record.statement.paymentDate?.slice(0,7)===month);
+      if(matches.length!==1)throw new Error('この月の請求明細を一意に確認できません。');
+      const record=matches[0]!,statement=record.statement;
+      const total=statement.rows.reduce((sum,row)=>sum+row.amount,0);
+      if(statement.confirmation!=='confirmed'||record.id!==snapshot.billId||
+        statement.paymentDate!==snapshot.paymentDate||!Number.isSafeInteger(total)||total!==snapshot.billAmount||
+        estimateMizuhoTransferAmount(total,next.mizuhoTransferPlan.extraForSmallBills)!==snapshot.transferAmount)
+        throw new Error('請求内容が変更されました。最新明細で送金額を再確認してください。');
+    }
+    const previousCheck=next.mizuhoFundingChecks?.[month];
+    if(previousCheck?.done===done&&(!done||
+      (previousCheck.billAmount===snapshot?.billAmount&&previousCheck.paymentDate===snapshot?.paymentDate&&
+       previousCheck.transferAmount===snapshot?.transferAmount&&previousCheck.billId===snapshot?.billId)))return;
+    next.mizuhoFundingChecks={...(next.mizuhoFundingChecks??{}),[month]:{done,updatedAt:now.toISOString(),
+      ...(done?{...snapshot}:{})}};
     await this.commitAssets(next);
   }
   async setMizuhoTransferPlan(value:import('./assets.js').MizuhoTransferPlan):Promise<void> {

@@ -1306,13 +1306,39 @@ function renderManagerDrilldownBreakdown(context?:AnalysisReportContext|null):vo
     const data=analysisDrilldownBreakdown(source,request,context?.reports);
     const heading=document.createElement('h2');heading.textContent='対象金額の内訳';block.append(heading);
     const summary=div('manage-breakdown-totals');
-    for(const [label,amount] of [['カード取引',data.cardAmount],['銀行の定期支出予定',data.recurringAmount],['分析の合計',data.total]] as const){
+    for(const [label,amount] of [['カード取引',data.cardAmount],['銀行の定期支出予定',data.recurringAmount],['単発支出（実行済み）',data.oneTimeAmount],['分析の合計',data.total]] as const){
       const item=div('manage-breakdown-total');
       const name=document.createElement('span');name.textContent=label;
       const value=document.createElement('strong');value.textContent=`${amount.toLocaleString('ja-JP')}円`;
       item.append(name,value);summary.append(item);
     }
     block.append(summary);
+    if(data.byYear.length>1){
+      const compare=div('manage-breakdown-yearly');
+      const title=document.createElement('h3');title.textContent='年別の内訳';compare.append(title);
+      for(const row of data.byYear){
+        const item=div('manage-breakdown-total');
+        const year=document.createElement('span');year.textContent=`${row.year}年（カード${row.cardAmount.toLocaleString('ja-JP')}円／定期${row.recurringAmount.toLocaleString('ja-JP')}円／単発${row.oneTimeAmount.toLocaleString('ja-JP')}円）`;
+        const total=document.createElement('strong');total.textContent=`${row.total.toLocaleString('ja-JP')}円`;
+        item.append(year,total);compare.append(item);
+      }
+      block.append(compare);
+    }
+    if(data.oneTime.length){
+      const list=div('manage-breakdown-recurring');
+      const title=document.createElement('h3');title.textContent='実行済みの単発支出';list.append(title);
+      for(const entry of data.oneTime){
+        const line=div('manage-breakdown-recurring-item');
+        const label=div('manage-breakdown-recurring-name');
+        const name=document.createElement('strong');name.textContent=entry.name;
+        const detail=document.createElement('small');detail.textContent=`${entry.date} · ${entry.amount.toLocaleString('ja-JP')}円`;
+        label.append(name,detail);
+        const button=document.createElement('button');button.type='button';button.className='secondary-action';
+        button.textContent='口座管理で確認';button.addEventListener('click',()=>showView('assets'));
+        line.append(label,button);list.append(line);
+      }
+      block.append(list);
+    }
     if(data.recurring.length){
       const note=document.createElement('p');note.className='manage-breakdown-note';
       note.textContent='銀行の定期支出は予定として計上しています。カード取引とは別に、以下から確認・修正できます。';
@@ -2292,9 +2318,9 @@ function init(): void {
       activeIndex=index;
     }
     homeNavigationPending=true;showView(destination);
-  },saveMizuhoFunding:async(month,done)=>{
+  },saveMizuhoFunding:async(month,done,snapshot)=>{
     if(!liveVault?.unlocked)throw new Error('OneDrive保管庫を解除してください。');
-    await liveVault.setMizuhoFundingChecked(month,done);
+    await liveVault.setMizuhoFundingChecked(month,done,snapshot);
   }});
   analysisUi=initAnalysis({source:homeSource,openMonth:(period)=>{summaryUi?.setPeriod(period);showView('summary');},
     openDrilldown:(request,context)=>{
@@ -2318,6 +2344,7 @@ function init(): void {
   reportsUi=initMonthlyReports({source:homeSource,vault:()=>liveVault,openMonth:(period)=>{summaryUi?.setPeriod(period);showView('summary');}});
   summaryUi=initMonthlySummary({
     source:homeSource,
+    saveCardNoUseMonth:async(period,confirmed)=>{if(!liveVault?.unlocked)throw new Error('保管庫を解除してください。');await liveVault.setCardNoUseMonth(period,confirmed);homeUi?.render();},
     openReport:(period)=>{reportsUi?.openPeriod(period);showView('reports');},
     openRecurring:openRecurringForReview,
     openFixedCost:(id)=>{showView('subscriptions');subscriptionsUi?.openFixedCost(id);},

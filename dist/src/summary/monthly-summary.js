@@ -156,6 +156,10 @@ export function monthlyReport(period, source, prepared) {
         for (const row of s.rows) {
             if (isNisaCardRow(row, s, source.assets)) {
                 nisa = add(nisa, row.amount);
+                const old = categoryTotals.get('__nisa') ?? { id: '__nisa', name: 'NISA積立（資産移動）', color: null, amount: 0, count: 0 };
+                old.amount = add(old.amount, row.amount);
+                old.count++;
+                categoryTotals.set('__nisa', old);
                 continue;
             }
             const category = categoryFor(row, s, source.rules, source.categories);
@@ -272,22 +276,42 @@ export function monthlyReport(period, source, prepared) {
     }
     const oneTimeLines = [...(source.assets.oneTime ?? [])].filter(e => e.date.slice(0, 7) === period)
         .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
-    let oneTimeIncome = 0, oneTimeExpense = 0;
+    let oneTimeIncome = 0, oneTimeExpense = 0, oneTimePlannedExpense = 0, oneTimePlannedIncome = 0, pastUnconfirmedOneTime = 0;
+    const thisPeriod = source.currentPeriod ?? localPeriod();
     for (const entry of oneTimeLines) {
+        if (entry.status === 'planned') {
+            if (entry.kind === 'income')
+                oneTimePlannedIncome = add(oneTimePlannedIncome, entry.amount);
+            if (entry.kind === 'expense')
+                oneTimePlannedExpense = add(oneTimePlannedExpense, entry.amount);
+            if (period < thisPeriod)
+                pastUnconfirmedOneTime++;
+            continue; // A past plan never silently becomes a paid expense.
+        }
         if (entry.kind === 'income')
             oneTimeIncome = add(oneTimeIncome, entry.amount);
-        if (entry.kind === 'expense')
+        if (entry.kind === 'expense') {
             oneTimeExpense = add(oneTimeExpense, entry.amount);
+            const category = source.categories.find(c => c.id === entry.categoryId);
+            const key = category?.id ?? '__unclassified';
+            const old = categoryTotals.get(key) ?? { id: key, name: category?.name ?? '未分類', color: category?.color ?? null, amount: 0, count: 0 };
+            old.amount = add(old.amount, entry.amount);
+            old.count++;
+            categoryTotals.set(key, old);
+            if (!category)
+                unclassifiedCount++;
+        }
     }
     const income = payrollIncome === null ? null : add(add(payrollIncome, recurringIncome), oneTimeIncome);
-    const cardOutflow = included > 0 ? sum : null;
+    const cardNoUseConfirmed = included === 0 && source.assets.cardNoUseMonths?.includes(period) === true && excludedCount === 0;
+    const cardOutflow = included > 0 ? sum : cardNoUseConfirmed ? 0 : null;
     const livingOutflow = cardOutflow === null ? null : add(cardOutflow, -nisa);
     // No card statement is *observed* as 0 in cashflow; the UI warns when none is registered.
     // Internal transfers are never household revenue or expenses.
     const monthlyBalance = income === null || (excludedCount > 0 && included === 0) ? null : add(add(add(income, -(cardOutflow ?? 0)), -recurringExpense), -oneTimeExpense);
     const referenceBalance = monthlyBalance;
     return { period, income, actualIncome, estimatedIncome, incomeEstimates, incomeMissingRegular, incomeLines, cardOutflow, cardLines, livingOutflow, nisaOutflow: nisa,
-        referenceBalance, monthlyBalance, recurringIncome, recurringExpense, recurringTransfers, recurringLines, oneTimeIncome, oneTimeExpense, oneTimeLines, recurringSalaryExcluded, recurringCardOverlap, categories: [...categoryTotals.values()].sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name, 'ja')),
+        referenceBalance, monthlyBalance, recurringIncome, recurringExpense, recurringTransfers, recurringLines, oneTimeIncome, oneTimeExpense, oneTimePlannedExpense, oneTimePlannedIncome, pastUnconfirmedOneTime, cardNoUseConfirmed, oneTimeLines, recurringSalaryExcluded, recurringCardOverlap, categories: [...categoryTotals.values()].sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name, 'ja')),
         merchants: [...merchantTotals.values()].sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name, 'ja')),
         issues, provisional, unclassifiedCount, excludedCount, unknownConfirmationCount,
         payrollReady: source.payroll.ready, payrollSyncedAt: source.payroll.ready ? source.payroll.syncedAt : null };

@@ -262,6 +262,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
   const onceStatus=():OneTimeStatus=>(document.querySelector<HTMLInputElement>('input[name="assets-once-status"]:checked')?.value??'done') as OneTimeStatus;
   function onceFormFields():void {
     const kind=onceKind(),from=value('assets-once-from'),to=value('assets-once-to');
+    $('assets-once-category-wrap').classList.toggle('hidden',kind!=='expense');
     $('assets-once-from-wrap').classList.toggle('hidden',kind==='income');
     $('assets-once-to-wrap').classList.toggle('hidden',kind==='expense'||kind==='withdrawal');
     const label=$('assets-once-to-wrap');if(kind==='income')label.firstChild!.textContent='入金先口座';else label.firstChild!.textContent='振替先口座';
@@ -275,9 +276,16 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
     return recurringDraftSnapshot(Array.from(fields));
   }
   const onceHasChanges=():boolean=>onceSnapshot()!==onceBaseline;
+  function populateOnceCategories(selected:string|null= null):void {
+    const select=$<HTMLSelectElement>('assets-once-category');
+    select.replaceChildren(new Option('未分類',''));
+    for(const category of getCategories())select.add(new Option(category.name,category.id));
+    select.value=selected&&[...select.options].some(o=>o.value===selected)?selected:'';
+  }
   function resetOnceForm():void {
     onceEditingId=null;
     $<HTMLFormElement>('assets-once-form').reset();
+    populateOnceCategories();
     $<HTMLInputElement>('assets-once-date').value=localDate();
     $<HTMLSelectElement>('assets-once-from').value='rakuten-bank';
     $<HTMLSelectElement>('assets-once-to').value='cash-savings';
@@ -296,6 +304,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
       $<HTMLInputElement>('assets-once-date').value=entry.date;
       $<HTMLInputElement>('assets-once-name').value=entry.name;
       $<HTMLInputElement>('assets-once-amount').value=String(entry.amount);
+      populateOnceCategories(entry.categoryId);
       $<HTMLSelectElement>('assets-once-from').value=entry.fromAccountId??'rakuten-bank';
       $<HTMLSelectElement>('assets-once-to').value=entry.toAccountId??'cash-savings';
       $<HTMLInputElement>('assets-once-funding').checked=!!entry.cardFunding;
@@ -318,6 +327,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
     const kind=onceKind(),from=value('assets-once-from') as AssetAccountId,to=value('assets-once-to') as AssetAccountId;
     return validateOneTime({id:onceEditingId??crypto.randomUUID(),date:value('assets-once-date'),
       name:value('assets-once-name'),amount:Number(value('assets-once-amount')),kind,status:onceStatus(),
+      categoryId:kind==='expense'?value('assets-once-category')||null:null,
       fromAccountId:kind==='income'?null:from,toAccountId:kind==='transfer'||kind==='income'?to:null,
       ...(kind==='transfer'&&from==='rakuten-bank'&&to==='mizuho-bank'&&$<HTMLInputElement>('assets-once-funding').checked?{cardFunding:true}:{})});
   }
@@ -333,7 +343,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
       detail.append(make('strong','',entry.name));
       const from=accountName(entry.fromAccountId),to=accountName(entry.toAccountId);
       const route=entry.kind==='transfer'?`${from} → ${to}`:entry.kind==='income'?to:from;
-      detail.append(make('small','',`${entry.date.replace(/-/g,'/')} · ${onceKinds[entry.kind]} · ${route} · ${entry.status==='done'?'実行済み':'予定'}`));
+      detail.append(make('small','',`${entry.date.replace(/-/g,'/')} · ${onceKinds[entry.kind]} · ${route} · ${entry.status==='done'?'実行済み':'予定'}${entry.kind==='expense'?' · '+(getCategories().find(c=>c.id===entry.categoryId)?.name??'未分類'):''}`));
       const right=make('div','assets-once-item-action');
       right.append(make('b','',`${entry.kind==='income'?'+':entry.kind==='expense'||entry.kind==='withdrawal'?'−':''}${yen(entry.amount)}`),
         addButton('編集',()=>openOnce(entry)),addButton('削除',()=>{void deleteOnce(entry.id);},true));
@@ -382,6 +392,8 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
         if(current.oneTimeDelta)parts.push(`単発入出金 ${current.oneTimeDelta>0?'+':''}${yen(current.oneTimeDelta)}`);
         if(current.cardNisaDelta)parts.push(`カード積立 +${yen(current.cardNisaDelta)}`);
         if(current.payrollDelta)parts.push(`Payroll給与 +${yen(current.payrollDelta)}`);
+        const estimatedCardDebits=nextReport.fixedCostCardEstimatesByAccount[account.id]??0;
+        if(estimatedCardDebits)parts.push(`来月末までのカード固定費からの推定請求 −${yen(estimatedCardDebits)}（未確定）`);
         const cardDebits=currentReport.cardDebitByAccount[account.id]??0;
         if(cardDebits)parts.push(`カード引落 −${yen(cardDebits)}`);
         const autoTransfer=currentReport.autoTransferByAccount[account.id]??0;

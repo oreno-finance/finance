@@ -46,7 +46,11 @@ test('the 12th opens confirmation; the saved payment date and configured lead da
   const late=mizuhoFundingStatus(source(),report(),'2026-11-25');
   assert.equal(late.overdue,true);assert.match(mizuhoFundingDescription(late),/期限/);
   const done=mizuhoFundingStatus(source({...assets(),mizuhoFundingChecks:{'2026-11':check(true)}}),report(),'2026-11-25');
-  assert.equal(done.completed,true);assert.equal(done.overdue,false);
+  assert.equal(done.completed,false);assert.equal(done.changedSinceCheck,true); // Legacy confirmations do not identify any bill.
+  const fingerprint={billAmount:24245,paymentDate:'2026-11-27',transferAmount:30000,billId:'invoice-01'};
+  const verified=mizuhoFundingStatus(source({...assets(),mizuhoFundingChecks:{'2026-11':{...check(true),...fingerprint}}}),
+    report([{id:'invoice-01',cardId:'rakuten-mizuho',paymentDate:'2026-11-27',amount:24245,confirmation:'confirmed'}]),'2026-11-25');
+  assert.equal(verified.completed,true);assert.equal(verified.changedSinceCheck,false);assert.equal(verified.overdue,false);
   assert.equal(mizuhoFundingStatus(source({...assets(),mizuhoFundingChecks:{'2026-10':check(true)}}),report(),'2026-11-25').completed,false);
 });
 

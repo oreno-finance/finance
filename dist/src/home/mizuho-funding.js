@@ -23,10 +23,18 @@ export function mizuhoFundingStatusForMonth(source, report, today) {
     const dueDate = card ? shiftedDay(card.paymentDate, -plan.leadDays) : null;
     const amount = card && card.amount > 0 ? estimateMizuhoTransferAmount(card.amount, plan.extraForSmallBills) : null;
     const receipt = source.assets.mizuhoFundingChecks?.[month];
-    const completed = receipt?.done === true;
+    const billConfirmed = card?.confirmation === 'confirmed' && amount !== null;
+    const billSnapshot = billConfirmed && card ? {
+        billAmount: card.amount, paymentDate: card.paymentDate, transferAmount: amount, billId: card.id
+    } : null;
+    // Legacy acknowledgements without a snapshot are intentionally unverified.
+    const changedSinceCheck = receipt?.done === true && (!billSnapshot ||
+        receipt.billAmount !== billSnapshot.billAmount || receipt.paymentDate !== billSnapshot.paymentDate ||
+        receipt.transferAmount !== billSnapshot.transferAmount || receipt.billId !== billSnapshot.billId);
+    const completed = receipt?.done === true && !changedSinceCheck;
     const periodOpen = today >= `${month}-12`;
-    return { month, dueDate, amount, billConfirmed: card?.confirmation === 'confirmed',
-        completed, updatedAt: completed ? receipt?.updatedAt ?? null : null, periodOpen,
+    return { month, dueDate, amount, billConfirmed, billSnapshot, changedSinceCheck,
+        completed, updatedAt: receipt?.done ? receipt.updatedAt : null, periodOpen,
         overdue: periodOpen && !completed && dueDate !== null && today > dueDate };
 }
 /** Current-month UI keeps its original strict month contract. */
@@ -37,6 +45,8 @@ export function mizuhoFundingStatus(source, report, today) {
 }
 /** Read-only. Confirmation does NOT count as proof of a completed bank transfer. */
 export function mizuhoFundingDescription(status) {
+    if (status.changedSinceCheck)
+        return '請求内容が変更されました。実際の送金額を再確認してください';
     if (status.completed)
         return '送金済みとして記録済み（手動確認）';
     if (!status.periodOpen)

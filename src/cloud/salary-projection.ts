@@ -7,6 +7,7 @@ import type { CloudRecord } from './merge.js';
 import type { PayrollIncomeEntry } from './payroll-income.js';
 import { recurringInMonth } from './recurring-schedule.js';
 import { monthlyReport, prepareMonthlyReports, type PreparedMonthlyReports, type MonthlyReport } from '../summary/monthly-summary.js';
+import { estimatedCardFixedBills } from './card-fixed-estimates.js';
 import { mizuhoTransferForBill } from './mizuho-transfer.js';
 
 export interface ExpectedSalary {
@@ -20,6 +21,7 @@ export interface BankProjection {
   estimatedByAccount:Partial<Record<AssetAccountId,number>>;
   estimates:ExpectedSalary[];
   cardDebitByAccount:Partial<Record<AssetAccountId,number>>;
+  fixedCostCardEstimatesByAccount:Partial<Record<AssetAccountId,number>>;
   autoTransferByAccount:Partial<Record<AssetAccountId,number>>;
 }
 const period=(date:string)=>date.slice(0,7);
@@ -88,6 +90,7 @@ export function forecastBankBalances(
   const accounts=forecastAssets(doc,asOf,records,income,payrollDepositAccount,context.nisaRows);
   const estimatedByAccount:Partial<Record<AssetAccountId,number>>={};
   const cardDebitByAccount:Partial<Record<AssetAccountId,number>>={};
+  const fixedCostCardEstimatesByAccount:Partial<Record<AssetAccountId,number>>={};
   const autoTransferByAccount:Partial<Record<AssetAccountId,number>>={};
   for(const month of context.months){
     if(month>monthFromIndex(monthIndex(asOf)+1))continue;
@@ -117,10 +120,21 @@ export function forecastBankBalances(
       }
     }
   }
+  // Imported payment-month statements override all estimated contracts for that card.
+  for(const estimate of estimatedCardFixedBills(doc,records,today,asOf)){
+    const account=doc.cardDebitAccounts?.[estimate.cardId];if(!account)continue;
+    const bank=accounts[account];
+    if(bank.balance===null||!bank.baseline||estimate.paymentDate<=snapshotDay(bank.baseline))continue;
+    const result=bank.balance-estimate.amount;
+    if(!Number.isSafeInteger(result))throw new Error('カード固定費の残高予測が大きすぎます。');
+    bank.balance=result;
+    fixedCostCardEstimatesByAccount[account]=(fixedCostCardEstimatesByAccount[account]??0)+estimate.amount;
+    bank.warning=[bank.warning,'固定費から推定したカード引落額を含みます（請求額未確定）。'].filter(Boolean).join(' ');
+  }
   if(!payrollDepositAccount||!['rakuten-bank','cash-savings'].includes(payrollDepositAccount)||asOf<today)
-    return {accounts,estimatedByAccount,estimates:[],cardDebitByAccount,autoTransferByAccount};
+    return {accounts,estimatedByAccount,estimates:[],cardDebitByAccount,fixedCostCardEstimatesByAccount,autoTransferByAccount};
   const balance=accounts[payrollDepositAccount];
-  if(balance.balance===null||!balance.baseline)return {accounts,estimatedByAccount,estimates:[],cardDebitByAccount,autoTransferByAccount};
+  if(balance.balance===null||!balance.baseline)return {accounts,estimatedByAccount,estimates:[],cardDebitByAccount,fixedCostCardEstimatesByAccount,autoTransferByAccount};
   const baselineDay=snapshotDay(balance.baseline);
   const estimates=expectedMainSalaries(income,today,asOf).filter(estimate=>{
     if(estimate.date<=baselineDay)return false;
@@ -136,5 +150,5 @@ export function forecastBankBalances(
     balance.balance=next;
     estimatedByAccount[payrollDepositAccount]=sum;
   }
-  return {accounts,estimatedByAccount,estimates,cardDebitByAccount,autoTransferByAccount};
+  return {accounts,estimatedByAccount,estimates,cardDebitByAccount,fixedCostCardEstimatesByAccount,autoTransferByAccount};
 }

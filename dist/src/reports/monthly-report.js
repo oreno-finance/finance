@@ -37,8 +37,8 @@ export function validateReportDocument(raw, expectedPeriod) {
 export function reportSnapshot(period, source) {
     const now = monthlyReport(period, source);
     const prev = monthlyReport(changePeriod(period, -1), source);
-    const expense = now.cardOutflow === null ? null : now.cardOutflow + now.recurringExpense + now.oneTimeExpense;
-    const previousExpense = prev.cardOutflow === null ? null : prev.cardOutflow + prev.recurringExpense + prev.oneTimeExpense;
+    const expense = now.cardOutflow === null ? ((now.recurringExpense + now.oneTimeExpense) || null) : now.cardOutflow + now.recurringExpense + now.oneTimeExpense;
+    const previousExpense = prev.cardOutflow === null ? ((prev.recurringExpense + prev.oneTimeExpense) || null) : prev.cardOutflow + prev.recurringExpense + prev.oneTimeExpense;
     const cardMap = new Map();
     for (const card of now.cardLines)
         cardMap.set(card.name, (cardMap.get(card.name) ?? 0) + card.amount);
@@ -55,7 +55,9 @@ export function reportSnapshot(period, source) {
     }
     const quality = [];
     if (now.cardOutflow === null)
-        quality.push('カード明細未取得');
+        quality.push('カード明細未取得', '支出は一部判明分のみ');
+    if (now.pastUnconfirmedOneTime)
+        quality.push(`未実行の過去予定 ${now.pastUnconfirmedOneTime}件`);
     if (now.provisional.length)
         quality.push(`暫定明細 ${now.provisional.length}件`);
     if (now.unknownConfirmationCount)
