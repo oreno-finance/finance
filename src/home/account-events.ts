@@ -4,7 +4,7 @@ import { ASSET_ACCOUNTS, recurringCoveredByOneTime, type AssetAccountId, type Ba
 import { recurringInMonth } from '../cloud/recurring-schedule.js';
 import { mizuhoTransferForBill } from '../cloud/mizuho-transfer.js';
 import { expectedMainSalaries } from '../cloud/salary-projection.js';
-import { changePeriod, monthlyReport, type MonthlySource, type SummaryCard } from '../summary/monthly-summary.js';
+import { changePeriod, monthlyReport, type MonthlyReport, type MonthlySource, type SummaryCard } from '../summary/monthly-summary.js';
 
 export type BankAccountId = Exclude<AssetAccountId, 'nisa'>;
 export type CashEventKind = 'card' | 'transfer' | 'recurring' | 'one-time' | 'salary' | 'salary-estimate';
@@ -52,7 +52,8 @@ function safeAmount(previous:number,change:number):number {
 }
 /** Every explicit account movement is evaluated per-account; internal transfers
  * generate equal-and-opposite events and are never household spending. */
-export function forecastAccounts(source:MonthlySource,today:string,horizonDays=45):AccountForecasts {
+export function forecastAccounts(source:MonthlySource,today:string,horizonDays=45,
+  reportForMonth:(period:string)=>MonthlyReport=(period)=>monthlyReport(period,source)):AccountForecasts {
   if(!isDay(today)||!Number.isSafeInteger(horizonDays)||horizonDays<1||horizonDays>90)throw Error('予測期間が不正です。');
   const until=shiftedDay(today,horizonDays);
   const cutoff=shiftedDay(today,-90);
@@ -77,7 +78,7 @@ export function forecastAccounts(source:MonthlySource,today:string,horizonDays=4
   const cardLines:SummaryCard[]=[];
   const overlapMonths:string[]=[];const invalidMonths:string[]=[];let unverified=false;
   for(const month of addMonths(cutoff,until)){
-    const report=monthlyReport(month,source);
+    const report=reportForMonth(month);
     if(report.recurringCardOverlap>0)overlapMonths.push(month);
     if(report.issues.some(issue=>issue.month===month||issue.month===null))invalidMonths.push(month);
     for(const card of report.cardLines){

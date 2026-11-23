@@ -30,7 +30,14 @@ test('CSV missing-date handling stays in the save gate, and settings can hydrate
  assert.match(source,/const date=csvPaymentDate\(meta\.cardId,meta\.billingMonth\)/);
  assert.match(source,/parseCardCsv\(text,file\.name,date\)/);
  assert.match(source,/function applyCsvPaymentSettings\(\)/);
- assert.match(source,/function render\(\): void \{\n  applyCsvPaymentSettings\(\)/);
+ // Phase 3 skips rebuilding the hidden Import screen. It must apply saved CSV
+ // payment dates before updating its save gate when Import becomes visible.
+ const renderBlock=source.split('function render(): void {')[1]?.split('function attachSource(')[0]??'';
+ assert.match(renderBlock,/if \(!\$\('import-view'\)\.classList\.contains\('hidden'\)\) \{\s*applyCsvPaymentSettings\(\);/);
+ assert.match(renderBlock,/applyCsvPaymentSettings\(\);[\s\S]*?updateBatchStatus\(\);/);
+ // Returning from Settings to Import must run the guarded render again.
+ const navigation=source.split('function showView(view: FinanceView): void {')[1]?.split('function managerIndices():')[0]??'';
+ assert.match(navigation,/if \(view === 'import'\) render\(\);/);
  assert.match(source,/const paymentAction=\$<HTMLButtonElement>\('import-payment-settings'\)/);
  assert.match(source,/missingPaymentCards\.length \? `\$\{missingPaymentCards\.length\}枚のカードの引落日が未設定`/);
  const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');

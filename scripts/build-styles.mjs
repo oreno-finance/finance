@@ -55,6 +55,7 @@ export const sourceSheets = Object.freeze([
   'navigation-payroll-v1915.css',
   'navigation-polish-v1916.css',
   'mobile-finish-v1922.css',
+  'fixed-costs-v1960.css',
 ]);
 
 // app.css is generated, not edited by hand. The bundle lives next to its source

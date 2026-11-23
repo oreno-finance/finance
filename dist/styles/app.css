@@ -1154,6 +1154,24 @@ body{overflow:hidden}
 .manage-return-bar:not(:has(>button:not(.hidden))){display:none}
 #import-view > .home-return-bar{order:0;flex:0 0 auto}
 
+/* Manual monthly Mizuho funding check: not an account transaction. */
+#home-view .home-funding{display:grid;gap:10px;padding:16px;border:1px solid var(--line,#dde2e8)}
+#home-view .home-funding-overdue{border-color:var(--danger,#bf4c51)}
+#home-view .home-funding-state{font-size:14px;line-height:1.45}
+#home-view .home-funding-overdue .home-funding-state{color:var(--danger,#bf4c51)}
+#home-view .home-funding-facts{font-size:12px;line-height:1.5;margin:0}
+#home-view .home-funding-controls{display:flex;flex-wrap:wrap;gap:8px}
+#home-view .home-funding-controls button{width:auto;min-height:38px;padding:7px 15px;border-radius:9px}
+#home-view .home-funding-save{background:var(--accent,#238669);color:white;border:1px solid transparent}
+#home-view .home-funding-revoke{background:transparent;color:inherit;border:1px solid var(--line,#dde2e8)}
+#home-view .home-funding-controls button:disabled{opacity:.6;cursor:wait}
+#home-view .home-funding-error{color:var(--danger,#bf4c51);font-size:12px;margin:0}
+#home-view .home-funding-disclaimer{font-size:11px;line-height:1.5}
+@media(max-width:440px){#home-view .home-funding-controls button{width:100%}}
+
+#home-view .home-funding-prior{border-color:var(--danger,#bf4c51)}
+#home-view .home-funding-prior .home-funding-state{color:var(--danger,#bf4c51)}
+
 /* SOURCE: import-v192.css */
 /* File-first import with a compact, optional legacy paste workflow. */
 .import-panel{min-height:0}
@@ -4533,3 +4551,49 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 @media (hover:none){
   #finance-sidebar #brand-home:hover .brand-mark{box-shadow:none}
 }
+
+/* SOURCE: fixed-costs-v1960.css */
+/* Finance: summary controls below the title; all view widths remain consistent. */
+/* Quiet secondary documentation. Overrides inherited subscriptions large-note styles. */
+#subscriptions-view .fixed-cost-guidance{font-size:12px!important;line-height:1.55!important;font-weight:400!important;color:var(--muted,#687387);margin:13px 0 0}
+#summary-view > .monthly-heading.finance-page-heading{display:block!important;align-items:initial!important;justify-content:initial!important;margin-bottom:12px}
+#summary-view > .monthly-controls.finance-period-nav{display:flex;justify-content:flex-start;align-items:center;flex-wrap:wrap;gap:8px;width:fit-content;max-width:100%;margin:0 0 20px}
+#summary-view > .monthly-controls #monthly-report-open{width:auto;flex:0 0 auto}
+.fixed-cost-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.fixed-cost-metric{display:grid;gap:6px;min-width:0;padding:16px;border:1px solid var(--line,#dde2e8);border-radius:12px;background:var(--panel,#fff)}
+.fixed-cost-metric span{font-size:12px;color:var(--muted,#687387)}
+.fixed-cost-metric strong{font-size:clamp(1rem,1.4vw,1.4rem);overflow-wrap:anywhere}
+.fixed-cost-toolbar{display:flex;gap:12px;justify-content:space-between;align-items:center;flex-wrap:wrap}
+.fixed-cost-toolbar>.save-action{white-space:nowrap;min-height:40px;padding:8px 13px}
+.fixed-cost-item{display:flex;gap:14px;align-items:center;padding:16px;flex-wrap:wrap;min-width:0}
+.fixed-cost-item-info{display:grid;gap:5px;min-width:150px;flex:1 1 180px;overflow-wrap:anywhere}
+.fixed-cost-item-info strong{font-size:15px}
+.fixed-cost-item-info small,.fixed-cost-item-price small{font-size:12px;color:var(--muted,#687387);line-height:1.5}
+.fixed-cost-item-price{display:grid;gap:5px;min-width:90px;text-align:right}
+.fixed-cost-item-actions{display:flex;gap:8px;flex-wrap:wrap}
+.fixed-cost-item-actions button{min-height:38px}
+.fixed-cost-dialog{box-sizing:border-box;width:min(96vw,570px);max-width:570px;max-height:min(90dvh,820px);margin:auto;padding:0;border:1px solid var(--line,#dde2e8);border-radius:15px;background:var(--panel,#fff);color:var(--ink,#1c2739);box-shadow:0 25px 75px #0004}
+.fixed-cost-dialog::backdrop{background:#09152bb8}
+.fixed-cost-form{padding:20px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px;overflow-y:auto;max-height:min(90dvh,820px)}
+.fixed-cost-form h2,.fixed-cost-form .fixed-cost-form-actions,.fixed-cost-form .fixed-cost-form-error{grid-column:1/-1;margin:0}
+.fixed-cost-form h2{font-size:1.4rem;margin-bottom:4px}
+.fixed-cost-field{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:12px;font-weight:650}
+.fixed-cost-field[hidden]{display:none!important}
+.fixed-cost-field input,.fixed-cost-field select,.fixed-cost-field textarea{box-sizing:border-box;max-width:100%;width:100%;min-height:39px;border:1px solid var(--line,#bdc7d2);border-radius:9px;background:var(--panel,#fff);color:inherit;padding:8px;font:inherit;font-size:14px}
+.fixed-cost-field textarea{min-height:70px;resize:vertical}
+.fixed-cost-field:has([name="name"]),.fixed-cost-field:has([name="note"]){grid-column:1/-1}
+.fixed-cost-form-error{color:var(--danger,#bd3e43);font-size:12px;min-height:0}
+.fixed-cost-form-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:8px}
+.fixed-cost-form-actions button{min-height:40px;padding:8px 18px}
+@media(max-width:620px){.fixed-cost-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.fixed-cost-metric:last-child{grid-column:1/-1}.fixed-cost-toolbar .subscriptions-tabs{width:100%;flex-wrap:nowrap;overflow-x:auto}.fixed-cost-toolbar .subscriptions-tab{flex:0 0 auto;white-space:nowrap}.fixed-cost-form{padding:15px;gap:10px}.fixed-cost-item{align-items:flex-start}.fixed-cost-item-price{text-align:right}}
+@media(max-width:360px){.fixed-cost-form{grid-template-columns:1fr}.fixed-cost-field{grid-column:1/-1}.fixed-cost-metrics{grid-template-columns:1fr}.fixed-cost-metric:last-child{grid-column:auto}}
+.fixed-cost-detail{padding:20px;display:grid;gap:14px;max-height:min(90dvh,820px);overflow:auto}
+.fixed-cost-detail h2{font-size:1.3rem;overflow-wrap:anywhere}
+.fixed-cost-detail h3{font-size:.95rem;margin-top:8px}
+.fixed-cost-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.fixed-cost-detail-pair{display:grid;gap:4px;min-width:0}
+.fixed-cost-detail-pair span{font-size:12px;color:var(--muted,#687387)}
+.fixed-cost-detail-pair strong{font-size:15px;overflow-wrap:anywhere}
+.fixed-cost-detail-line{display:flex;gap:12px;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--line,#dde2e8);font-size:13px}
+.fixed-cost-detail-line strong{white-space:nowrap}
+@media(max-width:360px){.fixed-cost-detail-grid{grid-template-columns:1fr}}

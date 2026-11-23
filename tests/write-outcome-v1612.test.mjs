@@ -5,7 +5,7 @@ import { webcrypto } from 'node:crypto';
 import { LiveVault, CloudWriteUncertainError } from '../dist/src/cloud/live-vault.js';
 import { GraphError } from '../dist/src/cloud/onedrive-api.js';
 if (!globalThis.crypto) globalThis.crypto=webcrypto;
-const password='v1612-test-passphrase-with-length';
+const password='fake words for a test vault only';
 
 class Graph {
   constructor(){this.items=new Map();this.failRead=null;this.failReadAfterWrite=null;this.failWriteAfterCommit=null;this.returnNoEtag=null;this.counts={rules:0,assets:0};}

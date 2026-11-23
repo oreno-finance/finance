@@ -24,10 +24,10 @@ interface PdfTextItem {
 }
 interface PdfTextContent { items: Array<PdfTextItem | { type: string }> }
 interface PdfPage { getTextContent(options?: Record<string, unknown>): Promise<PdfTextContent> }
-interface PdfDocument { numPages: number; getPage(pageNumber: number): Promise<PdfPage>; destroy(): Promise<void> }
+interface PdfDocument { numPages: number; getPage(pageNumber: number): Promise<PdfPage> }
 interface PdfLibrary {
   GlobalWorkerOptions: { workerSrc: string };
-  getDocument(params: { data: Uint8Array; isEvalSupported?: boolean; useSystemFonts?: boolean; cMapUrl?: string; cMapPacked?: boolean; standardFontDataUrl?: string; wasmUrl?: string }): { promise: Promise<PdfDocument> };
+  getDocument(params: { data: Uint8Array; isEvalSupported?: boolean; useSystemFonts?: boolean; cMapUrl?: string; cMapPacked?: boolean; standardFontDataUrl?: string; wasmUrl?: string }): { promise: Promise<PdfDocument>; destroy(): Promise<void> };
 }
 
 function joinPageItems(items: PdfTextContent['items']): string[] {
@@ -53,8 +53,13 @@ function joinPageItems(items: PdfTextContent['items']): string[] {
   }).filter(Boolean);
 }
 
-export async function parsePdfFile(file: File): Promise<ParsedStatement> {
+/** The optional original is never handed to PDF.js: its worker may transfer/
+ * detach the input ArrayBuffer. The caller can safely retain it for encrypted
+ * original-PDF storage without reading the File/Blob a second time. */
+export async function parsePdfFile(file: File, originalBytes?:Uint8Array): Promise<ParsedStatement> {
   assertPdfLimits(file.size);
+  if(originalBytes && originalBytes.byteLength!==file.size)
+    throw new Error('PDF原本のバイト長が一致しません。');
   let lib: PdfLibrary;
   try {
     // Keep PDF.js and its worker the same pinned version, hosted in this project.
@@ -65,7 +70,7 @@ export async function parsePdfFile(file: File): Promise<ParsedStatement> {
   }
   lib.GlobalWorkerOptions.workerSrc = new URL('../../vendor/pdfjs/pdf.worker.mjs', import.meta.url).href;
   const task = lib.getDocument({
-    data: new Uint8Array(await file.arrayBuffer()),
+    data: originalBytes ? new Uint8Array(originalBytes) : new Uint8Array(await file.arrayBuffer()),
     isEvalSupported: false,
     useSystemFonts: true,
     cMapUrl: new URL('../../vendor/pdfjs/cmaps/', import.meta.url).href,
@@ -73,8 +78,8 @@ export async function parsePdfFile(file: File): Promise<ParsedStatement> {
     standardFontDataUrl: new URL('../../vendor/pdfjs/standard_fonts/', import.meta.url).href,
     wasmUrl: new URL('../../vendor/pdfjs/wasm/', import.meta.url).href,
   });
-  const pdf = await task.promise;
   try {
+    const pdf = await task.promise;
     assertPdfLimits(file.size,pdf.numPages);
     const pages: string[] = [];
     for (let page = 1; page <= pdf.numPages; page++) {
@@ -86,5 +91,5 @@ export async function parsePdfFile(file: File): Promise<ParsedStatement> {
       result.warnings.unshift('印刷PDFには明細テキストが埋め込まれていません。Web明細画面をコピーして「貼り付け」タブから解析してください。');
     }
     return result;
-  } finally { await pdf.destroy(); }
+  } finally { await task.destroy(); }
 }

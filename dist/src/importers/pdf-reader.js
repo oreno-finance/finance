@@ -38,8 +38,13 @@ function joinPageItems(items) {
         return result.trim();
     }).filter(Boolean);
 }
-export async function parsePdfFile(file) {
+/** The optional original is never handed to PDF.js: its worker may transfer/
+ * detach the input ArrayBuffer. The caller can safely retain it for encrypted
+ * original-PDF storage without reading the File/Blob a second time. */
+export async function parsePdfFile(file, originalBytes) {
     assertPdfLimits(file.size);
+    if (originalBytes && originalBytes.byteLength !== file.size)
+        throw new Error('PDF原本のバイト長が一致しません。');
     let lib;
     try {
         // Keep PDF.js and its worker the same pinned version, hosted in this project.
@@ -51,7 +56,7 @@ export async function parsePdfFile(file) {
     }
     lib.GlobalWorkerOptions.workerSrc = new URL('../../vendor/pdfjs/pdf.worker.mjs', import.meta.url).href;
     const task = lib.getDocument({
-        data: new Uint8Array(await file.arrayBuffer()),
+        data: originalBytes ? new Uint8Array(originalBytes) : new Uint8Array(await file.arrayBuffer()),
         isEvalSupported: false,
         useSystemFonts: true,
         cMapUrl: new URL('../../vendor/pdfjs/cmaps/', import.meta.url).href,
@@ -59,8 +64,8 @@ export async function parsePdfFile(file) {
         standardFontDataUrl: new URL('../../vendor/pdfjs/standard_fonts/', import.meta.url).href,
         wasmUrl: new URL('../../vendor/pdfjs/wasm/', import.meta.url).href,
     });
-    const pdf = await task.promise;
     try {
+        const pdf = await task.promise;
         assertPdfLimits(file.size, pdf.numPages);
         const pages = [];
         for (let page = 1; page <= pdf.numPages; page++) {
@@ -74,6 +79,6 @@ export async function parsePdfFile(file) {
         return result;
     }
     finally {
-        await pdf.destroy();
+        await task.destroy();
     }
 }

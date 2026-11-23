@@ -1,6 +1,6 @@
 /** Read-only asset forecast: no remote writes, guessed debit accounts, or future salary estimates. */
 import { ASSET_ACCOUNTS, oneTimeAccountDelta, recurringCoveredByOneTime, nisaRuleOnDay } from './assets.js';
-import { recurringOccursOn } from './recurring-schedule.js'; /* finance-monthly-v142 */
+import { recurringOccursOn, recurringEffectiveAmount } from './recurring-schedule.js'; /* finance-monthly-v142 */
 import { depositedIncomeBetween } from './payroll-income.js';
 function dayString(date) {
     const y = date.getFullYear(), m = String(date.getMonth() + 1).padStart(2, '0'), d = String(date.getDate()).padStart(2, '0');
@@ -75,8 +75,13 @@ export function forecastAssets(doc, asOf, records = [], payrollIncome = [], payr
         for (let t = from + 86400000; t <= to; t += 86400000) {
             const day = new Date(t).toISOString().slice(0, 10);
             for (const entry of doc.recurring) {
-                const delta = accountDelta(entry, account.id);
-                if (delta !== 0 && recurringOccursOn(entry, day) && !recurringCoveredByOneTime(entry, day, doc.oneTime)) {
+                if (entry.fromAccountId !== account.id && entry.toAccountId !== account.id)
+                    continue;
+                if (!recurringOccursOn(entry, day))
+                    continue;
+                const historic = { ...entry, amount: recurringEffectiveAmount(entry, day) };
+                const delta = accountDelta(historic, account.id);
+                if (delta !== 0 && !recurringCoveredByOneTime(historic, day, doc.oneTime)) {
                     recurringDelta += delta;
                     forecastEvents++;
                 }

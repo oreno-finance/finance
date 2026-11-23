@@ -24,7 +24,7 @@ export function pointBenefitsSection(title, data) {
         const name = document.createElement('span');
         name.textContent = item.name;
         const detail = document.createElement('small');
-        detail.textContent = `${fmt(item.amount)}円 · ${item.ratePercent}%`;
+        detail.textContent = `${fmt(item.amount)}円 · ${item.rateLabel ?? `${item.ratePercent}%`}`;
         const left = document.createElement('div');
         left.className = 'points-benefits-card';
         left.append(name, detail);

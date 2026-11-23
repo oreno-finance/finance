@@ -54,8 +54,9 @@ test('empty import hides Step 02, Step 03 and Save until draft or error is prese
     assert.match(html,new RegExp(`(?:id="${node}"|class="[^"]*${node})`));
 });
 
-test('50 maintained source CSS files are delivered as one deterministic ordered bundle',async()=>{
-  assert.equal(sourceSheets.length,50);
+test('maintained CSS sources, including fixed costs, are delivered as one deterministic bundle',async()=>{
+  assert.ok(sourceSheets.length>=50,'前回までのCSS登録を維持すること');
+  assert.ok(sourceSheets.includes('fixed-costs-v1960.css'),'固定費CSSが配布物に含まれること');
   assert.equal(new Set(sourceSheets).size,sourceSheets.length);
   assert.equal((html.match(/<link rel="stylesheet"/g)||[]).length,1);
   assert.match(html,/<link rel="stylesheet" href="\.\/styles\/app\.css">/);

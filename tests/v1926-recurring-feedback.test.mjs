@@ -51,13 +51,22 @@ test('monthly report load/save errors survive redraw locally and clear only on n
   assert.match(read('public/styles/monthly-reports-v182.css'),/\[data-theme="dark"\] \.reports-feedback-error/);
 });
 
-test('card recurring failure stays visible while switching tabs and card label is specific',()=>{
+test('fixed-cost failures stay visible across tabs and preserve the current navigation label',()=>{
   const source=read('src/ui/subscriptions.ts');
   const html=read('public/index.html');
-  assert.match(source,/if\(notice\)\{const error=el\('p','subscriptions-notice error',notice\)/);
-  assert.match(source,/\(\)=>\{filter=key;render\(\);\}/);
-  assert.match(source,/error instanceof CloudWriteUncertainError\?'保存結果未確認':'保存失敗'/);
-  assert.match(html,/data-nav-label="カードの定期支出"/);
-  assert.match(html,/<h1>カードの定期支出<span class="accent-dot">/);
+  // A failed candidate write leaves the notice in module state until a new
+  // action succeeds. Switching tabs invokes render() but must not clear it.
+  const candidate=source.split('async function markCandidate(')[1]?.split('function render():void')[0]??'';
+  const render=source.split('function render():void {')[1]?.split('function reset():void')[0]??'';
+  assert.ok(candidate,'candidate handler must exist');
+  assert.match(candidate,/catch\(e\)\{notice=e instanceof Error\?e\.message:'保存に失敗しました。';/);
+  assert.match(candidate,/finally\{busy=false;render\(\);\}/);
+  assert.doesNotMatch(candidate,/notice\s*=\s*''/);
+  assert.match(render,/if\(notice\)root!\.append\(el\('p','subscriptions-notice error',notice\)\)/);
+  assert.match(render,/\(\)=>\{tab=value;render\(\);\}/);
+  // An uncertain OneDrive write remains an explicit warning in the open form.
+  assert.match(source,/error\.textContent=e instanceof CloudWriteUncertainError\?'保存結果未確認です。/);
+  assert.match(html,/data-nav-label="固定費・サブスク管理"/);
+  assert.match(html,/<h1>固定費・サブスク管理<span class="accent-dot">/);
   assert.match(read('public/styles/subscriptions-v183.css'),/\[data-theme="dark"\] \.subscriptions-notice\.error/);
 });

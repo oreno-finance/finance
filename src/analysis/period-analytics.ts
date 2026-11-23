@@ -1,6 +1,6 @@
 /** Read-only cross-period analysis. Finance's payment-date monthlyReport remains the source of truth.
  * Never turn absent statements, income or future projections into verified zeroes. */
-import {changePeriod,monthlyReport,isValidPeriod,type MonthlyReport,type MonthlySource} from '../summary/monthly-summary.js';
+import {changePeriod,monthlyReport,isValidPeriod,prepareMonthlyReports,type PreparedMonthlyReports,type MonthlyReport,type MonthlySource} from '../summary/monthly-summary.js';
 
 export type AnalysisCoverage='missing'|'review'|'provisional'|'registered';
 export type AnalysisDimension='card'|'category'|'merchant';
@@ -61,8 +61,8 @@ function status(report:MonthlyReport,period:string):AnalysisCoverage{
   if(report.provisional.length)return 'provisional';
   return 'registered';
 }
-function asMonth(period:string,source:MonthlySource):AnalysisMonth{
-  const report=monthlyReport(period,source);
+function asMonth(period:string,source:MonthlySource,prepared:PreparedMonthlyReports):AnalysisMonth{
+  const report=monthlyReport(period,source,prepared);
   const coverage=status(report,period);
   const expense=report.cardOutflow===null?null:add(add(report.cardOutflow,report.recurringExpense),report.oneTimeExpense);
   const livingExpense=report.livingOutflow===null?null:add(add(report.livingOutflow,report.recurringExpense),report.oneTimeExpense);
@@ -103,7 +103,10 @@ export function analyzePeriods(source:MonthlySource,periods:readonly string[],cu
     throw new Error('分析対象の年月が不正です。');
   }
   const adjusted={...source,currentPeriod};
-  const months=periods.map(period=>asMonth(period,adjusted));
+  // Previously this recreated the global duplicate-index and scanned every
+  // saved statement for EACH month, including a 12-month analysis.
+  const prepared=prepareMonthlyReports(source.records);
+  const months=periods.map(period=>asMonth(period,adjusted,prepared));
   const knownExpenses=months.filter(month=>month.expense!==null).map(month=>({period:month.period,amount:month.expense!}));
   const income=sum(months.map(month=>month.income)),expense=sum(months.map(month=>month.expense));
   const livingExpense=sum(months.map(month=>month.livingExpense)),balance=sum(months.map(month=>month.balance));

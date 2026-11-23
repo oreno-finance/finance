@@ -1,8 +1,9 @@
 /** Finance P1-A: in-browser multi-month / annual analysis, no additional persistence. */
 import { annualAnalytics, comparableDelta, priorYearAnalytics, rollingAnalytics } from '../analysis/period-analytics.js';
 import { monthNavigator, yearNavigator } from './period-navigator.js';
-import { periodPointBenefits } from '../summary/point-benefits.js';
+import { periodPointBenefitsFromReports } from '../summary/point-benefits.js';
 import { pointBenefitsSection } from './point-benefits.js';
+import { measureFinanceSync } from '../cloud/performance-diagnostics.js';
 const formatYen = (amount, digits = 0) => amount === null ? '未取得' : `${amount.toLocaleString('ja-JP', { maximumFractionDigits: digits })}円`;
 const signedYen = (value) => `${value > 0 ? '+' : ''}${formatYen(value)}`;
 const monthLabel = (period) => `${Number(period.slice(5))}月`;
@@ -49,7 +50,7 @@ export function initAnalysis(deps) {
     let dimension = 'category';
     const go = (period) => deps.openMonth(period);
     const drill = (dimension, id, label, periods) => deps.openDrilldown({ dimension, value: id, label, periods });
-    function controls(today) {
+    function controls(today, source) {
         const area = el('div', 'analysis-controls');
         const modes = el('div', 'analysis-switch');
         for (const [value, label] of [['month', '月次'], ['year', '年間']]) {
@@ -69,7 +70,6 @@ export function initAnalysis(deps) {
             area.append(monthNavigator(end, (next) => { end = next; render(); }, { label: '分析終了月', max: today, min: '1900-12', today }));
         }
         else {
-            const source = deps.source();
             const years = [...(source?.records ?? []).map(r => Number(r.statement.paymentDate?.slice(0, 4))),
                 ...(source?.payroll.entries ?? []).map(p => Number(p.paidOn.slice(0, 4))), year, Number(today.slice(0, 4)) - 5];
             const first = Math.max(1900, Math.min(...years.filter(y => Number.isInteger(y) && y >= 1900)));
@@ -279,38 +279,41 @@ export function initAnalysis(deps) {
         return block.root;
     }
     function render() {
-        root.replaceChildren();
-        const today = currentLocal();
-        if (end > today)
-            end = today;
-        if (year > Number(today.slice(0, 4)))
-            year = Number(today.slice(0, 4));
-        root.append(controls(today));
-        const source = deps.source();
-        if (!source) {
-            const locked = panel('OneDrive保管庫を開く');
-            locked.body.append(action('設定を開く', deps.openSettings, 'analysis-primary'));
-            root.append(locked.root);
-            return;
-        }
-        try {
-            const data = mode === 'month' ? rollingAnalytics(source, end, count, today) : annualAnalytics(source, year, today);
-            const header = el('div', 'analysis-range');
-            header.append(el('strong', '', mode === 'month' ? `${labelYearMonth(data.months[0].period)}〜${labelYearMonth(data.months.at(-1).period)}` : `${year}年の収支`));
-            root.append(header, summary(data), pointBenefitsSection('獲得ポイント', periodPointBenefits(data.months.map(m => m.period), source)));
-            const warning = qualitySummary(data);
-            if (warning)
-                root.append(warning);
-            root.append(chart(data), monthTable(data));
-            if (mode === 'year')
-                root.append(annualCompare(data, priorYearAnalytics(source, year, today)));
-            root.append(rangeInsights(data), ranking(data));
-        }
-        catch (error) {
-            const problem = panel('収支分析を表示できません');
-            problem.body.append(note(error instanceof Error ? error.message : 'データを確認してください。'));
-            root.append(problem.root);
-        }
+        return measureFinanceSync('ui.analysis.render', () => {
+            root.replaceChildren();
+            const today = currentLocal();
+            if (end > today)
+                end = today;
+            if (year > Number(today.slice(0, 4)))
+                year = Number(today.slice(0, 4));
+            const source = deps.source();
+            root.append(controls(today, source));
+            if (!source) {
+                const locked = panel('OneDrive保管庫を開く');
+                locked.body.append(action('設定を開く', deps.openSettings, 'analysis-primary'));
+                root.append(locked.root);
+                return;
+            }
+            try {
+                const data = measureFinanceSync('ui.analysis.aggregate', () => mode === 'month'
+                    ? rollingAnalytics(source, end, count, today) : annualAnalytics(source, year, today));
+                const header = el('div', 'analysis-range');
+                header.append(el('strong', '', mode === 'month' ? `${labelYearMonth(data.months[0].period)}〜${labelYearMonth(data.months.at(-1).period)}` : `${year}年の収支`));
+                root.append(header, summary(data), pointBenefitsSection('獲得ポイント', measureFinanceSync('ui.analysis.points', () => periodPointBenefitsFromReports(data.months.map(m => m.report), source))));
+                const warning = qualitySummary(data);
+                if (warning)
+                    root.append(warning);
+                root.append(measureFinanceSync('ui.analysis.chart', () => chart(data)), monthTable(data));
+                if (mode === 'year')
+                    root.append(annualCompare(data, priorYearAnalytics(source, year, today)));
+                root.append(rangeInsights(data), ranking(data));
+            }
+            catch (error) {
+                const problem = panel('収支分析を表示できません');
+                problem.body.append(note(error instanceof Error ? error.message : 'データを確認してください。'));
+                root.append(problem.root);
+            }
+        });
     }
     return { render, reset: () => { end = currentLocal(); year = Number(end.slice(0, 4)); mode = 'month'; count = 6; dimension = 'category'; render(); } };
 }

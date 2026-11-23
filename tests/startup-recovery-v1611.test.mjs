@@ -14,7 +14,8 @@ test('navigation is connected before complex setup and automatic auth never redi
   assert.ok(init.indexOf("$('nav-settings').addEventListener") < init.indexOf('initCloudSettings('));
   assert.ok(init.indexOf("document.documentElement.dataset.financeReady='true'") > init.indexOf('  render();'));
   const startup=source.split('async function startCloud()')[1]?.split('async function refreshCloud()')[0]??'';
-  assert.match(startup,/await graphClientWithoutRedirect\(\)/);
+  assert.match(startup,/const client=await (?:graphClientWithoutRedirect\(\)|measureFinancePhase\('startup\.auth',\(\)=>graphClientWithoutRedirect\(\)\))/);
+  assert.doesNotMatch(startup,/\b(?:loginRedirect|loginPopup|acquireTokenRedirect|acquireTokenPopup)\s*\(/);
   assert.doesNotMatch(startup,/await graphClient\(\)/);
   assert.match(startup,/setTimeout\(/);
   assert.match(auth,/export async function graphClientWithoutRedirect\(/);

@@ -37,7 +37,7 @@ function safeAmount(previous, change) {
 }
 /** Every explicit account movement is evaluated per-account; internal transfers
  * generate equal-and-opposite events and are never household spending. */
-export function forecastAccounts(source, today, horizonDays = 45) {
+export function forecastAccounts(source, today, horizonDays = 45, reportForMonth = (period) => monthlyReport(period, source)) {
     if (!isDay(today) || !Number.isSafeInteger(horizonDays) || horizonDays < 1 || horizonDays > 90)
         throw Error('予測期間が不正です。');
     const until = shiftedDay(today, horizonDays);
@@ -68,7 +68,7 @@ export function forecastAccounts(source, today, horizonDays = 45) {
     const invalidMonths = [];
     let unverified = false;
     for (const month of addMonths(cutoff, until)) {
-        const report = monthlyReport(month, source);
+        const report = reportForMonth(month);
         if (report.recurringCardOverlap > 0)
             overlapMonths.push(month);
         if (report.issues.some(issue => issue.month === month || issue.month === null))

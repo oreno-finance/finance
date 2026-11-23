@@ -1,5 +1,6 @@
+import { pausedOnDay, priceOnDay } from '../fixed-costs/contracts.js';
 export function recurringOccursOn(entry, day) {
-    if (!entry.enabled || day < entry.startOn || (entry.endOn !== null && day > entry.endOn))
+    if (!entry.enabled || day < entry.startOn || (entry.endOn !== null && day > entry.endOn) || pausedOnDay(entry.pauses ?? [], day))
         return false;
     const yy = Number(day.slice(0, 4)), mm = Number(day.slice(5, 7)), dd = Number(day.slice(8, 10));
     if (entry.frequency === 'weekly')
@@ -8,6 +9,9 @@ export function recurringOccursOn(entry, day) {
         return false;
     const last = new Date(Date.UTC(yy, mm, 0)).getUTCDate();
     return dd === (entry.dayOfMonth === 0 ? last : Math.min(entry.dayOfMonth, last));
+}
+export function recurringEffectiveAmount(entry, day) {
+    return priceOnDay(entry.pricing ?? [], day, entry.amount);
 }
 /** Enumerate all occurrences, including future and not-yet-executed dates. */
 export function recurringInMonth(period, entries) {
@@ -22,7 +26,7 @@ export function recurringInMonth(period, entries) {
         for (let i = 1; i <= last; i++) {
             const day = `${period}-${String(i).padStart(2, '0')}`;
             if (recurringOccursOn(entry, day))
-                results.push({ id: `${entry.id}:${day}`, entry, date: day });
+                results.push({ id: `${entry.id}:${day}`, entry: { ...entry, amount: recurringEffectiveAmount(entry, day) }, date: day });
         }
     }
     return results.sort((a, b) => a.date.localeCompare(b.date) || a.entry.name.localeCompare(b.entry.name, 'ja') || a.id.localeCompare(b.id));

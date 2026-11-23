@@ -169,6 +169,10 @@ test('GitHub Pages ships an isolated MSAL v5 bridge, no login redirects on passi
   assert.doesNotMatch(bridge,/main\.js|msal-browser\.bundle\.js/);
   assert.match(entry,/msalRedirectBridge\.broadcastResponseToMainFrame/);
   assert.match(build,/msal-redirect-bridge\.min\.js/);
-  assert.match(main,/const client=await graphClientWithoutRedirect\(\)/);
+  // Check the passive-startup behavior rather than requiring the original
+  // uninstrumented expression: performance diagnostics may time the same call.
+  const startup=main.split('async function startCloud():Promise<void> {')[1]?.split('async function refreshCloud():Promise<void> {')[0]??'';
+  assert.match(startup,/graphClientWithoutRedirect\(\)/);
+  assert.doesNotMatch(startup,/\b(?:loginRedirect|loginPopup|acquireTokenRedirect|acquireTokenPopup)\s*\(/);
   assert.match(main,/readBrowserKey\(browserContext\)/);
 });

@@ -1,10 +1,27 @@
-import { monthlyReport } from '../summary/monthly-summary.js';
+import { changePeriod, monthlyReport, prepareMonthlyReports } from '../summary/monthly-summary.js';
 import { forecastAccounts } from './account-events.js';
 import { homeActions } from './action-items.js';
 import { pendingCardSubscriptions } from '../subscriptions/detect.js';
 export function homeOverview(source, today) {
-    const report = monthlyReport(today.slice(0, 7), { ...source, currentPeriod: today.slice(0, 7) });
-    const forecast = forecastAccounts(source, today);
+    const currentPeriod = today.slice(0, 7);
+    const prepared = prepareMonthlyReports(source.records);
+    const adjusted = { ...source, currentPeriod };
+    const byMonth = new Map();
+    const reportForMonth = (period) => {
+        let report = byMonth.get(period);
+        if (!report) {
+            report = monthlyReport(period, adjusted, prepared);
+            byMonth.set(period, report);
+        }
+        return report;
+    };
+    const report = reportForMonth(currentPeriod);
+    const forecast = forecastAccounts(source, today, 45, reportForMonth);
+    const previousPeriod = changePeriod(currentPeriod, -1);
+    const priorFundingReport = source.assets.mizuhoTransferPlan?.enabled &&
+        source.assets.cardDebitAccounts?.['rakuten-mizuho'] === 'mizuho-bank' &&
+        !source.assets.mizuhoFundingChecks?.[previousPeriod]?.done
+        ? reportForMonth(previousPeriod) : null;
     const coverage = report.cardLines.length === 0 ? 'missing' : report.issues.length || report.unknownConfirmationCount ? 'needs-review' :
         report.provisional.length ? 'provisional' : 'registered';
     const outflow = report.cardOutflow === null ? null : report.cardOutflow + report.recurringExpense + report.oneTimeExpense;
@@ -27,5 +44,5 @@ export function homeOverview(source, today) {
     if (candidates.length)
         actions.push({ id: 'card-subscription-candidates', kind: 'subscription', severity: 'low',
             title: `定期支出の候補が${candidates.length}件あります`, target: 'subscriptions' });
-    return { today, period: report.period, report, coverage, outflow, cardNames, accounts, forecast, actions };
+    return { today, period: report.period, report, coverage, outflow, cardNames, accounts, forecast, actions, priorFundingReport };
 }

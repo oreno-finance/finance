@@ -36,7 +36,7 @@ test('only the floating bottom-right card owns global save and loading feedback'
  assert.match(assets,/simpleActivity\(message,error\)/);
  assert.match(cloud,/if\(text\)simpleActivity\(text,kind==='error'\)/);
  assert.match(reports,/showActivity\('月次レポートを保存中…','working'\)/);
- assert.match(subs,/showActivity\('定期支出の設定を保存中…','working'\)/);
+  assert.match(subs,/showActivity\('固定費の設定をOneDriveに保存中…','working'\)/);
 });
 
 test('feedback state changes do not show fake success and unrelated completion does not hide a task',()=>{

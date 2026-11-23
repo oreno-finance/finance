@@ -1,6 +1,6 @@
 /** Home uses the unchanged monthlyReport as its only household cashflow source. */
 import { latestBalance, type AssetAccountId, type BalanceSnapshot } from '../cloud/assets.js';
-import { monthlyReport, type MonthlyReport, type MonthlySource } from '../summary/monthly-summary.js';
+import { changePeriod, monthlyReport, prepareMonthlyReports, type MonthlyReport, type MonthlySource } from '../summary/monthly-summary.js';
 import { forecastAccounts, type AccountForecasts } from './account-events.js';
 import { homeActions, type HomeAction } from './action-items.js';
 import {pendingCardSubscriptions} from '../subscriptions/detect.js';
@@ -12,10 +12,26 @@ export interface HomeAccount {
 export interface HomeOverview {
   today:string; period:string; report:MonthlyReport; coverage:HomeCoverage;
   outflow:number|null; cardNames:Record<string,string>; accounts:HomeAccount[]; forecast:AccountForecasts; actions:HomeAction[];
+  /** Only the prior month's unresolved funding; no synthetic amount if the bill is missing. */
+  priorFundingReport:MonthlyReport|null;
 }
 export function homeOverview(source:MonthlySource,today:string):HomeOverview {
-  const report=monthlyReport(today.slice(0,7),{...source,currentPeriod:today.slice(0,7)});
-  const forecast=forecastAccounts(source,today);
+  const currentPeriod=today.slice(0,7);
+  const prepared=prepareMonthlyReports(source.records);
+  const adjusted={...source,currentPeriod};
+  const byMonth=new Map<string,MonthlyReport>();
+  const reportForMonth=(period:string):MonthlyReport=>{
+    let report=byMonth.get(period);
+    if(!report){report=monthlyReport(period,adjusted,prepared);byMonth.set(period,report);}
+    return report;
+  };
+  const report=reportForMonth(currentPeriod);
+  const forecast=forecastAccounts(source,today,45,reportForMonth);
+  const previousPeriod=changePeriod(currentPeriod,-1);
+  const priorFundingReport=source.assets.mizuhoTransferPlan?.enabled&&
+    source.assets.cardDebitAccounts?.['rakuten-mizuho']==='mizuho-bank'&&
+    !source.assets.mizuhoFundingChecks?.[previousPeriod]?.done
+      ?reportForMonth(previousPeriod):null;
   const coverage:HomeCoverage=report.cardLines.length===0?'missing':report.issues.length||report.unknownConfirmationCount?'needs-review':
     report.provisional.length?'provisional':'registered';
   const outflow=report.cardOutflow===null?null:report.cardOutflow+report.recurringExpense+report.oneTimeExpense;
@@ -36,5 +52,5 @@ export function homeOverview(source:MonthlySource,today:string):HomeOverview {
   const candidates=pendingCardSubscriptions(source,today.slice(0,7));
   if(candidates.length)actions.push({id:'card-subscription-candidates',kind:'subscription',severity:'low',
     title:`定期支出の候補が${candidates.length}件あります`,target:'subscriptions'});
-  return {today,period:report.period,report,coverage,outflow,cardNames,accounts,forecast,actions};
+  return {today,period:report.period,report,coverage,outflow,cardNames,accounts,forecast,actions,priorFundingReport};
 }

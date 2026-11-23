@@ -1,5 +1,6 @@
 /** Microsoft Graph API client for the encrypted Finance vault and connectivity checks. */
 import { PROBE_FILE_NAME } from './test-envelope.js';
+import { countFinanceRequest, measureFinancePhase } from './performance-diagnostics.js';
 import { FINANCE_DIR, PAYROLL_DIR, checkBucket, checkOriginalMonth, originalParts } from './layout.js';
 import { asSnapshots, isSnapshotName, MAX_SNAPSHOT_BYTES, snapshotName, validateBackupText } from './vault-snapshots.js';
 const GRAPH = 'https://graph.microsoft.com/v1.0';
@@ -21,10 +22,22 @@ export class OneDriveTestClient {
     // retained only in memory; a new sign-in/client receives a fresh cache.
     appRoot = null;
     dataSetId = null;
+    // Bounded encrypted-text cache. Each invocation still checks Graph metadata / ETag.
+    // Conservative JS string footprint (UTF-16, 2 bytes/code unit). Encrypted
+    // originals must never enter this cache, even when their ETag is unchanged.
+    static MAX_ENCRYPTED_CACHE_BYTES = 8 * 1024 * 1024;
+    encryptedReadCache = new Map();
+    encryptedReadJobs = new Map();
+    encryptedReadEpoch = 0;
     /** v2 data sets are isolated; only index.enc remains at the stable root. */
     setVaultDataSet(id) {
         if (id !== null && !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id))
             throw new Error('保管庫世代IDが不正です。');
+        if (this.dataSetId !== id) {
+            this.encryptedReadCache.clear();
+            this.encryptedReadJobs.clear();
+            this.encryptedReadEpoch++;
+        }
         this.dataSetId = id;
     }
     forVaultDataSet(id) {
@@ -53,14 +66,14 @@ export class OneDriveTestClient {
     }
     /** A single read deadline covers headers and the entire response body.
      * Writes are never aborted here because their committed state may be uncertain. */
-    async withReadDeadline(url, init, consume) {
+    async withReadDeadline(url, init, consume, timeoutMs = 30000) {
         const controller = new AbortController();
         let timeout;
         const expired = new Promise((_, reject) => {
             timeout = setTimeout(() => {
                 controller.abort();
-                reject(new Error('OneDriveの読み取りが30秒以内に完了しませんでした。'));
-            }, 30000);
+                reject(new Error(`OneDriveの読み取りが${Math.ceil(timeoutMs / 1000)}秒以内に完了しませんでした。`));
+            }, timeoutMs);
         });
         try {
             return await Promise.race([
@@ -70,7 +83,7 @@ export class OneDriveTestClient {
         }
         catch (error) {
             if (controller.signal.aborted)
-                throw new Error('OneDriveの読み取りが30秒以内に完了しませんでした。');
+                throw new Error(`OneDriveの読み取りが${Math.ceil(timeoutMs / 1000)}秒以内に完了しませんでした。`);
             throw error;
         }
         finally {
@@ -139,13 +152,25 @@ export class OneDriveTestClient {
             // every token's lifetime. Never hold a bearer token inside this client.
             const token = typeof this.tokenSource === 'string'
                 ? this.tokenSource : await this.tokenSource(forceRefresh);
-            return this.httpWithReadTimeout(GRAPH + path, {
+            countFinanceRequest(method === 'GET' ? 'graph.get' : 'graph.write');
+            return measureFinancePhase('graph.request', () => this.httpWithReadTimeout(GRAPH + path, {
                 ...init,
                 headers: { ...init.headers, Authorization: `Bearer ${token}` },
                 redirect: 'error',
-            });
+            }));
         };
         let response = await request();
+        // Only GET may be replayed on transient throttling. Never repeat a write,
+        // upload-session request or chunk: its outcome could already be committed.
+        if (method === 'GET')
+            for (let attempt = 0; attempt < 2 && (response.status === 429 || response.status === 503); attempt++) {
+                const value = response.headers.get('Retry-After');
+                const numeric = value !== null && /^\d{1,3}$/.test(value) ? Number(value) : null;
+                const delayMs = numeric === null ? 200 * (attempt + 1) : Math.min(3000, numeric * 1000);
+                if (delayMs > 0)
+                    await new Promise(resolve => setTimeout(resolve, delayMs));
+                response = await request();
+            }
         // One read-only 401 recovery is safe. Never replay writes, upload-session
         // creation, chunk uploads, or any uncertain operation after a 401.
         if (response.status === 401 && method === 'GET' && typeof this.tokenSource !== 'string') {
@@ -179,13 +204,17 @@ export class OneDriveTestClient {
         const url = item['@microsoft.graph.downloadUrl'];
         if (!url || new URL(url).protocol !== 'https:')
             throw new Error('安全なダウンロードURLを取得できませんでした。');
-        // Signed download URLs are unauthenticated. Keep the 30-second deadline
-        // active until the entire body has been consumed, not merely until headers.
-        const bytes = await this.withReadDeadline(url, { method: 'GET', credentials: 'omit' }, async (response) => {
+        // Originals may be up to 200 MiB. Give only these downloads a longer,
+        // bounded full-body deadline; small encrypted files retain 30 seconds.
+        const timeoutMs = maxBytes >= 100 * 1024 * 1024
+            ? Math.min(180000, Math.max(90000, Math.ceil((item.size ?? maxBytes) / (1024 * 1024)) * 1000))
+            : 30000;
+        countFinanceRequest('graph.download');
+        const bytes = await measureFinancePhase('graph.encrypted-download', () => this.withReadDeadline(url, { method: 'GET', credentials: 'omit' }, async (response) => {
             if (!response.ok)
                 throw new Error(`OneDriveからの取得に失敗しました (HTTP ${response.status})。`);
             return this.readResponseBytes(response, maxBytes);
-        });
+        }, timeoutMs));
         return { text: new TextDecoder('utf-8', { fatal: true }).decode(bytes), item };
     }
     async downloadItem(id, maxBytes) {
@@ -295,6 +324,7 @@ export class OneDriveTestClient {
         const size = 3276800;
         for (let start = 0; start < bytes.byteLength; start += size) {
             const end = Math.min(start + size, bytes.byteLength);
+            countFinanceRequest('graph.upload-chunk');
             const part = await this.http(session.uploadUrl, {
                 method: 'PUT', credentials: 'omit',
                 headers: { 'Content-Range': `bytes ${start}-${end - 1}/${bytes.byteLength}` },
@@ -519,23 +549,81 @@ export class OneDriveTestClient {
         return parent;
     }
     async readNamedFile(parts, name, maxBytes) {
-        const parent = await this.folderPath(parts, false);
-        if (!parent)
-            return null;
-        let item;
+        const key = JSON.stringify([parts, name, maxBytes]);
+        const epoch = this.encryptedReadEpoch;
+        const waiting = this.encryptedReadJobs.get(key);
+        if (waiting)
+            return waiting;
+        const job = (async () => {
+            // A cached directory ID may become stale when a folder is moved outside
+            // Finance. Resolve its path again once, then fail closed on an actual miss.
+            let item = null;
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const hadCachedPath = parts.some((_, i) => this.directoryIds.has(`/${parts.slice(0, i + 1).join('/')}`));
+                const parent = await this.folderPath(parts, false);
+                if (!parent) {
+                    if (attempt === 0 && hadCachedPath) {
+                        this.clearDirectoryCache();
+                        continue;
+                    }
+                    if (epoch === this.encryptedReadEpoch)
+                        this.encryptedReadCache.delete(key);
+                    return null;
+                }
+                try {
+                    const response = await this.graph(`/me/drive/items/${encodeURIComponent(parent)}:/${encodeURIComponent(name)}`);
+                    item = await response.json();
+                    break;
+                }
+                catch (error) {
+                    if (!(error instanceof GraphError && error.status === 404))
+                        throw error;
+                    if (attempt === 0 && hadCachedPath) {
+                        this.clearDirectoryCache();
+                        continue;
+                    }
+                    if (epoch === this.encryptedReadEpoch)
+                        this.encryptedReadCache.delete(key);
+                    return null;
+                }
+            }
+            if (!item?.id || !item.eTag)
+                throw new Error('OneDriveの更新情報を取得できません。');
+            const useCache = !parts.includes('originals') && name.endsWith('.enc') && maxBytes <= 25_000_000;
+            const cached = useCache && epoch === this.encryptedReadEpoch ? this.encryptedReadCache.get(key) : undefined;
+            if (cached && cached.id === item.id && cached.etag === item.eTag) {
+                // Simple LRU: ETag-verified hits move to the end of the bounded map.
+                this.encryptedReadCache.delete(key);
+                this.encryptedReadCache.set(key, cached);
+                return { ...cached };
+            }
+            const downloaded = await this.downloadItemInfo(item.id, maxBytes, item);
+            const value = { text: downloaded.text, id: item.id, etag: downloaded.item.eTag ?? item.eTag };
+            if (epoch === this.encryptedReadEpoch) {
+                this.encryptedReadCache.delete(key);
+                const limit = OneDriveTestClient.MAX_ENCRYPTED_CACHE_BYTES;
+                if (useCache && value.text.length * 2 <= limit) {
+                    this.encryptedReadCache.set(key, value);
+                    let total = [...this.encryptedReadCache.values()].reduce((sum, file) => sum + file.text.length * 2, 0);
+                    while (this.encryptedReadCache.size > 12 || total > limit) {
+                        const oldest = this.encryptedReadCache.keys().next().value;
+                        if (oldest === undefined)
+                            break;
+                        total -= this.encryptedReadCache.get(oldest).text.length * 2;
+                        this.encryptedReadCache.delete(oldest);
+                    }
+                }
+            }
+            return { ...value };
+        })();
+        this.encryptedReadJobs.set(key, job);
         try {
-            const r = await this.graph(`/me/drive/items/${encodeURIComponent(parent)}:/${encodeURIComponent(name)}`);
-            item = await r.json();
+            return await job;
         }
-        catch (error) {
-            if (error instanceof GraphError && error.status === 404)
-                return null;
-            throw error;
+        finally {
+            if (this.encryptedReadJobs.get(key) === job)
+                this.encryptedReadJobs.delete(key);
         }
-        if (!item.id || !item.eTag)
-            throw new Error('OneDriveの更新情報を取得できません。');
-        const downloaded = await this.downloadItemInfo(item.id, maxBytes, item);
-        return { text: downloaded.text, id: item.id, etag: downloaded.item.eTag ?? item.eTag };
     }
     async writeNamedFile(parts, name, text, existing, maxBytes) {
         const bytes = new TextEncoder().encode(text);
@@ -548,7 +636,10 @@ export class OneDriveTestClient {
             ? `/me/drive/items/${encodeURIComponent(existing.id)}/createUploadSession`
             : `/me/drive/items/${encodeURIComponent(parent)}:/${encodeURIComponent(name)}:/createUploadSession`;
         try {
-            const result = await this.uploadSession(path, bytes, existing?.etag);
+            // Upload sessions retain the documented If-Match/409/412 flow for live data.
+            // Direct PUT on Personal OneDrive lacks a documented final-boundary ETag guarantee.
+            const result = await measureFinancePhase('vault.encrypted-upload', () => this.uploadSession(path, bytes, existing?.etag));
+            this.encryptedReadCache.delete(JSON.stringify([parts, name, maxBytes]));
             // Some Graph variants omit ETag on upload completion. The caller will
             // perform a safe read-back only in that case.
             return result.eTag ? { id: result.id, etag: result.eTag } : null;

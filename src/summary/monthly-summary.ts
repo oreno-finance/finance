@@ -7,6 +7,7 @@ import { importErrors } from '../importers/batch-policy.js';
 import { displayMerchant, matchingRule, type CategoryDefinition, type MerchantRule } from '../cloud/merchant-rules.js';
 import { recurringCoveredByOneTime, nisaRuleOnDay, type AssetAccountId, type AssetsDocument, type OneTimeEntry } from '../cloud/assets.js';
 import { recurringInMonth } from '../cloud/recurring-schedule.js';
+import { fixedCostOccurrences } from '../fixed-costs/contracts.js';
 import type { PayrollIncomeEntry } from '../cloud/payroll-income.js';
 
 export interface SummaryIncome { id: string; employer: string; kind: string; date: string; amount: number }
@@ -50,7 +51,7 @@ export interface MonthlyReport {
   payrollSyncedAt: number | null;
 }
 export interface PayrollSnapshot { ready: boolean; syncedAt: number | null; entries: readonly PayrollIncomeEntry[] }
-export interface MonthlySource { records: readonly CloudRecord[]; rules: readonly MerchantRule[]; categories: readonly CategoryDefinition[]; assets: Pick<AssetsDocument,'nisaCardRule'|'recurring'> & Partial<Pick<AssetsDocument,'nisaCardRuleHistory'>> & Partial<Pick<AssetsDocument,'snapshots'|'payrollDepositAccount'|'cardDebitAccounts'|'cardPreferences'|'cardRecurringDecisions'|'mizuhoTransferPlan'|'oneTime'>>; payroll: PayrollSnapshot; /** Optional injected local month for deterministic tests. */ currentPeriod?:string }
+export interface MonthlySource { records: readonly CloudRecord[]; rules: readonly MerchantRule[]; categories: readonly CategoryDefinition[]; assets: Pick<AssetsDocument,'nisaCardRule'|'recurring'> & Partial<Pick<AssetsDocument,'nisaCardRuleHistory'>> & Partial<Pick<AssetsDocument,'snapshots'|'payrollDepositAccount'|'cardDebitAccounts'|'cardPreferences'|'cardRecurringDecisions'|'mizuhoTransferPlan'|'oneTime'|'fixedCosts'|'mizuhoFundingChecks'>>; payroll: PayrollSnapshot; /** Optional injected local month for deterministic tests. */ currentPeriod?:string }
 const validPeriod = (value: string): boolean => /^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(value);
 export function isValidPeriod(value:string): boolean {return validPeriod(value);}
 function validDay(value: string | null | undefined): value is string {
@@ -93,8 +94,34 @@ function cardTitle(record:CloudRecord,source:MonthlySource):string {
   const id=record.statement.cardId??'';
   return source.assets.cardPreferences?.[id]?.name??getCard(id)?.name??'カード不明';
 }
+/** Reusable within a single analysis/render operation. Never retain across edits. */
+export interface PreparedMonthlyReports {
+  readonly records:readonly CloudRecord[];
+  readonly months:ReadonlyMap<string,readonly {position:number;record:CloudRecord}[]>;
+  readonly undated:readonly {position:number;record:CloudRecord}[];
+  readonly duplicates:ReadonlySet<string>;
+}
+/** Build global duplicate information once, preserving each original record position. */
+export function prepareMonthlyReports(records:readonly CloudRecord[]):PreparedMonthlyReports {
+  const months=new Map<string,{position:number;record:CloudRecord}[]>();
+  const undated:{position:number;record:CloudRecord}[]=[];
+  const counts=new Map<string,number>();
+  for(let position=0;position<records.length;position++){
+    const record=records[position];
+    if(!record||!record.statement)continue;
+    const statement=record.statement;
+    const key=statement.cardId&&statement.billingMonth?`${statement.cardId}|${statement.billingMonth}`:null;
+    if(key)counts.set(key,(counts.get(key)??0)+1);
+    const period=validDay(statement.paymentDate)?statement.paymentDate.slice(0,7):null;
+    const ref={position,record};
+    if(period){const month=months.get(period)??[];month.push(ref);months.set(period,month);}
+    else undated.push(ref);
+  }
+  const duplicates=new Set([...counts].filter(([,count])=>count>1).map(([key])=>key));
+  return {records,months,undated,duplicates};
+}
 /** Unknown payment dates are listed globally since they cannot be attributed to a month. */
-export function monthlyReport(period: string, source: MonthlySource):MonthlyReport {
+export function monthlyReport(period: string, source: MonthlySource, prepared?:PreparedMonthlyReports):MonthlyReport {
   if(!validPeriod(period))throw new Error('集計年月が不正です。');
   const issues:SummaryIssue[]=[];
   const cardLines:SummaryCard[]=[];
@@ -103,16 +130,25 @@ export function monthlyReport(period: string, source: MonthlySource):MonthlyRepo
   const merchantTotals=new Map<string,SummaryMerchant>();
   const cardRowsForOverlap:Array<{name:string;amount:number}>=[];
   const usedIds=new Set<string>();
-  const groups=new Map<string,CloudRecord[]>();
   let excludedCount=0,unclassifiedCount=0,unknownConfirmationCount=0;
   let included=0, sum=0, nisa=0;
-  const indexed=source.records.filter(record=>record && record.statement);
-  for(const record of indexed) {
-    const s=record.statement;
-    const key=s.cardId && s.billingMonth?`${s.cardId}|${s.billingMonth}`:null;
-    if(key){const list=groups.get(key)??[];list.push(record);groups.set(key,list);}
-  }
-  const duplicateKeys=new Set([...groups].filter(([,items])=>items.length>1).map(([key])=>key));
+  // An index belongs to its exact statement-array snapshot. Never accept an index
+  // from a different source, which could silently hide newly received records.
+  if(prepared&&prepared.records!==source.records)throw new Error('月別集計の索引が現在の明細と一致しません。');
+  const indexed=prepared
+    ?[...(prepared.months.get(period)??[]),...prepared.undated]
+      .sort((a,b)=>a.position-b.position).map(item=>item.record)
+    :source.records.filter(record=>record && record.statement);
+  const duplicateKeys=prepared?.duplicates??(()=>{
+    const counts=new Map<string,number>();
+    for(const record of source.records){
+      if(!record?.statement)continue;
+      const s=record.statement;
+      const key=s.cardId&&s.billingMonth?`${s.cardId}|${s.billingMonth}`:null;
+      if(key)counts.set(key,(counts.get(key)??0)+1);
+    }
+    return new Set([...counts].filter(([,count])=>count>1).map(([key])=>key));
+  })();
   for(const record of indexed) {
     const s=record.statement;
     const month=validDay(s.paymentDate)?s.paymentDate.slice(0,7):null;
@@ -125,7 +161,8 @@ export function monthlyReport(period: string, source: MonthlySource):MonthlyRepo
     if(identity && duplicateKeys.has(identity))reasons.push('同じカード・請求月の明細が複数あります');
     const validation=importErrors(s,s.sourceKind!=='pdf'||!!record.originalId);
     reasons.push(...validation);
-    if(s.rows.some((row,i)=>s.rows.findIndex(x=>x.id===row.id)!==i))reasons.push('取引行IDが重複しています');
+    // Set-based validation: a single linear walk, preserving duplicate-ID errors.
+    if(s.rows.length!==new Set(s.rows.map(row=>row.id)).size)reasons.push('取引行IDが重複しています');
     if(month===null)reasons.push('支払日が不明または不正です');
     const reason=[...new Set(reasons)].join(' / ');
     if(reason){issues.push({id:record.id,title:cardTitle(record,source),reason,month});if(month===period)excludedCount++;continue;}
@@ -213,6 +250,22 @@ export function monthlyReport(period: string, source: MonthlySource):MonthlyRepo
       if(line.cardOverlap)recurringCardOverlap++;
     }
     if(e.kind==='transfer')recurringTransfers=add(recurringTransfers,e.amount);
+  }
+  // Cash standing commitments affect household planned expenses but never a bank balance.
+  // Card contracts are already included in their issuer statements and never enter this loop.
+  for(const occurrence of fixedCostOccurrences(period,(source.assets.fixedCosts??[]).filter(x=>x.payment==='cash'))){
+    const {item,date,amount}=occurrence;
+    if(source.assets.oneTime?.some(one=>one.kind==='expense'&&one.date===date&&one.name===item.name&&one.amount===amount))continue;
+    const duplicate=cardRowsForOverlap.some(row=>row.name===normalized(item.name).trim()&&row.amount===amount);
+    recurringLines.push({id:`cash:${item.id}:${date}`,entryId:`cash:${item.id}`,name:item.name,date,kind:'expense',amount,
+      fromAccountId:null,toAccountId:null,categoryId:item.categoryId,payrollOverlap:false,cardOverlap:duplicate});
+    recurringExpense=add(recurringExpense,amount);
+    if(duplicate)recurringCardOverlap++;
+    const category=source.categories.find(c=>c.id===item.categoryId);
+    const key=category?.id??'__unclassified';
+    const old=categoryTotals.get(key)??{id:key,name:category?.name??'未分類',color:category?.color??null,amount:0,count:0};
+    old.amount=add(old.amount,amount);old.count++;categoryTotals.set(key,old);
+    if(!category)unclassifiedCount++;
   }
   const oneTimeLines=[...(source.assets.oneTime??[])].filter(e=>e.date.slice(0,7)===period)
     .sort((a,b)=>a.date.localeCompare(b.date)||a.id.localeCompare(b.id));
