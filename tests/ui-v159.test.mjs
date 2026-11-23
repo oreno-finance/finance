@@ -22,7 +22,7 @@ test('forecast keeps annual return control, but derives baseline NISA from recor
   assert.doesNotMatch(html,/id="future-nisa-monthly"/);
   assert.match(html,/id="future-nisa-rate"/);
   assert.match(css,/#future-scenario-accordion>summary::after/);
-  assert.match(future,/suggestedNisaMonthly\(source.assets,source.records,localToday\(\)\)/);
+  assert.match(future,/suggestedNisaMonthly\(source.assets,source.records,localToday\(\),nisaRows\)/);
   assert.match(future,/nisaMonthly:hasNisaSchedule\?0:suggested.amount/);
 });
 test('NISA linkage stays in settings and card debit mapping moves into card settings form',()=>{

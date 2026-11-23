@@ -4,7 +4,7 @@ import { CloudWriteUncertainError, type LiveVault } from '../cloud/live-vault.js
 import type { CategoryDefinition } from '../cloud/merchant-rules.js';
 import { CARDS } from '../models/types.js';
 import { lastDayOfNextMonth, localDay, matchingNisaRows } from '../cloud/asset-projection.js';
-import { forecastBankBalances } from '../cloud/salary-projection.js';
+import { forecastBankBalances, prepareBankForecast } from '../cloud/salary-projection.js';
 import { reconcileBalance, type BalanceReconciliation } from '../cloud/balance-reconciliation.js';
 import { estimateMizuhoTransferAmount } from '../cloud/mizuho-transfer.js';
 import { DEFAULT_MIZUHO_PLAN } from '../cloud/assets.js'; /* finance-v148 */
@@ -363,11 +363,12 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
   }
   function renderAccounts():void {
     const vault=getVault();if(!vault?.unlocked)return;
-    const data=vault.assetSettings(),records=vault.records();
+    const data=vault.assetSettings(),records=vault.readonlyRecords();
+    const work=prepareBankForecast(records,data);
     const today=new Date();
     const available=payrollSynced||(payrollStale&&payrollUseStale&&payrollOwner===vault)?payrollIncome:[];
-    const currentReport=forecastBankBalances(data,localDay(today),records,available,data.payrollDepositAccount,localDay(today)),
-      nextReport=forecastBankBalances(data,lastDayOfNextMonth(today),records,available,data.payrollDepositAccount,localDay(today));
+    const currentReport=forecastBankBalances(data,localDay(today),records,available,data.payrollDepositAccount,localDay(today),work),
+      nextReport=forecastBankBalances(data,lastDayOfNextMonth(today),records,available,data.payrollDepositAccount,localDay(today),work);
     const now=currentReport.accounts,next=nextReport.accounts;
     for(const account of ASSET_ACCOUNTS){
       const latest=latestBalance(data,account.id),current=now[account.id],upcoming=next[account.id];

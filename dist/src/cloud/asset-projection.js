@@ -51,10 +51,10 @@ export function matchingNisaRows(doc, records) {
  * confirmed balance may already include them. Future entries are included up
  * to and including the selected target date. Card rows are never bank debits.
  */
-export function forecastAssets(doc, asOf, records = [], payrollIncome = [], payrollDepositAccount = null) {
+export function forecastAssets(doc, asOf, records = [], payrollIncome = [], payrollDepositAccount = null, nisaMatches) {
     if (!validDay(asOf))
         throw new Error('予測対象日が不正です。');
-    const cardRows = matchingNisaRows(doc, records);
+    const cardRows = nisaMatches ?? matchingNisaRows(doc, records);
     const result = {};
     for (const account of ASSET_ACCOUNTS) {
         const found = doc.snapshots.filter(s => s.accountId === account.id && snapshotDay(s) <= asOf);

@@ -35,7 +35,7 @@ function accountDelta(entry:RecurringEntry,account:AssetAccountId):number {
   if(entry.toAccountId===account)return entry.amount;
   return 0;
 }
-export function matchingNisaRows(doc:AssetsDocument,records:CloudRecord[]):Array<{date:string;amount:number;recordId:string;rowId:string}>{
+export function matchingNisaRows(doc:AssetsDocument,records:readonly CloudRecord[]):Array<{date:string;amount:number;recordId:string;rowId:string}>{
   const seen=new Set<string>();
   const matches:Array<{date:string;amount:number;recordId:string;rowId:string}>=[];
   for(const record of records){
@@ -59,11 +59,12 @@ export function matchingNisaRows(doc:AssetsDocument,records:CloudRecord[]):Array
  * to and including the selected target date. Card rows are never bank debits.
  */
 export function forecastAssets(
-  doc:AssetsDocument,asOf:string,records:CloudRecord[]=[],
+  doc:AssetsDocument,asOf:string,records:readonly CloudRecord[]=[],
   payrollIncome:PayrollIncomeEntry[]=[],payrollDepositAccount:AssetAccountId|null=null,
+  nisaMatches?:readonly ReturnType<typeof matchingNisaRows>[number][],
 ):AssetForecast {
   if(!validDay(asOf))throw new Error('予測対象日が不正です。');
-  const cardRows=matchingNisaRows(doc,records);
+  const cardRows=nisaMatches??matchingNisaRows(doc,records);
   const result={} as AssetForecast;
   for(const account of ASSET_ACCOUNTS){
     const found=doc.snapshots.filter(s=>s.accountId===account.id&&snapshotDay(s)<=asOf);

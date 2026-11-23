@@ -1,9 +1,9 @@
 /** Read-only bank balance projection including clearly labelled, unconfirmed salary estimates.
  * Neither the monthly estimate nor the input salary is persisted to Finance/OneDrive.
  */
-import { forecastAssets } from './asset-projection.js';
+import { forecastAssets, matchingNisaRows } from './asset-projection.js';
 import { recurringInMonth } from './recurring-schedule.js';
-import { monthlyReport } from '../summary/monthly-summary.js';
+import { monthlyReport, prepareMonthlyReports } from '../summary/monthly-summary.js';
 import { mizuhoTransferForBill } from './mizuho-transfer.js';
 const period = (date) => date.slice(0, 7);
 const monthIndex = (date) => Number(date.slice(0, 4)) * 12 + Number(date.slice(5, 7));
@@ -55,19 +55,30 @@ export function expectedMainSalaries(entries, today, until) {
     }
     return result;
 }
-/** Extend the existing confirmed-only calculation, never replace its saved values.
- * If a salary-named recurring bank income exists in the same month, trust the
- * explicit user-managed schedule instead of adding an additional estimate.
- */
-export function forecastBankBalances(doc, asOf, records, income, payrollDepositAccount, today) {
-    const accounts = forecastAssets(doc, asOf, records, income, payrollDepositAccount);
+/** A per-render context: never share across asset edits or cloud refreshes. */
+export function prepareBankForecast(records, doc) {
+    const prepared = prepareMonthlyReports(records);
+    const months = [...new Set(records.map(r => r.statement.paymentDate?.slice(0, 7))
+            .filter((p) => !!p && /^\d{4}-(0[1-9]|1[0-2])$/.test(p)))];
+    return { records, prepared, reports: new Map(), nisaRows: matchingNisaRows(doc, records), months };
+}
+export function forecastBankBalances(doc, asOf, records, income, payrollDepositAccount, today, work) {
+    if (work && work.records !== records)
+        throw new Error('口座予測の明細索引が一致しません。');
+    const context = work ?? prepareBankForecast(records, doc);
+    const accounts = forecastAssets(doc, asOf, records, income, payrollDepositAccount, context.nisaRows);
     const estimatedByAccount = {};
     const cardDebitByAccount = {};
     const autoTransferByAccount = {};
-    const months = new Set(records.map(r => r.statement.paymentDate?.slice(0, 7)).filter((p) => !!p && /^\d{4}-(0[1-9]|1[0-2])$/.test(p) && p <= monthFromIndex(monthIndex(asOf) + 1)));
-    for (const month of months) {
-        const report = monthlyReport(month, { records, rules: [], categories: [], assets: doc,
-            payroll: { ready: false, syncedAt: null, entries: [] } });
+    for (const month of context.months) {
+        if (month > monthFromIndex(monthIndex(asOf) + 1))
+            continue;
+        let report = context.reports.get(month);
+        if (!report) {
+            report = monthlyReport(month, { records, rules: [], categories: [], assets: doc,
+                payroll: { ready: false, syncedAt: null, entries: [] } }, context.prepared);
+            context.reports.set(month, report);
+        }
         for (const line of report.cardLines) {
             const transfer = mizuhoTransferForBill(line, doc);
             if (transfer) {

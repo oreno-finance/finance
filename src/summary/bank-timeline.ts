@@ -4,7 +4,7 @@ import { recurringCoveredByOneTime, type AssetsDocument } from '../cloud/assets.
 import type { PayrollIncomeEntry } from '../cloud/payroll-income.js';
 import { expectedMainSalaries } from '../cloud/salary-projection.js';
 import { recurringInMonth } from '../cloud/recurring-schedule.js';
-import { monthlyReport, type MonthlySource } from './monthly-summary.js';
+import { monthlyReport, type MonthlySource, type MonthlyReport, type PreparedMonthlyReports } from './monthly-summary.js';
 import { mizuhoTransferForBill } from '../cloud/mizuho-transfer.js';
 
 export interface BankEvent {date:string; title:string; amount:number; kind:'card'|'recurring'|'salary'|'salary-estimate'|'transfer'|'one-time'; provisional?:boolean}
@@ -17,7 +17,9 @@ const dateOf=(iso:string)=>{const d=new Date(iso);return `${d.getFullYear()}-${S
 const nextMonth=(period:string)=>{const y=Number(period.slice(0,4)),m=Number(period.slice(5));return `${y+(m===12?1:0)}-${String(m===12?1:m+1).padStart(2,'0')}`;};
 const lastDay=(period:string)=>`${period}-${String(new Date(Date.UTC(Number(period.slice(0,4)),Number(period.slice(5)),0)).getUTCDate()).padStart(2,'0')}`;
 const payrollName=/給与|給料|salary|payroll/i;
-export function bankTimeline(period:string,source:MonthlySource,today:string):BankTimeline {
+export function bankTimeline(period:string,source:MonthlySource,today:string,
+  work?:{prepared:PreparedMonthlyReports;reports:ReadonlyMap<string,MonthlyReport>}):BankTimeline {
+  if(work&&work.prepared.records!==source.records)throw new Error('口座推移の明細索引が一致しません。');
   const assets=source.assets;
   const empty=(message:string):BankTimeline=>({startDay:null,startBalance:null,endBalance:null,minimum:null,days:[],missingCardAccounts:[],warning:message});
   if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))throw new Error('対象年月が不正です。');
@@ -35,7 +37,7 @@ export function bankTimeline(period:string,source:MonthlySource,today:string):Ba
   const add=(event:BankEvent)=>{if(event.date>start&&event.date<=end&&Number.isSafeInteger(event.amount))all.push(event);};
   // Explicit account assignments prevent unrelated card payments from being deducted.
   for(let month=start.slice(0,7);month<=nextMonth(period);month=nextMonth(month)){
-    const report=monthlyReport(month,source);
+    const report=work?.reports.get(month)??monthlyReport(month,source,work?.prepared);
     for(const card of report.cardLines){
       const account=assets.cardDebitAccounts?.[card.cardId];
       if(!account){missing.add(card.name);continue;}

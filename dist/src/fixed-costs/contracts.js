@@ -103,6 +103,8 @@ export function monthlyEquivalent(item) {
 export function fixedCostState(item, day) {
     if (item.endOn !== null && item.endOn < day)
         return 'ended';
+    if (item.startOn > day)
+        return 'scheduled';
     if (pausedOnDay(item.pauses, day))
         return 'paused';
     return 'active';

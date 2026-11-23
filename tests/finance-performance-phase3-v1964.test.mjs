@@ -64,7 +64,7 @@ test('only the visible import view is rebuilt and source snapshots are not reque
   assert.match(home,/renderOverview\(measureFinanceSync\('ui\.home\.overview',\(\)=>homeOverview\(source,today\)\),source\)/);
   assert.doesNotMatch(home,/const source=deps\.source\(\);\s*if\(source\)/);
   assert.match(analysis,/function controls\(today:string,source:MonthlySource\|null\)/);
-  assert.match(analysis,/const source=deps\.source\(\);\s*root!\.append\(controls\(today,source\)\)/);
+  assert.match(analysis,/const source=deps\.source\(\);\s*reportContext=null;\s*root!\.append\(controls\(today,source\)\)/);
 });
 
 test('diagnostic timing records only fixed phase names and aggregate duration, no financial data',()=>{

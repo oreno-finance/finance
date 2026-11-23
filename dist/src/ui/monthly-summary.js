@@ -246,9 +246,9 @@ export function initMonthlySummary(deps) {
             main.append(element('div', 'panel monthly-lock', '月別サマリーを見るにはOneDrive保管庫のロック解除が必要です。'));
             return;
         }
-        let report, prev;
+        let report, prev, prepared;
         try {
-            const prepared = prepareMonthlyReports(source.records);
+            prepared = prepareMonthlyReports(source.records);
             report = monthlyReport(period, source, prepared);
             prev = monthlyReport(changePeriod(period, -1), source, prepared);
         }
@@ -287,7 +287,7 @@ export function initMonthlySummary(deps) {
         const bank = section('楽天銀行の残高推移');
         const localDate = new Date();
         const localToday = `${localDate.getFullYear()}-${String(localDate.getMonth() + 1).padStart(2, '0')}-${String(localDate.getDate()).padStart(2, '0')}`;
-        const timeline = bankTimeline(period, source, localToday);
+        const timeline = bankTimeline(period, source, localToday, { prepared, reports: new Map([[report.period, report], [prev.period, prev]]) });
         const bankroll = element('div', 'monthly-bank-overview');
         bank.body.append(bankroll);
         const bankMetric = (title, value, tone) => {

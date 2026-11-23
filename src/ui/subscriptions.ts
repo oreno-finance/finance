@@ -11,7 +11,7 @@ export interface SubscriptionsUi {render():void;reset():void;isBusy():boolean;is
 interface Deps {source():MonthlySource|null;vault():LiveVault|null;onSaved():void;openAccountSettings():void}
 type Tab='registered'|'candidate'|'ended'|'ignored';
 type Item={kind:'card'|'cash'|'bank';id:string;name:string;amount:number;currentAmount?:number;frequency:CostFrequency;payment:string;
-  status:'active'|'paused'|'ended';priceKind:'fixed'|'variable';contract?:FixedCostEntry;bank?:RecurringEntry;
+  status:'active'|'paused'|'ended'|'scheduled';priceKind:'fixed'|'variable';contract?:FixedCostEntry;bank?:RecurringEntry;
   decision?:CardRecurringDecision;decisionKey?:string;candidate?:SubscriptionCandidate;lastAmount?:number;lastMonth?:string};
 const yen=(n:number)=>`${Math.round(n).toLocaleString('ja-JP')}円`;
 const localDate=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
@@ -19,7 +19,7 @@ const dayBefore=(value:string)=>new Date(Date.parse(`${value}T00:00:00Z`)-864000
 const dayAfter=(value:string)=>new Date(Date.parse(`${value}T00:00:00Z`)+86400000).toISOString().slice(0,10);
 function el<K extends keyof HTMLElementTagNameMap>(name:K,cls='',text?:string):HTMLElementTagNameMap[K]{const node=document.createElement(name);if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node;}
 function btn(text:string,click:()=>void,cls='secondary-action'):HTMLButtonElement {const x=el('button',cls,text);x.type='button';x.addEventListener('click',click);return x;}
-function stateName(state:Item['status']):string{return state==='active'?'利用中':state==='paused'?'一時停止':'終了済み';}
+function stateName(state:Item['status']):string{return state==='active'?'利用中':state==='paused'?'一時停止':state==='scheduled'?'開始予定':'終了済み';}
 function freqName(freq:CostFrequency):string{return freq==='yearly'?'毎年':freq==='weekly'?'毎週':'毎月';}
 function enrichHistory(history:readonly PriceChange[],startOn:string,oldAmount:number,newAmount:number,effectiveOn:string):PriceChange[]{
   const prior=history.length?[...history]:[{effectiveOn:startOn,amount:oldAmount}];
@@ -161,25 +161,23 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
     set('frequency',item?.frequency??'monthly');set('startOn',data?.startOn??bank?.startOn??today);
     set('month',String(data?.monthOfYear??bank?.monthOfYear??1));set('day',String(data?.dayOfMonth??bank?.dayOfMonth??new Date().getDate()));
     set('weekday',String(data?.weekday??bank?.weekday??new Date().getDay()));
-    set('status',item?.status??'active');set('statusDate',today);set('note',data?.note??bank?.note??'');
+    set('status',item?.status==='scheduled'?'active':item?.status??'active');set('statusDate',today);set('note',data?.note??bank?.note??'');
     input('startOn').readOnly=!!item;
     input('merchant').readOnly=!!knownKey;
     updateConditional();resetDirty();if(!dialog.open)dialog.showModal();
     input('name').focus();
   }
-  function itemsFromSource(source:MonthlySource):Item[] {
+  function itemsFromSource(source:MonthlySource,candidates=detectCardSubscriptions(source),latest=latestRegisteredCardCharges(source)):Item[] {
     const today=localDate();const contracts=source.assets.fixedCosts??[];
     const list:Item[]=[];
     for(const bank of source.assets.recurring){
       if(bank.kind!=='expense')continue;
-      const status=bank.endOn!==null&&bank.endOn<today?'ended':!bank.enabled||
+      const status=bank.endOn!==null&&bank.endOn<today?'ended':bank.startOn>today?'scheduled':!bank.enabled||
         (bank.pauses??[]).some(p=>today>=p.startOn&&(p.endOn===null||today<=p.endOn))?'paused':'active';
       list.push({kind:'bank',id:bank.id,name:bank.name,amount:bank.amount,currentAmount:priceOnDay(bank.pricing??[],today,bank.amount),frequency:bank.frequency,payment:ASSET_ACCOUNTS.find(x=>x.id===bank.fromAccountId)?.name??'銀行口座',
         status,priceKind:bank.priceKind??'fixed',bank});
     }
     const decisions=source.assets.cardRecurringDecisions??{};
-    const candidates=detectCardSubscriptions(source);
-    const latest=latestRegisteredCardCharges(source);
     for(const contract of contracts){
       const found=contract.merchantKey?candidates.find(c=>c.key===contract.merchantKey):undefined;
       const last=contract.merchantKey?latest.get(contract.merchantKey):null;
@@ -216,7 +214,7 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
         throw new Error('名前・金額・日付を正しく入力してください。');
       if(editing&&(editing.kind==='bank'?'bank':editing.kind)!==method)throw new Error('既存契約の支払方法は変更できません。新規登録してください。');
       const original=editing?.contract??(editing?.decision?legacyContract(editing):null);
-      const previousStatus=editing?.status??'active',nextStatus=get('status') as Item['status'];
+      const previousStatus=editing?.status==='scheduled'?'active':editing?.status??'active',nextStatus=get('status') as Item['status'];
       let pauses=changePauses(original?.pauses??editing?.bank?.pauses??[],previousStatus,nextStatus,statusDate);
       let endOn=original?.endOn??editing?.bank?.endOn??null;
       if(nextStatus==='ended'&&previousStatus!=='ended'){
@@ -269,14 +267,15 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
   }
   function render():void {
     root!.replaceChildren();const source=deps.source();if(!source||!deps.vault()?.unlocked){root!.append(el('p','subscriptions-muted','OneDriveに接続してください。'));return;}
-    const items=itemsFromSource(source),today=localDate(),active=items.filter(x=>x.status!=='ended');
+    const candidates=detectCardSubscriptions(source);
+    const latest=latestRegisteredCardCharges(source);
+    const items=itemsFromSource(source,candidates,latest),today=localDate(),active=items.filter(x=>x.status!=='ended');
     const total=active.filter(x=>x.status==='active').reduce((sum,x)=>sum+monthlyEquivalent({...x,amount:x.currentAmount??x.amount}),0);
     const metrics=el('div','fixed-cost-metrics');
     for(const [name,value] of [['月額換算',yen(total)],['年間換算',yen(total*12)],['登録件数',`${active.length}件`]] as const){
       const box=el('div','fixed-cost-metric');box.append(el('span','',name),el('strong','',value));metrics.append(box);
     }root!.append(metrics);
     const toolbar=el('div','fixed-cost-toolbar');const tabs=el('div','subscriptions-tabs');
-    const candidates=detectCardSubscriptions(source);
     const decisions=source.assets.cardRecurringDecisions??{};
     const pending=candidates.filter(c=>!matchedCardRecurringDecision(decisions,c)&&!source.assets.fixedCosts?.some(x=>x.merchantKey===c.key));
     const ignored=Object.entries(decisions).filter(([,d])=>d.state==='ignored');

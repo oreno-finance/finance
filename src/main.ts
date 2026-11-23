@@ -27,8 +27,8 @@ import { initPasswordFields, hidePasswordField, clearPasswordField } from './ui/
 import { saveLastView, type FinanceView } from './ui/view-preference.js';
 import { initHome, type HomeUi } from './ui/home.js';
 import { initAnalysis, type AnalysisUi } from './ui/analysis.js';
-import {analysisDrilldownMatches,analysisDrilldownBreakdown,drilldownPeriodLabel,type AnalysisDrilldown} from './ui/analysis-drilldown.js';
-import type {MonthlySource} from './summary/monthly-summary.js';
+import {analysisDrilldownMatches,analysisDrilldownBreakdown,drilldownPeriodLabel,type AnalysisDrilldown,type AnalysisReportContext} from './ui/analysis-drilldown.js';
+import {monthlyReport,prepareMonthlyReports,type MonthlySource} from './summary/monthly-summary.js';
 import { initMonthlyReports, type MonthlyReportsUi } from './ui/monthly-reports.js';
 import { initSubscriptions, type SubscriptionsUi } from './ui/subscriptions.js';
 import { initCardSettings, type CardSettingsUi } from './ui/card-settings.js';
@@ -88,6 +88,7 @@ let manageYear = initialCalendar.year;
 let manageMonth = initialCalendar.month;
 let manageReturnToSummary = false;
 let activeAnalysisDrilldown:AnalysisDrilldown|null=null;
+let analysisDrilldownSeed:AnalysisReportContext|null=null;
 let drilldownRows=new Map<string,Set<string>>();
 let analysisSourceProvider:(()=>MonthlySource|null)|null=null;
 let analysisReturnPageY=0;
@@ -1182,7 +1183,7 @@ function showView(view: FinanceView): void {
   returnToHome=fromHome&&(view==='manage'||view==='import'||view==='assets')?view:null;
   setMobileMenuOpen(false);
   if (view !== 'manage') manageReturnToSummary = false;
-  if(view!=='manage'){activeAnalysisDrilldown=null;drilldownRows.clear();}
+  if(view!=='manage'){activeAnalysisDrilldown=null;analysisDrilldownSeed=null;drilldownRows.clear();}
   if(view!=='import')closeImportAddDialog();
   $('manage-back-summary').classList.toggle('hidden', view !== 'manage' || !manageReturnToSummary);
   $('manage-back-analysis').classList.toggle('hidden', view !== 'manage' || !activeAnalysisDrilldown || fromHome || manageReturnToSummary);
@@ -1211,10 +1212,7 @@ function showView(view: FinanceView): void {
   if (view === 'import' && !importActive()) {
     activeIndex = statements.findIndex(s => importStaged.has(s));
   }
-  if (view === 'manage') {
-    selectVisibleManagerStatement();
-    renderManager();
-  }
+  if (view === 'manage') renderManager();
   if (view === 'import') render();
   if (view === 'rules') {renderRules();}
   if (view === 'assets') assetsUi?.render();
@@ -1233,10 +1231,10 @@ function showView(view: FinanceView): void {
   saveLastView(sessionStorageSafe(), view);
 }
 
-function managerIndices(): number[] {
+function managerIndices(context?:AnalysisReportContext|null): number[] {
   if(!activeAnalysisDrilldown){drilldownRows.clear();return filteredStatementIndices(statements, manageYear, manageMonth);}
-  const source=analysisSourceProvider?.();
-  drilldownRows=source?analysisDrilldownMatches(source,activeAnalysisDrilldown):new Map();
+  const source=context?.source??analysisSourceProvider?.();
+  drilldownRows=source?analysisDrilldownMatches(source,activeAnalysisDrilldown,context?.reports):new Map();
   return statements.map((statement,index)=>({statement,index,id:savedIds.get(statement)}))
     .filter(item=>item.id&&drilldownRows.has(item.id))
     .sort((a,b)=>(b.statement.paymentDate??'').localeCompare(a.statement.paymentDate??'')||a.index-b.index)
@@ -1261,7 +1259,7 @@ function setOptions(select: HTMLSelectElement, choices: Array<[string, string]>,
   select.value = selected;
 }
 
-function renderManagerFilters(): number[] { /* finance-v149 / P2 payment-month drill-down */
+function renderManagerFilters(context?:AnalysisReportContext|null): number[] { /* finance-v149 / P2 payment-month drill-down */
   const drilldown=activeAnalysisDrilldown;
   $('manage-drilldown').classList.toggle('hidden',!drilldown);
   $('manage-period-controls').classList.toggle('hidden',!!drilldown);
@@ -1272,7 +1270,7 @@ function renderManagerFilters(): number[] { /* finance-v149 / P2 payment-month d
   const picker=$<HTMLInputElement>('manage-period');
   picker.value=manageYear==='all'||manageMonth==='all'?'':`${manageYear}-${manageMonth}`;
   $('manage-show-all').classList.toggle('active',manageYear==='all'&&manageMonth==='all');
-  return managerIndices();
+  return managerIndices(context);
 }
 function manageChangePeriod(period:string):void {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))return;
@@ -1297,15 +1295,15 @@ function openRecurringForReview(entryId:string):void {
   if(!assetsUi?.openRecurring(entryId))toast('定期入出金の編集画面を開けませんでした。');
 }
 
-function renderManagerDrilldownBreakdown():void {
+function renderManagerDrilldownBreakdown(context?:AnalysisReportContext|null):void {
   const block=$('manage-drilldown-breakdown');
   block.classList.toggle('hidden',!activeAnalysisDrilldown);
   $('manage-view').classList.toggle('manage-with-drilldown',!!activeAnalysisDrilldown);
   block.replaceChildren();
-  const request=activeAnalysisDrilldown,source=analysisSourceProvider?.();
+  const request=activeAnalysisDrilldown,source=context?.source??analysisSourceProvider?.();
   if(!request||!source)return;
   try{
-    const data=analysisDrilldownBreakdown(source,request);
+    const data=analysisDrilldownBreakdown(source,request,context?.reports);
     const heading=document.createElement('h2');heading.textContent='対象金額の内訳';block.append(heading);
     const summary=div('manage-breakdown-totals');
     for(const [label,amount] of [['カード取引',data.cardAmount],['銀行の定期支出予定',data.recurringAmount],['分析の合計',data.total]] as const){
@@ -1372,8 +1370,21 @@ function updateManagerMerchantMetadata(control:HTMLElement,row:ImportRow,s:Parse
 }
 
 function renderManager(): void {
-  const indices = renderManagerFilters();
-  renderManagerDrilldownBreakdown();
+  const request=activeAnalysisDrilldown,source=request?analysisSourceProvider?.():null;
+  const seed=analysisDrilldownSeed;analysisDrilldownSeed=null;
+  let context:AnalysisReportContext|null=null;
+  if(request&&source){
+    // Reuse the just-rendered analysis reports only when all mutable inputs
+    // remain exactly the same; otherwise build a fresh per-render context.
+    const sameSource=seed&&seed.source.records===source.records&&
+      JSON.stringify([seed.source.assets,seed.source.rules,seed.source.categories,seed.source.payroll,seed.source.currentPeriod])===
+      JSON.stringify([source.assets,source.rules,source.categories,source.payroll,source.currentPeriod]);
+    if(sameSource&&request.periods.every(p=>seed.reports.has(p)))context={source,reports:seed.reports};
+    else {const prepared=prepareMonthlyReports(source.records);
+      context={source,reports:new Map(request.periods.map(p=>[p,monthlyReport(p,source,prepared)]))};}
+  }
+  const indices = renderManagerFilters(context);
+  renderManagerDrilldownBreakdown(context);
   $('manage-list-count').textContent = `${indices.length}件`;
   const managerList = $('manage-list');
   managerList.replaceChildren();
@@ -2255,7 +2266,7 @@ function init(): void {
     if(sidebar?.classList.contains('mobile-open')&&event.target instanceof Node&&!sidebar.contains(event.target))
       setMobileMenuOpen(false);
   });
-  futureUi=initFutureProjection(()=>!liveVault?.unlocked?null:{assets:liveVault.assetSettings(),records:liveVault.records()});
+  futureUi=initFutureProjection(()=>!liveVault?.unlocked?null:{assets:liveVault.assetSettings(),records:liveVault.readonlyRecords()});
   cardSettingsUi=initCardSettings(()=>liveVault,()=>{render();});
   assetsUi=initAssetsSettings(()=>liveVault,categories,message=>{
     operationResult(message);
@@ -2286,12 +2297,13 @@ function init(): void {
     await liveVault.setMizuhoFundingChecked(month,done);
   }});
   analysisUi=initAnalysis({source:homeSource,openMonth:(period)=>{summaryUi?.setPeriod(period);showView('summary');},
-    openDrilldown:(request)=>{
+    openDrilldown:(request,context)=>{
       if(!homeSource()){toast('先にOneDrive保管庫を解除してください。');return;}
       analysisReturnPageY=window.scrollY;
       const content=document.querySelector<HTMLElement>('.workspace > .content');
       analysisReturnContentY=content?.scrollTop??0;
       activeAnalysisDrilldown=request;
+      analysisDrilldownSeed=context;
       manageReturnToSummary=false;
       activeIndex=-1;
       showView('manage');
