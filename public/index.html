@@ -525,11 +525,13 @@
             <p id="cloud-status" class="cloud-status hidden" role="status" aria-live="polite"></p>
             <div class="cloud-primary-actions" aria-label="接続・保管庫の操作">
               <button type="button" id="cloud-login" class="save-action">Microsoftアカウントで接続</button>
+              <button type="button" id="cloud-reauth" class="secondary-action">Microsoft認証をやり直す</button>
               <button type="button" id="cloud-live-refresh" class="secondary-action">最新データを取得</button>
               <button type="button" id="cloud-live-lock" class="secondary-action">保管庫をロック</button>
               <button type="button" id="cloud-resume-batch" class="secondary-action hidden">保存を再開</button>
               <button type="button" id="cloud-new-vault" class="secondary-action hidden">新しい保管庫を作成</button>
             </div>
+            <details class="cloud-auth-diagnostics"><summary>接続の診断情報</summary><pre id="cloud-auth-diagnostic">診断対象の接続エラーはありません。</pre><small>トークン・パスワード・アカウント名は記録しません。</small></details>
             <div class="cloud-account-actions" role="group" aria-label="Microsoftアカウントの操作">
               <button type="button" id="cloud-switch-account" class="cloud-link-action">別のアカウントに切り替える</button>
               <button type="button" id="cloud-logout" class="cloud-link-action">サインアウト</button>
@@ -796,7 +798,7 @@
       <div class="vault-form-actions"><button type="button" id="vault-cancel" class="secondary-action">キャンセル</button><button type="submit" id="vault-submit" class="save-action">解除する</button></div>
     </form>
   </dialog>
-  <div id="toast" class="toast activity-toast" role="status" aria-live="polite" aria-atomic="true"><span class="activity-icon" aria-hidden="true"></span><span class="activity-message"></span></div>
+  <div id="toast" class="toast activity-toast" role="status" aria-live="polite" aria-atomic="true"><span class="activity-icon" aria-hidden="true"></span><span class="activity-message"></span><button type="button" class="activity-dismiss" aria-label="通知を閉じる" title="通知を閉じる">×</button></div>
   <div id="sidebar-tooltip" class="sidebar-tooltip" role="tooltip" hidden></div>
   <script src="./scripts/startup-recovery.js"></script>
   <script type="module" src="./src/main.js"></script>

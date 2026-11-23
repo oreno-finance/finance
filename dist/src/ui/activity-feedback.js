@@ -2,6 +2,24 @@ let dismissal;
 let previousMessage = '';
 let previousKind = '';
 let previousAt = 0;
+let dismissBound = false;
+function hideToast() {
+    if (dismissal) {
+        clearTimeout(dismissal);
+        dismissal = undefined;
+    }
+    if (typeof document !== 'undefined')
+        document.getElementById('toast')?.classList.remove('visible');
+}
+function bindDismiss(panel) {
+    if (dismissBound)
+        return;
+    const button = panel.querySelector('.activity-dismiss');
+    if (!button)
+        return;
+    button.addEventListener('click', hideToast);
+    dismissBound = true;
+}
 export function showActivity(message, kind = 'info') {
     const value = message.trim();
     if (!value)
@@ -10,9 +28,10 @@ export function showActivity(message, kind = 'info') {
     const label = panel?.querySelector('.activity-message');
     if (!panel || !label)
         return;
+    bindDismiss(panel);
     const now = Date.now();
     // Some legacy callers issue a successful operationResult and a toast together.
-    if (kind === previousKind && now - previousAt < 450 && (value === previousMessage || kind === 'good'))
+    if (panel.classList.contains('visible') && kind === previousKind && now - previousAt < 450 && (value === previousMessage || kind === 'good'))
         return;
     previousMessage = value;
     previousKind = kind;
@@ -23,13 +42,15 @@ export function showActivity(message, kind = 'info') {
     }
     label.textContent = value;
     panel.dataset.kind = kind;
+    const close = panel.querySelector('.activity-dismiss');
+    if (close)
+        close.disabled = false;
     panel.classList.add('visible');
     panel.setAttribute('role', kind === 'bad' ? 'alert' : 'status');
     // Keep an actual pending operation visible, and expire every outcome.
     if (kind !== 'working') {
         dismissal = setTimeout(() => {
-            panel.classList.remove('visible');
-            dismissal = undefined;
+            hideToast();
         }, kind === 'bad' || kind === 'warn' ? 7500 : kind === 'good' ? 2700 : 4000);
     }
 }

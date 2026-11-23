@@ -65,7 +65,7 @@ test('the import batch defers full DOM renders but keeps feedback and final rend
     refreshCardOptionLabels:()=>{},buildStatementList:()=>events.list++,renderSummary:()=>events.summary++,
     renderRows:()=>events.rows++,updateBatchStatus:()=>{},
     summaryUi:null,homeUi:null,analysisUi:null,subscriptionsUi:null,futureUi:null,
-    renderManager:()=>{},renderRules:()=>{}});
+    renderManager:()=>{},renderRules:()=>{},syncCloudGate:()=>{}});
   vm.runInContext(code.slice(begin,end)+'\nthis.doRender=render;',ctx);
   ctx.doRender();ctx.doRender();
   assert.deepEqual(events,{feedback:2,rows:0,list:0,summary:0,sort:0});

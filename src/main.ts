@@ -7,7 +7,7 @@ import { prepareStatementRevision, type RevisionDiff } from './importers/revisio
 import { planStatementImport, statementSignature } from './importers/import-policy.js';
 import { hasVault, unlockVault, readStatements, readOriginal, exportEncryptedBackup, deleteLegacyVault, lockVault, type LocalSource } from './storage/encrypted-vault.js';
 import { verifyLegacyMigration, verifyDownloadedBackup } from './storage/legacy-cleanup.js';
-import { graphClientWithoutRedirect, initCloudSettings, cloudConnectPrompt, activeMicrosoftAccountId, type CloudConnectPrompt } from './cloud/cloud-settings.js';
+import { graphClientWithoutRedirect, initCloudSettings, cloudConnectPrompt, activeMicrosoftAccountId, cloudConnectionNotice, recordCloudConnectionFailure, type CloudConnectPrompt } from './cloud/cloud-settings.js';
 import { LiveVault, CloudWriteUncertainError, BrowserKeyGenerationChangedError } from './cloud/live-vault.js';
 import { GraphError } from './cloud/onedrive-api.js';
 import { readBrowserKey, rememberBrowserKey, forgetBrowserKey, applyBrowserRetentionChoice, isBrowserRemembered, InvalidRememberedBrowserKeyError, isManuallyLocked, setManualLock, clearManualLock, notifyOtherFinanceTabs, CROSS_TAB_LOCK_KEY, type BrowserKeyContext } from './cloud/remembered-browser.js';
@@ -720,6 +720,43 @@ function updateBatchStatus(): void {
   $('batch-description').textContent = otherErrors ? '不備がある明細は保存できません。' : '';
 }
 
+/** Shared, read-only OneDrive gate. No page copies its own error classification. */
+function syncCloudGate():void {
+  const gateIds=['home-view','import-view','manage-view','rules-view','assets-page','future-view',
+    'summary-view','analysis-view','reports-view','subscriptions-view'] as const;
+  const blocked=!liveVault?.unlocked;
+  const notice=cloudConnectionNotice();
+  const locked=!!liveVault?.exists&&vaultDiscoveryCompleted&&notice.kind==='connected';
+  const checking=cloudStartupRunning||notice.kind==='checking';
+  for(const id of gateIds){
+    const view=document.getElementById(id);if(!view)continue;
+    view.classList.toggle('finance-cloud-gated',blocked);
+    const current=view.querySelector<HTMLElement>(':scope > .finance-cloud-gate');
+    if(!blocked){current?.remove();continue;}
+    let panel=current;
+    if(!panel){
+      panel=document.createElement('section');panel.className='finance-cloud-gate';
+      panel.setAttribute('aria-label','OneDriveの接続状態');
+      const heading=view.querySelector(':scope > .finance-page-heading');
+      if(heading)heading.after(panel);else view.prepend(panel);
+    }
+    panel.replaceChildren();
+    const title=document.createElement('h2');title.textContent=locked?'OneDrive保管庫はロックされています':
+      checking?'OneDriveを確認中':'OneDriveに接続できません';
+    const description=document.createElement('p');description.textContent=locked?'保管庫を解除すると、このページのデータを表示できます。':notice.message;
+    const actions=document.createElement('div');actions.className='finance-cloud-gate-actions';
+    const add=(label:string,fn:()=>void)=>{const b=document.createElement('button');b.type='button';b.textContent=label;
+      b.addEventListener('click',fn);actions.append(b);};
+    if(locked)add('保管庫を解除',()=>{void askVault('unlock');});
+    else if(!checking){
+      add(notice.kind==='not-connected'?'Microsoftアカウントで接続':'通信を再試行',()=>{$<HTMLButtonElement>('cloud-login').click();});
+      add('Microsoft認証をやり直す',()=>{$<HTMLButtonElement>('cloud-reauth').click();});
+    }
+    add('設定を開く',()=>showView('settings'));
+    panel.append(title,description,actions);
+  }
+}
+
 function render(): void {
   // While parsing a batch, preserve draft state but defer expensive full
   // rebuilds until it finishes. Revision confirmation remains interactive.
@@ -742,6 +779,7 @@ function render(): void {
   if (!$('subscriptions-view').classList.contains('hidden')) subscriptionsUi?.render();
   // The report page owns its fetched snapshot; avoid refreshing on unrelated edits.
   if (!$('future-view').classList.contains('hidden')) futureUi?.render();
+  syncCloudGate();
 }
 
 function attachSource(statement: ParsedStatement, source?: LocalSource): void {
@@ -800,13 +838,16 @@ function updateCloudStatus(message?:string):void {
       : /接続してください|失敗|エラー|一時的に/.test(message)?'一時的に接続できない'
       : null
     : null;
-  label.textContent=connectionIssue??state;
+  const cloudIssue=cloudConnectionNotice();
+  label.textContent=!liveVault?.unlocked&&['network','reauth','restore','mismatch','unknown'].includes(cloudIssue.kind)
+    ?cloudIssue.message:connectionIssue??state;
   // Keep the global bar quiet when connected. Only missing access or an error needs attention.
   const failure=message && /失敗|エラー|不備|接続してください|未保存|更新確認/.test(message);
   bar.textContent='';
   if(failure && message) showActivity(message,'bad');
   $('cloud-live-migrate').classList.toggle('hidden',!liveVault);
   $('cloud-resume-batch').classList.toggle('hidden',!liveVault?.hasPendingYearBatch);
+  syncCloudGate();
 }
 /** The values are shown only in a local browser confirmation, never transmitted. */
 const collisionLabel:Record<string,string>={
@@ -916,13 +957,14 @@ async function startCloud():Promise<void> {
     }
   } catch(error) {
     finishActivity('OneDrive');
+    recordCloudConnectionFailure(error);
     const issue=error instanceof GraphError
       ? error.status===401?'Microsoftアカウントの再認証が必要です。':error.status===403?'OneDriveへのアクセス権限がありません。':
         [429,500,502,503,504].includes(error.status)?'OneDriveに一時的に接続できません。時間をおいて再試行してください。':error.message
       : error instanceof Error?error.message:'接続エラー';
     updateCloudStatus(`OneDriveに接続してください：${issue}`);
     showCloudConnectDialog(cloudConnectPrompt());
-  } finally {clearTimeout(slowNotice);cloudStartupRunning=false;}
+  } finally {clearTimeout(slowNotice);cloudStartupRunning=false;syncCloudGate();}
 }
 async function refreshCloud():Promise<void> {
   assertRefreshSafe();
@@ -1223,6 +1265,7 @@ function showView(view: FinanceView): void {
   if (view === 'reports') reportsUi?.render();
   if (view === 'subscriptions') subscriptionsUi?.render();
   if (view === 'home') homeUi?.render();
+  syncCloudGate();
   // Switching menus always starts the destination at its top. Explicit
   // 'back to summary' navigation restores its captured position afterward.
   const content = document.querySelector<HTMLElement>('.workspace > .content');

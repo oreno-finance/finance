@@ -1,5 +1,5 @@
 import { createEncryptedProbe, decryptEncryptedProbe } from './test-envelope.js';
-import { OneDriveTestClient } from './onedrive-api.js';
+import { OneDriveTestClient, GraphError } from './onedrive-api.js';
 import { clearPasswordField } from '../ui/password-fields.js';
 import { showActivity, simpleActivity } from '../ui/activity-feedback.js';
 import { diagnoseVaultFiles } from './vault-diagnostics.js';
@@ -22,6 +22,57 @@ let busy = false;
 let verified = false;
 let authState = 'not-connected';
 let reauthenticationRequired = false;
+let lastAuthIssue = null;
+function safeCode(error) {
+    if (!error || typeof error !== 'object')
+        return 'unavailable';
+    const data = error;
+    const code = typeof data.errorCode === 'string' ? data.errorCode : typeof data.name === 'string' ? data.name : '';
+    const known = new Set(['interaction_required', 'login_required', 'consent_required', 'no_tokens_found',
+        'no_account_error', 'invalid_grant', 'user_login_required', 'network_error', 'failed_to_fetch',
+        'temporarily_unavailable', 'service_unavailable', 'monitor_window_timeout', 'iframe_bridge_timeout',
+        'AuthError', 'BrowserAuthError', 'ServerError', 'InteractionRequiredAuthError', 'GraphError']);
+    return known.has(code) ? code : 'unavailable';
+}
+function rememberFailure(error, stage, kind = classifyMicrosoftAuthError(error)) {
+    const status = error instanceof GraphError ? error.status : null;
+    lastAuthIssue = { stage, kind, code: safeCode(error), httpStatus: status };
+}
+/** Redacted diagnostic metadata. No account names, tokens, URLs, request bodies or response text. */
+export function cloudAuthDiagnostic() {
+    const v = lastAuthIssue;
+    return v ? `段階: ${v.stage}\n分類: ${v.kind}\nエラーコード: ${v.code}\nHTTP: ${v.httpStatus ?? 'なし'}` : '診断対象の接続エラーはありません。';
+}
+export function cloudConnectionNotice() {
+    if (authState === 'restore')
+        return { kind: 'restore', message: '保存済みの認証状態を復旧できませんでした' };
+    if (authState === 'mismatch')
+        return { kind: 'mismatch', message: '前回使用したMicrosoftアカウントを確認できません' };
+    if (authState === 'reauth')
+        return { kind: 'reauth', message: 'Microsoftの認証が必要です。再接続してください' };
+    if (authState === 'temporary')
+        return lastAuthIssue?.kind === 'network' || lastAuthIssue?.kind === 'timeout' || lastAuthIssue?.kind === 'server'
+            ? { kind: 'network', message: 'Microsoftに接続できません。通信状態を確認してください' }
+            : { kind: 'unknown', message: '接続を確認できません。診断情報を表示できます' };
+    if (authState === 'checking')
+        return { kind: 'checking', message: 'OneDriveの接続状態を確認しています…' };
+    if (authState === 'connected')
+        return { kind: 'connected', message: 'Microsoftアカウントに接続済みです' };
+    return { kind: 'not-connected', message: 'Microsoftアカウントで接続してください' };
+}
+/** Graph/API failures are separate from MSAL token failures. Never redirect automatically. */
+export function recordCloudConnectionFailure(error) {
+    if (authState === 'restore' || authState === 'mismatch' ||
+        (lastAuthIssue?.stage === 'silent-token' && (authState === 'temporary' || authState === 'reauth')))
+        return;
+    const httpStatus = error instanceof GraphError ? error.status : null;
+    const kind = httpStatus === 401 ? 'interaction' : httpStatus === 408 || httpStatus === 429 ||
+        (httpStatus !== null && httpStatus >= 500) ? 'server' : classifyMicrosoftAuthError(error);
+    rememberFailure(error, 'graph', kind);
+    reauthenticationRequired = kind === 'interaction';
+    authState = reauthenticationRequired ? 'reauth' : 'temporary';
+    updateUi();
+}
 const tokenJobs = new Map();
 const account = () => selectedAccount;
 function priorAccountId(clientId) {
@@ -39,17 +90,7 @@ function rememberAccount(clientId, selected) {
     }
     catch { /* storage denied */ }
 }
-function authStateText() {
-    if (authState === 'checking')
-        return '接続を確認中';
-    if (authState === 'temporary')
-        return '一時的に接続できない';
-    if (authState === 'reauth')
-        return 'Microsoftアカウントの再認証が必要';
-    if (authState === 'connected')
-        return 'OneDriveに接続済み';
-    return 'Microsoftアカウントが未接続';
-}
+function authStateText() { return cloudConnectionNotice().message; }
 function authErrorMessage(kind) {
     switch (kind) {
         case 'interaction': return 'Microsoftアカウントの再認証が必要です。「再接続」を押してください。';
@@ -73,8 +114,10 @@ function updateUi() {
     // A cached MSAL account is not proof of a working token or the intended OneDrive account.
     // Keep explicit reconnect available even if the cached account looks connected.
     $('cloud-login').toggleAttribute('disabled', busy);
+    $('cloud-reauth').toggleAttribute('disabled', busy || !validId(id));
+    $('cloud-auth-diagnostic').textContent = cloudAuthDiagnostic();
     $('cloud-switch-account').toggleAttribute('disabled', busy);
-    $('cloud-login').textContent = connected ? 'Microsoftアカウントを再接続' : 'Microsoftアカウントで接続';
+    $('cloud-login').textContent = connected ? '通信を再試行' : 'Microsoftアカウントで接続';
     $('cloud-logout').toggleAttribute('disabled', busy || !connected);
     $('cloud-folder-check').toggleAttribute('disabled', busy || !connected);
     $('cloud-vault-diagnose').toggleAttribute('disabled', busy || !connected);
@@ -110,8 +153,23 @@ async function ensureMsal() {
             cache: { cacheLocation: 'localStorage' },
         });
         await instance.initialize();
-        const redirect = await instance.handleRedirectPromise();
-        const active = selectMicrosoftAccount(instance.getAllAccounts(), redirect?.account ?? null, priorAccountId(id), instance.getActiveAccount());
+        let redirect;
+        try {
+            redirect = await instance.handleRedirectPromise();
+        }
+        catch (error) {
+            rememberFailure(error, 'initialize');
+            authState = 'restore';
+            updateUi();
+            throw new Error('保存済みの認証状態を復旧できませんでした');
+        }
+        const previous = priorAccountId(id);
+        const all = instance.getAllAccounts();
+        const active = selectMicrosoftAccount(all, redirect?.account ?? null, previous, instance.getActiveAccount());
+        const mismatched = !!previous && !active && !redirect;
+        if (mismatched) {
+            rememberFailure({ name: 'AccountMismatch' }, 'initialize', 'unknown');
+        }
         instance.setActiveAccount(active);
         selectedAccount = active;
         if (active)
@@ -119,11 +177,19 @@ async function ensureMsal() {
         msal = instance;
         activeId = id;
         verified = false;
-        authState = active ? 'checking' : 'not-connected';
+        authState = active ? 'checking' : mismatched ? 'mismatch' : 'not-connected';
         return instance;
     })();
     try {
         return await initializing;
+    }
+    catch (error) {
+        if (authState !== 'restore') {
+            rememberFailure(error, 'initialize');
+            authState = 'restore';
+            updateUi();
+        }
+        throw error;
     }
     finally {
         initializing = null;
@@ -142,6 +208,7 @@ async function silentToken(instance, user, forceRefresh = false) {
         }
         catch (error) {
             const kind = classifyMicrosoftAuthError(error);
+            rememberFailure(error, 'silent-token', kind);
             reauthenticationRequired = kind === 'interaction';
             authState = kind === 'interaction' ? 'reauth' : 'temporary';
             updateUi();
@@ -151,6 +218,7 @@ async function silentToken(instance, user, forceRefresh = false) {
             (result.account && result.account.homeAccountId !== user.homeAccountId))
             throw new Error('Microsoftアカウントが切り替わりました。再接続してください。');
         reauthenticationRequired = false;
+        lastAuthIssue = null;
         authState = 'connected';
         updateUi();
         return result.accessToken;
@@ -198,9 +266,11 @@ export function cloudConnectPrompt() {
         return 'setup';
     if (!msal || activeId !== id)
         return null;
+    if (reauthenticationRequired || authState === 'mismatch' || authState === 'restore')
+        return 'reconnect';
     if (!account())
         return 'connect';
-    return reauthenticationRequired ? 'reconnect' : null;
+    return null;
 }
 export function initCloudSettings(handlers) {
     let id = '';
@@ -263,6 +333,7 @@ export function initCloudSettings(handlers) {
                     return;
                 }
                 catch (error) {
+                    recordCloudConnectionFailure(error);
                     if (!reauthenticationRequired)
                         throw error;
                 }
@@ -273,7 +344,28 @@ export function initCloudSettings(handlers) {
             }
             else if (handlers.hasUnsavedChanges() && !window.confirm('未保存の変更があります。認証画面へ移動しますか？'))
                 return;
-            await instance.loginRedirect({ scopes: SCOPES, ...(current?.username ? { loginHint: current.username } : {}) });
+            await instance.loginRedirect({ scopes: SCOPES, ...(current?.username ? { loginHint: current.username } : {}), ...(!current && authState === 'mismatch' ? { prompt: 'select_account' } : {}) });
+        });
+    });
+    $('cloud-reauth').addEventListener('click', () => {
+        void action(async () => {
+            const value = $('cloud-client-id').value.trim();
+            if (!validId(value) || localStorage.getItem(CLIENT_KEY) !== value)
+                throw new Error('先にMicrosoft EntraのClient IDを設定・保存してください。');
+            const instance = await ensureMsal();
+            if (handlers.canNavigate) {
+                if (!handlers.canNavigate())
+                    return;
+            }
+            else if (handlers.hasUnsavedChanges() && !window.confirm('未保存の変更があります。Microsoft認証をやり直しますか？'))
+                return;
+            const current = account();
+            // Explicitly interactive even if cached credentials exist. No sign-out,
+            // no clearing another account's cached token, no unattended redirect.
+            if (current)
+                await instance.acquireTokenRedirect({ scopes: SCOPES, account: current, prompt: 'login' });
+            else
+                await instance.loginRedirect({ scopes: SCOPES, prompt: 'select_account' });
         });
     });
     $('cloud-switch-account').addEventListener('click', () => {

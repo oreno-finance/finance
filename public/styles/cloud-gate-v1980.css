@@ -1,0 +1,18 @@
+/* Uniform cloud status on every finance data page; settings remains accessible. */
+.finance-cloud-gated > :not(.finance-page-heading):not(.finance-cloud-gate){display:none!important}
+.finance-cloud-gate{max-width:650px;box-sizing:border-box;margin:12px auto 28px;
+  padding:28px;border:1px solid var(--line,#d8e1e8);border-radius:14px;
+  background:var(--panel,#fff);color:var(--ink,#18283e);display:grid;gap:12px}
+.finance-cloud-gate h2{font-size:18px;margin:0;color:inherit}
+.finance-cloud-gate p{font-size:13px;line-height:1.7;margin:0;color:var(--muted,#65758a)}
+.finance-cloud-gate .finance-cloud-gate-actions{display:flex;gap:10px;flex-wrap:wrap}
+.finance-cloud-gate button{min-height:38px;padding:8px 14px;border-radius:9px;border:1px solid var(--line,#cbd5e0);
+  background:var(--panel,#fff);color:inherit;font-size:12px;font-weight:650;cursor:pointer}
+.finance-cloud-gate button:first-child{background:var(--accent,#257969);border-color:transparent;color:#fff}
+.finance-cloud-gate button:focus-visible{outline:3px solid #62ac9f;outline-offset:2px}
+.cloud-auth-diagnostics{margin-top:12px;font-size:12px}
+.cloud-auth-diagnostics summary{cursor:pointer;display:list-item;font-weight:650}
+.cloud-auth-diagnostics pre{font:12px/1.65 ui-monospace,SFMono-Regular,monospace;white-space:pre-wrap;
+  overflow-wrap:anywhere;padding:10px;border-radius:8px;background:var(--soft,#f4f7fa);color:var(--ink,#18283e)}
+.cloud-auth-diagnostics small{color:var(--muted,#65758a)}
+@media(max-width:600px){.finance-cloud-gate{padding:20px;margin:10px 0 20px}.finance-cloud-gate button{flex:1 1 auto}}
