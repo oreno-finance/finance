@@ -9,7 +9,9 @@ const dateOf = (iso) => { const d = new Date(iso); return `${d.getFullYear()}-${
 const nextMonth = (period) => { const y = Number(period.slice(0, 4)), m = Number(period.slice(5)); return `${y + (m === 12 ? 1 : 0)}-${String(m === 12 ? 1 : m + 1).padStart(2, '0')}`; };
 const lastDay = (period) => `${period}-${String(new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5)), 0)).getUTCDate()).padStart(2, '0')}`;
 const payrollName = /給与|給料|salary|payroll/i;
-export function bankTimeline(period, source, today) {
+export function bankTimeline(period, source, today, work) {
+    if (work && work.prepared.records !== source.records)
+        throw new Error('口座推移の明細索引が一致しません。');
     const assets = source.assets;
     const empty = (message) => ({ startDay: null, startBalance: null, endBalance: null, minimum: null, days: [], missingCardAccounts: [], warning: message });
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))
@@ -32,7 +34,7 @@ export function bankTimeline(period, source, today) {
         all.push(event); };
     // Explicit account assignments prevent unrelated card payments from being deducted.
     for (let month = start.slice(0, 7); month <= nextMonth(period); month = nextMonth(month)) {
-        const report = monthlyReport(month, source);
+        const report = work?.reports.get(month) ?? monthlyReport(month, source, work?.prepared);
         for (const card of report.cardLines) {
             const account = assets.cardDebitAccounts?.[card.cardId];
             if (!account) {

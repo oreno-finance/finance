@@ -27,6 +27,7 @@ import { saveLastView } from './ui/view-preference.js';
 import { initHome } from './ui/home.js';
 import { initAnalysis } from './ui/analysis.js';
 import { analysisDrilldownMatches, analysisDrilldownBreakdown, drilldownPeriodLabel } from './ui/analysis-drilldown.js';
+import { monthlyReport, prepareMonthlyReports } from './summary/monthly-summary.js';
 import { initMonthlyReports } from './ui/monthly-reports.js';
 import { initSubscriptions } from './ui/subscriptions.js';
 import { initCardSettings } from './ui/card-settings.js';
@@ -86,6 +87,7 @@ let manageYear = initialCalendar.year;
 let manageMonth = initialCalendar.month;
 let manageReturnToSummary = false;
 let activeAnalysisDrilldown = null;
+let analysisDrilldownSeed = null;
 let drilldownRows = new Map();
 let analysisSourceProvider = null;
 let analysisReturnPageY = 0;
@@ -1489,6 +1491,7 @@ function showView(view) {
         manageReturnToSummary = false;
     if (view !== 'manage') {
         activeAnalysisDrilldown = null;
+        analysisDrilldownSeed = null;
         drilldownRows.clear();
     }
     if (view !== 'import')
@@ -1522,10 +1525,8 @@ function showView(view) {
     if (view === 'import' && !importActive()) {
         activeIndex = statements.findIndex(s => importStaged.has(s));
     }
-    if (view === 'manage') {
-        selectVisibleManagerStatement();
+    if (view === 'manage')
         renderManager();
-    }
     if (view === 'import')
         render();
     if (view === 'rules') {
@@ -1555,13 +1556,13 @@ function showView(view) {
     window.scrollTo(0, 0);
     saveLastView(sessionStorageSafe(), view);
 }
-function managerIndices() {
+function managerIndices(context) {
     if (!activeAnalysisDrilldown) {
         drilldownRows.clear();
         return filteredStatementIndices(statements, manageYear, manageMonth);
     }
-    const source = analysisSourceProvider?.();
-    drilldownRows = source ? analysisDrilldownMatches(source, activeAnalysisDrilldown) : new Map();
+    const source = context?.source ?? analysisSourceProvider?.();
+    drilldownRows = source ? analysisDrilldownMatches(source, activeAnalysisDrilldown, context?.reports) : new Map();
     return statements.map((statement, index) => ({ statement, index, id: savedIds.get(statement) }))
         .filter(item => item.id && drilldownRows.has(item.id))
         .sort((a, b) => (b.statement.paymentDate ?? '').localeCompare(a.statement.paymentDate ?? '') || a.index - b.index)
@@ -1586,7 +1587,7 @@ function setOptions(select, choices, selected) {
     }
     select.value = selected;
 }
-function renderManagerFilters() {
+function renderManagerFilters(context) {
     const drilldown = activeAnalysisDrilldown;
     $('manage-drilldown').classList.toggle('hidden', !drilldown);
     $('manage-period-controls').classList.toggle('hidden', !!drilldown);
@@ -1597,7 +1598,7 @@ function renderManagerFilters() {
     const picker = $('manage-period');
     picker.value = manageYear === 'all' || manageMonth === 'all' ? '' : `${manageYear}-${manageMonth}`;
     $('manage-show-all').classList.toggle('active', manageYear === 'all' && manageMonth === 'all');
-    return managerIndices();
+    return managerIndices(context);
 }
 function manageChangePeriod(period) {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))
@@ -1628,16 +1629,16 @@ function openRecurringForReview(entryId) {
     if (!assetsUi?.openRecurring(entryId))
         toast('定期入出金の編集画面を開けませんでした。');
 }
-function renderManagerDrilldownBreakdown() {
+function renderManagerDrilldownBreakdown(context) {
     const block = $('manage-drilldown-breakdown');
     block.classList.toggle('hidden', !activeAnalysisDrilldown);
     $('manage-view').classList.toggle('manage-with-drilldown', !!activeAnalysisDrilldown);
     block.replaceChildren();
-    const request = activeAnalysisDrilldown, source = analysisSourceProvider?.();
+    const request = activeAnalysisDrilldown, source = context?.source ?? analysisSourceProvider?.();
     if (!request || !source)
         return;
     try {
-        const data = analysisDrilldownBreakdown(source, request);
+        const data = analysisDrilldownBreakdown(source, request, context?.reports);
         const heading = document.createElement('h2');
         heading.textContent = '対象金額の内訳';
         block.append(heading);
@@ -1720,8 +1721,25 @@ function updateManagerMerchantMetadata(control, row, s) {
         control.append(secondary);
 }
 function renderManager() {
-    const indices = renderManagerFilters();
-    renderManagerDrilldownBreakdown();
+    const request = activeAnalysisDrilldown, source = request ? analysisSourceProvider?.() : null;
+    const seed = analysisDrilldownSeed;
+    analysisDrilldownSeed = null;
+    let context = null;
+    if (request && source) {
+        // Reuse the just-rendered analysis reports only when all mutable inputs
+        // remain exactly the same; otherwise build a fresh per-render context.
+        const sameSource = seed && seed.source.records === source.records &&
+            JSON.stringify([seed.source.assets, seed.source.rules, seed.source.categories, seed.source.payroll, seed.source.currentPeriod]) ===
+                JSON.stringify([source.assets, source.rules, source.categories, source.payroll, source.currentPeriod]);
+        if (sameSource && request.periods.every(p => seed.reports.has(p)))
+            context = { source, reports: seed.reports };
+        else {
+            const prepared = prepareMonthlyReports(source.records);
+            context = { source, reports: new Map(request.periods.map(p => [p, monthlyReport(p, source, prepared)])) };
+        }
+    }
+    const indices = renderManagerFilters(context);
+    renderManagerDrilldownBreakdown(context);
     $('manage-list-count').textContent = `${indices.length}件`;
     const managerList = $('manage-list');
     managerList.replaceChildren();
@@ -2918,7 +2936,7 @@ function init() {
         if (sidebar?.classList.contains('mobile-open') && event.target instanceof Node && !sidebar.contains(event.target))
             setMobileMenuOpen(false);
     });
-    futureUi = initFutureProjection(() => !liveVault?.unlocked ? null : { assets: liveVault.assetSettings(), records: liveVault.records() });
+    futureUi = initFutureProjection(() => !liveVault?.unlocked ? null : { assets: liveVault.assetSettings(), records: liveVault.readonlyRecords() });
     cardSettingsUi = initCardSettings(() => liveVault, () => { render(); });
     assetsUi = initAssetsSettings(() => liveVault, categories, message => {
         operationResult(message);
@@ -2955,7 +2973,7 @@ function init() {
             await liveVault.setMizuhoFundingChecked(month, done);
         } });
     analysisUi = initAnalysis({ source: homeSource, openMonth: (period) => { summaryUi?.setPeriod(period); showView('summary'); },
-        openDrilldown: (request) => {
+        openDrilldown: (request, context) => {
             if (!homeSource()) {
                 toast('先にOneDrive保管庫を解除してください。');
                 return;
@@ -2964,6 +2982,7 @@ function init() {
             const content = document.querySelector('.workspace > .content');
             analysisReturnContentY = content?.scrollTop ?? 0;
             activeAnalysisDrilldown = request;
+            analysisDrilldownSeed = context;
             manageReturnToSummary = false;
             activeIndex = -1;
             showView('manage');

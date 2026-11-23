@@ -109,8 +109,9 @@ export function fixedCostOccurrences(period:string,items:readonly FixedCostEntry
 export function monthlyEquivalent(item:Pick<FixedCostEntry,'amount'|'frequency'>|Pick<RecurringEntry,'amount'|'frequency'>):number {
   return item.frequency==='yearly'?item.amount/12:item.frequency==='weekly'?item.amount*52/12:item.amount;
 }
-export function fixedCostState(item:Pick<FixedCostEntry,'startOn'|'endOn'|'pauses'>,day:string):'active'|'paused'|'ended'{
+export function fixedCostState(item:Pick<FixedCostEntry,'startOn'|'endOn'|'pauses'>,day:string):'active'|'paused'|'ended'|'scheduled'{
   if(item.endOn!==null&&item.endOn<day)return 'ended';
+  if(item.startOn>day)return 'scheduled';
   if(pausedOnDay(item.pauses,day))return 'paused';
   return 'active';
 }

@@ -49,7 +49,8 @@ export function initAnalysis(deps) {
     let year = Number(end.slice(0, 4));
     let dimension = 'category';
     const go = (period) => deps.openMonth(period);
-    const drill = (dimension, id, label, periods) => deps.openDrilldown({ dimension, value: id, label, periods });
+    let reportContext = null;
+    const drill = (dimension, id, label, periods) => deps.openDrilldown({ dimension, value: id, label, periods }, reportContext);
     function controls(today, source) {
         const area = el('div', 'analysis-controls');
         const modes = el('div', 'analysis-switch');
@@ -287,6 +288,7 @@ export function initAnalysis(deps) {
             if (year > Number(today.slice(0, 4)))
                 year = Number(today.slice(0, 4));
             const source = deps.source();
+            reportContext = null;
             root.append(controls(today, source));
             if (!source) {
                 const locked = panel('OneDrive保管庫を開く');
@@ -297,6 +299,7 @@ export function initAnalysis(deps) {
             try {
                 const data = measureFinanceSync('ui.analysis.aggregate', () => mode === 'month'
                     ? rollingAnalytics(source, end, count, today) : annualAnalytics(source, year, today));
+                reportContext = { source, reports: new Map(data.months.map(m => [m.period, m.report])) };
                 const header = el('div', 'analysis-range');
                 header.append(el('strong', '', mode === 'month' ? `${labelYearMonth(data.months[0].period)}〜${labelYearMonth(data.months.at(-1).period)}` : `${year}年の収支`));
                 root.append(header, summary(data), pointBenefitsSection('獲得ポイント', measureFinanceSync('ui.analysis.points', () => periodPointBenefitsFromReports(data.months.map(m => m.report), source))));
@@ -315,5 +318,5 @@ export function initAnalysis(deps) {
             }
         });
     }
-    return { render, reset: () => { end = currentLocal(); year = Number(end.slice(0, 4)); mode = 'month'; count = 6; dimension = 'category'; render(); } };
+    return { render, reset: () => { reportContext = null; end = currentLocal(); year = Number(end.slice(0, 4)); mode = 'month'; count = 6; dimension = 'category'; render(); } };
 }

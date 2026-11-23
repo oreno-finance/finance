@@ -1,5 +1,5 @@
 /** Monthly summary view. DOM updates only; all financial figures are computed from vault snapshots. */
-import { monthlyReport, prepareMonthlyReports, changePeriod, type MonthlyReport, type MonthlySource, type SummaryCard } from '../summary/monthly-summary.js';
+import { monthlyReport, prepareMonthlyReports, changePeriod, type MonthlyReport, type PreparedMonthlyReports, type MonthlySource, type SummaryCard } from '../summary/monthly-summary.js';
 import { PALETTE } from '../cloud/merchant-rules.js';
 import { pointBenefitsFromMonthlyReport } from '../summary/point-benefits.js';
 import { pointBenefitsSection } from './point-benefits.js';
@@ -198,8 +198,8 @@ export function initMonthlySummary(deps:MonthlySummaryDeps):MonthlySummaryUi {
     main.replaceChildren();
     const source=deps.source();
     if(source===null){main.append(element('div','panel monthly-lock','月別サマリーを見るにはOneDrive保管庫のロック解除が必要です。'));return;}
-    let report:MonthlyReport,prev:MonthlyReport;
-    try{const prepared=prepareMonthlyReports(source.records);
+    let report:MonthlyReport,prev:MonthlyReport,prepared:PreparedMonthlyReports;
+    try{prepared=prepareMonthlyReports(source.records);
       report=monthlyReport(period,source,prepared);prev=monthlyReport(changePeriod(period,-1),source,prepared);}
     catch(err){main.append(element('div','panel monthly-lock',`集計できませんでした：${err instanceof Error?err.message:'データエラー'}`));return;}
     const grid=element('div','monthly-metrics');main.append(grid);
@@ -231,7 +231,7 @@ export function initMonthlySummary(deps:MonthlySummaryDeps):MonthlySummaryUi {
     const bank=section('楽天銀行の残高推移');
     const localDate=new Date();
     const localToday=`${localDate.getFullYear()}-${String(localDate.getMonth()+1).padStart(2,'0')}-${String(localDate.getDate()).padStart(2,'0')}`;
-    const timeline=bankTimeline(period,source,localToday);
+    const timeline=bankTimeline(period,source,localToday,{prepared,reports:new Map([[report.period,report],[prev.period,prev]])});
     const bankroll=element('div','monthly-bank-overview');bank.body.append(bankroll);
     const bankMetric=(title:string,value:string,tone:string)=>{
       const card=element('div',`monthly-bank-metric ${tone}`);

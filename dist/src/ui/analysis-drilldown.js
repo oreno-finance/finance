@@ -1,7 +1,7 @@
 /** Read-only drill-down for analysis. Source of truth is the same monthlyReport used by analytics.
  * The payment month (not billing/usage month) decides membership. No cloud mutation occurs. */
 import { displayMerchant, matchingRule } from '../cloud/merchant-rules.js';
-import { monthlyReport, isNisaCardRow, isValidPeriod } from '../summary/monthly-summary.js';
+import { monthlyReport, prepareMonthlyReports, isNisaCardRow, isValidPeriod } from '../summary/monthly-summary.js';
 export function validateAnalysisDrilldown(request) {
     if (!request || !['card', 'category', 'merchant'].includes(request.dimension) ||
         !Array.isArray(request.periods) || !request.periods.length || request.periods.length > 12 ||
@@ -14,12 +14,13 @@ export function validateAnalysisDrilldown(request) {
 }
 /** Remote record ID => original row IDs. A record with no matching rows is absent.
  * Invalid/duplicate statements are excluded exactly as in monthlyReport. */
-export function analysisDrilldownMatches(source, request) {
+export function analysisDrilldownMatches(source, request, reports) {
     validateAnalysisDrilldown(request);
+    const prepared = reports ? null : prepareMonthlyReports(source.records);
     const result = new Map();
     const recordsById = new Map(source.records.map(record => [record.id, record]));
     for (const period of request.periods) {
-        const report = monthlyReport(period, source);
+        const report = reports?.get(period) ?? monthlyReport(period, source, prepared ?? undefined);
         for (const card of report.cardLines) {
             if (request.dimension === 'card' && card.cardId !== request.value)
                 continue;
@@ -55,8 +56,14 @@ export function drilldownPeriodLabel(periods) {
 }
 /** The category aggregate includes scheduled bank recurrences; show them alongside card rows.
  * Merchant and card aggregates contain card rows only. No mutation and no heuristic matching. */
-export function analysisDrilldownBreakdown(source, request) {
-    const matches = analysisDrilldownMatches(source, request);
+export function analysisDrilldownBreakdown(source, request, reports) {
+    validateAnalysisDrilldown(request);
+    // Direct callers also get one shared prepared index and one report per month.
+    const byPeriod = reports ?? (() => {
+        const prepared = prepareMonthlyReports(source.records);
+        return new Map(request.periods.map(period => [period, monthlyReport(period, source, prepared)]));
+    })();
+    const matches = analysisDrilldownMatches(source, request, byPeriod);
     const safeAdd = (a, b) => {
         const n = a + b;
         if (!Number.isSafeInteger(n))
@@ -75,7 +82,7 @@ export function analysisDrilldownBreakdown(source, request) {
     const recurring = [];
     if (request.dimension === 'category') {
         for (const period of request.periods) {
-            const report = monthlyReport(period, source);
+            const report = byPeriod.get(period) ?? monthlyReport(period, source);
             for (const line of report.recurringLines) {
                 if (line.kind !== 'expense')
                     continue;

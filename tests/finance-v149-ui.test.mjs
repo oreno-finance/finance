@@ -28,7 +28,7 @@ test('management pager navigates by a whole calendar month without rewriting imp
   assert.doesNotMatch(html,/id="manage-filter-(year|month)"/);
   assert.match(main,/function manageShiftMonth\(offset:number\)/);
   assert.match(main,/new Date\(Date\.UTC\(year,month-1\+offset,1\)\)/);
-  assert.match(main,/return managerIndices\(\)/);
+  assert.match(main,/return managerIndices\(context\)/);
 });
 
 test('aliases have explicit add and remove controls, not a separator convention',()=>{

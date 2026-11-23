@@ -21,8 +21,8 @@ function stepMonth(month) {
 /** Monthly NISA card purchases are evidence of past contributions only.
  * When no recurring transfer to NISA exists, the latest recent month can be
  * offered as an editable assumption for future card contributions. */
-export function suggestedNisaMonthly(doc, records, today) {
-    const matches = matchingNisaRows(doc, records).filter(row => row.date <= today);
+export function suggestedNisaMonthly(doc, records, today, nisaMatches) {
+    const matches = (nisaMatches ?? matchingNisaRows(doc, records)).filter(row => row.date <= today);
     const perMonth = new Map();
     for (const row of matches)
         perMonth.set(row.date.slice(0, 7), (perMonth.get(row.date.slice(0, 7)) ?? 0) + row.amount);
@@ -35,7 +35,7 @@ export function suggestedNisaMonthly(doc, records, today) {
         return { amount: 0, source: '最新のNISAカード積立実績が6か月より前のため自動推定しません' };
     return { amount: last[1], source: `${last[0]}のNISAカード積立実績を仮置き（編集可能）` };
 }
-export function futureProjection(doc, records, options) {
+export function futureProjection(doc, records, options, nisaMatches) {
     const { today, targetMonth, changeMonth, savingsRuleId, savingsAmount, nisaMonthly, nisaAnnualReturn, cashScenarioMonthly = null, nisaScenarioMonthly = null } = options;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(today) || !period(today.slice(0, 7)) || !period(targetMonth) || !period(changeMonth) ||
         targetMonth < today.slice(0, 7) || !money(savingsAmount) || !money(nisaMonthly) ||
@@ -52,8 +52,9 @@ export function futureProjection(doc, records, options) {
     const hasNisaSchedule = doc.recurring.some(e => e.enabled && e.toAccountId === 'nisa' && (e.kind === 'income' || e.kind === 'transfer'));
     if (hasNisaSchedule && nisaMonthly !== 0)
         throw Error('NISAの定期入金が登録されています。カード積立の仮入力を重ねられません。');
-    const conflictingNisaSources = hasNisaSchedule && matchingNisaRows(doc, records).some(row => row.date <= today);
-    const starting = forecastAssets(doc, today, records, [], null);
+    const matches = nisaMatches ?? matchingNisaRows(doc, records);
+    const conflictingNisaSources = hasNisaSchedule && matches.some(row => row.date <= today);
+    const starting = forecastAssets(doc, today, records, [], null, matches);
     // forecastAssets returns null when a confirmed balance snapshot is unavailable.
     // If no snapshot is present, never manufacture a 0-yen starting balance.
     const cashStart = starting['cash-savings'].balance;

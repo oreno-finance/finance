@@ -90,7 +90,7 @@ test('UI navigation filters rows by stable original row ID, not array position',
   assert.match(main,/s\.rows\.splice\(index, 1\)/);
   assert.match(main,/drilldownRows=source\?analysisDrilldownMatches/);
   assert.match(main,/\$\('manage-period-controls'\)\.classList\.toggle\('hidden',!!drilldown\)/);
-  assert.match(analysis,/openDrilldown\(request:AnalysisDrilldown\)/);
+  assert.match(analysis,/openDrilldown\(request:AnalysisDrilldown,context:AnalysisReportContext\|null\)/);
   assert.match(analysis,/drill\(dimension,group\.id,group\.label/);
 });
 test('home unclassified goes straight to filtered statement manager, not month summary',()=>{

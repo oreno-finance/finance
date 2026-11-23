@@ -1,6 +1,7 @@
 /** Finance P1-A: in-browser multi-month / annual analysis, no additional persistence. */
 import {annualAnalytics,comparableDelta,priorYearAnalytics,rollingAnalytics,type AnalysisDimension,type AnalysisGroup,type AnalysisMonth,type PeriodAnalytics} from '../analysis/period-analytics.js';
 import {changePeriod,type MonthlySource} from '../summary/monthly-summary.js';
+import type {AnalysisReportContext} from './analysis-drilldown.js';
 import type {AnalysisDrilldown} from './analysis-drilldown.js';
 import {monthNavigator,yearNavigator} from './period-navigator.js';
 import { periodPointBenefitsFromReports } from '../summary/point-benefits.js';
@@ -8,7 +9,7 @@ import { pointBenefitsSection } from './point-benefits.js';
 import { measureFinanceSync } from '../cloud/performance-diagnostics.js';
 
 export interface AnalysisUi {render():void;reset():void}
-export interface AnalysisDeps {source():MonthlySource|null;openMonth(period:string):void;openDrilldown(request:AnalysisDrilldown):void;openSettings():void}
+export interface AnalysisDeps {source():MonthlySource|null;openMonth(period:string):void;openDrilldown(request:AnalysisDrilldown,context:AnalysisReportContext|null):void;openSettings():void}
 type Mode='month'|'year';
 const formatYen=(amount:number|null,digits=0):string=>amount===null?'未取得':`${amount.toLocaleString('ja-JP',{maximumFractionDigits:digits})}円`;
 const signedYen=(value:number)=>`${value>0?'+':''}${formatYen(value)}`;
@@ -40,7 +41,9 @@ export function initAnalysis(deps:AnalysisDeps):AnalysisUi{
   let mode:Mode='month';let count:3|6|12=6;let end=currentLocal();let year=Number(end.slice(0,4));
   let dimension:AnalysisDimension='category';
   const go=(period:string)=>deps.openMonth(period);
-  const drill=(dimension:AnalysisDimension,id:string,label:string,periods:readonly string[])=>deps.openDrilldown({dimension,value:id,label,periods});
+  let reportContext:AnalysisReportContext|null=null;
+  const drill=(dimension:AnalysisDimension,id:string,label:string,periods:readonly string[])=>
+    deps.openDrilldown({dimension,value:id,label,periods},reportContext);
   function controls(today:string,source:MonthlySource|null):HTMLElement{
     const area=el('div','analysis-controls');
     const modes=el('div','analysis-switch');
@@ -233,6 +236,7 @@ export function initAnalysis(deps:AnalysisDeps):AnalysisUi{
     const today=currentLocal();
     if(end>today)end=today;if(year>Number(today.slice(0,4)))year=Number(today.slice(0,4));
     const source=deps.source();
+    reportContext=null;
     root!.append(controls(today,source));
     if(!source){
       const locked=panel('OneDrive保管庫を開く');locked.body.append(action('設定を開く',deps.openSettings,'analysis-primary'));
@@ -241,6 +245,7 @@ export function initAnalysis(deps:AnalysisDeps):AnalysisUi{
     try{
       const data=measureFinanceSync('ui.analysis.aggregate',()=>mode==='month'
         ?rollingAnalytics(source,end,count,today):annualAnalytics(source,year,today));
+      reportContext={source,reports:new Map(data.months.map(m=>[m.period,m.report]))};
       const header=el('div','analysis-range');header.append(el('strong','',mode==='month'?`${labelYearMonth(data.months[0]!.period)}〜${labelYearMonth(data.months.at(-1)!.period)}`:`${year}年の収支`));
       root!.append(header,summary(data),pointBenefitsSection('獲得ポイント',measureFinanceSync('ui.analysis.points',
         ()=>periodPointBenefitsFromReports(data.months.map(m=>m.report),source))));
@@ -255,5 +260,5 @@ export function initAnalysis(deps:AnalysisDeps):AnalysisUi{
     }
     });
   }
-  return {render,reset:()=>{end=currentLocal();year=Number(end.slice(0,4));mode='month';count=6;dimension='category';render();}};
+  return {render,reset:()=>{reportContext=null;end=currentLocal();year=Number(end.slice(0,4));mode='month';count=6;dimension='category';render();}};
 }

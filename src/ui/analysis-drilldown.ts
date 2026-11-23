@@ -1,10 +1,12 @@
 /** Read-only drill-down for analysis. Source of truth is the same monthlyReport used by analytics.
  * The payment month (not billing/usage month) decides membership. No cloud mutation occurs. */
 import { displayMerchant, matchingRule } from '../cloud/merchant-rules.js';
-import { monthlyReport, isNisaCardRow, isValidPeriod, type MonthlySource, type SummaryRecurring } from '../summary/monthly-summary.js';
+import { monthlyReport, prepareMonthlyReports, isNisaCardRow, isValidPeriod, type MonthlyReport, type MonthlySource, type SummaryRecurring } from '../summary/monthly-summary.js';
 import type { AnalysisDimension } from '../analysis/period-analytics.js';
 
 export type DrilldownDimension = AnalysisDimension;
+/** A single click/render snapshot. Never persist across vault updates. */
+export interface AnalysisReportContext {source:MonthlySource;reports:ReadonlyMap<string,MonthlyReport>}
 export interface AnalysisDrilldown {
   periods: readonly string[];
   dimension: DrilldownDimension;
@@ -25,12 +27,14 @@ export function validateAnalysisDrilldown(request: AnalysisDrilldown): void {
 
 /** Remote record ID => original row IDs. A record with no matching rows is absent.
  * Invalid/duplicate statements are excluded exactly as in monthlyReport. */
-export function analysisDrilldownMatches(source: MonthlySource, request: AnalysisDrilldown): Map<string, Set<string>> {
+export function analysisDrilldownMatches(source: MonthlySource, request: AnalysisDrilldown,
+  reports?:ReadonlyMap<string,MonthlyReport>): Map<string, Set<string>> {
   validateAnalysisDrilldown(request);
+  const prepared=reports?null:prepareMonthlyReports(source.records);
   const result = new Map<string, Set<string>>();
   const recordsById = new Map(source.records.map(record => [record.id, record]));
   for (const period of request.periods) {
-    const report = monthlyReport(period, source);
+    const report = reports?.get(period)??monthlyReport(period,source,prepared??undefined);
     for (const card of report.cardLines) {
       if (request.dimension === 'card' && card.cardId !== request.value) continue;
       const record = recordsById.get(card.id);
@@ -72,8 +76,15 @@ export interface AnalysisDrilldownBreakdown {
 }
 /** The category aggregate includes scheduled bank recurrences; show them alongside card rows.
  * Merchant and card aggregates contain card rows only. No mutation and no heuristic matching. */
-export function analysisDrilldownBreakdown(source: MonthlySource, request: AnalysisDrilldown): AnalysisDrilldownBreakdown {
-  const matches=analysisDrilldownMatches(source,request);
+export function analysisDrilldownBreakdown(source: MonthlySource, request: AnalysisDrilldown,
+  reports?:ReadonlyMap<string,MonthlyReport>): AnalysisDrilldownBreakdown {
+  validateAnalysisDrilldown(request);
+  // Direct callers also get one shared prepared index and one report per month.
+  const byPeriod=reports??(()=>{
+    const prepared=prepareMonthlyReports(source.records);
+    return new Map(request.periods.map(period=>[period,monthlyReport(period,source,prepared)]));
+  })();
+  const matches=analysisDrilldownMatches(source,request,byPeriod);
   const safeAdd=(a:number,b:number):number=>{
     const n=a+b;
     if(!Number.isSafeInteger(n))throw new Error('分析金額が安全な整数範囲を超えました。');
@@ -88,7 +99,7 @@ export function analysisDrilldownBreakdown(source: MonthlySource, request: Analy
   const recurring:DrilldownRecurringOccurrence[]=[];
   if(request.dimension==='category'){
     for(const period of request.periods){
-      const report=monthlyReport(period,source);
+      const report=byPeriod.get(period)??monthlyReport(period,source);
       for(const line of report.recurringLines){
         if(line.kind!=='expense')continue;
         const category=source.categories.some(item=>item.id===line.categoryId)?line.categoryId:'__unclassified';

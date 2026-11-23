@@ -1,12 +1,12 @@
 /** Read-only bank balance projection including clearly labelled, unconfirmed salary estimates.
  * Neither the monthly estimate nor the input salary is persisted to Finance/OneDrive.
  */
-import { forecastAssets, type AssetForecast } from './asset-projection.js';
+import { forecastAssets, matchingNisaRows, type AssetForecast } from './asset-projection.js';
 import type { AssetsDocument, AssetAccountId, BalanceSnapshot } from './assets.js';
 import type { CloudRecord } from './merge.js';
 import type { PayrollIncomeEntry } from './payroll-income.js';
 import { recurringInMonth } from './recurring-schedule.js';
-import { monthlyReport } from '../summary/monthly-summary.js';
+import { monthlyReport, prepareMonthlyReports, type PreparedMonthlyReports, type MonthlyReport } from '../summary/monthly-summary.js';
 import { mizuhoTransferForBill } from './mizuho-transfer.js';
 
 export interface ExpectedSalary {
@@ -68,18 +68,32 @@ export function expectedMainSalaries(entries:readonly PayrollIncomeEntry[],today
  * If a salary-named recurring bank income exists in the same month, trust the
  * explicit user-managed schedule instead of adding an additional estimate.
  */
+export interface BankForecastWork {
+  records:readonly CloudRecord[];prepared:PreparedMonthlyReports;reports:Map<string,MonthlyReport>;
+  nisaRows:ReturnType<typeof matchingNisaRows>;months:readonly string[];
+}
+/** A per-render context: never share across asset edits or cloud refreshes. */
+export function prepareBankForecast(records:readonly CloudRecord[],doc:AssetsDocument):BankForecastWork {
+  const prepared=prepareMonthlyReports(records);
+  const months=[...new Set(records.map(r=>r.statement.paymentDate?.slice(0,7))
+    .filter((p):p is string=>!!p&&/^\d{4}-(0[1-9]|1[0-2])$/.test(p)))];
+  return {records,prepared,reports:new Map(),nisaRows:matchingNisaRows(doc,records),months};
+}
 export function forecastBankBalances(
-  doc:AssetsDocument,asOf:string,records:CloudRecord[],income:PayrollIncomeEntry[],
-  payrollDepositAccount:AssetAccountId|null,today:string,
+  doc:AssetsDocument,asOf:string,records:readonly CloudRecord[],income:PayrollIncomeEntry[],
+  payrollDepositAccount:AssetAccountId|null,today:string,work?:BankForecastWork,
 ):BankProjection {
-  const accounts=forecastAssets(doc,asOf,records,income,payrollDepositAccount);
+  if(work&&work.records!==records)throw new Error('口座予測の明細索引が一致しません。');
+  const context=work??prepareBankForecast(records,doc);
+  const accounts=forecastAssets(doc,asOf,records,income,payrollDepositAccount,context.nisaRows);
   const estimatedByAccount:Partial<Record<AssetAccountId,number>>={};
   const cardDebitByAccount:Partial<Record<AssetAccountId,number>>={};
   const autoTransferByAccount:Partial<Record<AssetAccountId,number>>={};
-  const months=new Set(records.map(r=>r.statement.paymentDate?.slice(0,7)).filter((p):p is string=>!!p&&/^\d{4}-(0[1-9]|1[0-2])$/.test(p)&&p<=monthFromIndex(monthIndex(asOf)+1)));
-  for(const month of months){
-    const report=monthlyReport(month,{records,rules:[],categories:[],assets:doc,
-      payroll:{ready:false,syncedAt:null,entries:[]}});
+  for(const month of context.months){
+    if(month>monthFromIndex(monthIndex(asOf)+1))continue;
+    let report=context.reports.get(month);
+    if(!report){report=monthlyReport(month,{records,rules:[],categories:[],assets:doc,
+      payroll:{ready:false,syncedAt:null,entries:[]}},context.prepared);context.reports.set(month,report);}
     for(const line of report.cardLines){
       const transfer=mizuhoTransferForBill(line,doc);
       if(transfer){

@@ -1,4 +1,5 @@
 import { futureProjection, suggestedNisaMonthly, targetMonthForAge, projectionAgeBounds } from '../cloud/future-projection.js';
+import { matchingNisaRows } from '../cloud/asset-projection.js';
 const yen = (n) => n === null ? '未登録' : `${Math.round(n).toLocaleString('ja-JP')}円`;
 const short = (n) => n === null ? '--' : Math.abs(n) >= 10000 ? `${(n / 10000).toLocaleString('ja-JP', { maximumFractionDigits: 1 })}万円` : `${Math.round(n).toLocaleString('ja-JP')}円`;
 function el(tag, className = '', text) {
@@ -232,6 +233,11 @@ export function initFutureProjection(getSource) {
     let compare = false;
     let chartFilter = 'all';
     let chosenMonth = null;
+    // Only reuse within the same immutable vault snapshot and NISA-rule version.
+    let cachedNisa = null;
+    let renderTimer = null;
+    const scheduleRender = () => { if (renderTimer !== null)
+        clearTimeout(renderTimer); renderTimer = setTimeout(() => { renderTimer = null; render(); }, 90); };
     const updateScenarioControls = () => {
         const cash = cashChoice.checked, nisa = nisaChoice.checked;
         find('future-cash-amount-wrap').hidden = !cash;
@@ -282,10 +288,10 @@ export function initFutureProjection(getSource) {
         render();
     };
     age.addEventListener('input', updateAgeTarget);
-    nisaRate.addEventListener('input', render);
+    nisaRate.addEventListener('input', scheduleRender);
     from.addEventListener('input', render);
-    saving.addEventListener('input', () => { scenarioCashEdited = true; render(); });
-    nisaScenarioInput.addEventListener('input', () => { scenarioNisaEdited = true; render(); });
+    saving.addEventListener('input', () => { scenarioCashEdited = true; scheduleRender(); });
+    nisaScenarioInput.addEventListener('input', () => { scenarioNisaEdited = true; scheduleRender(); });
     function makeMetric(title, value, style, sub) {
         const card = el('div', `future-metric future-metric-${style}`);
         const label = el('div', 'future-metric-label');
@@ -296,6 +302,10 @@ export function initFutureProjection(getSource) {
         return card;
     }
     function render() {
+        if (renderTimer !== null) {
+            clearTimeout(renderTimer);
+            renderTimer = null;
+        }
         const source = getSource();
         results.replaceChildren();
         if (!source) {
@@ -333,7 +343,11 @@ export function initFutureProjection(getSource) {
         const cashRules = source.assets.recurring.filter(e => e.enabled && e.toAccountId === 'cash-savings' && e.fromAccountId !== 'cash-savings' && (e.kind === 'transfer' || e.kind === 'income'));
         const nisaRules = source.assets.recurring.filter(e => e.enabled && e.toAccountId === 'nisa' && (e.kind === 'income' || e.kind === 'transfer'));
         const hasNisaSchedule = nisaRules.length > 0;
-        const suggested = suggestedNisaMonthly(source.assets, source.records, localToday());
+        const ruleFingerprint = JSON.stringify([source.assets.nisaCardRule, source.assets.nisaCardRuleHistory ?? []]);
+        if (!cachedNisa || cachedNisa.records !== source.records || cachedNisa.rules !== ruleFingerprint)
+            cachedNisa = { records: source.records, rules: ruleFingerprint, rows: matchingNisaRows(source.assets, source.records) };
+        const nisaRows = cachedNisa.rows;
+        const suggested = suggestedNisaMonthly(source.assets, source.records, localToday(), nisaRows);
         const cashMonthly = monthlyEquivalent(cashRules);
         const nisaBase = hasNisaSchedule ? monthlyEquivalent(nisaRules) : suggested.amount;
         if (!scenarioCashEdited)
@@ -358,7 +372,7 @@ export function initFutureProjection(getSource) {
                 savingsAmount: amount ?? 0, nisaMonthly: hasNisaSchedule ? 0 : suggested.amount, nisaAnnualReturn: Number(nisaRate.value) / 100,
                 cashScenarioMonthly: changesCash ? amount : null,
                 nisaScenarioMonthly: changesNisa ? scenarioNisaAmount : null,
-            });
+            }, nisaRows);
             hint.textContent = '';
             const totals = el('div', `future-totals${compare ? ' is-comparing' : ''}`);
             totals.append(makeMetric('合計', report.target.combined, 'base', compare ? '現在の積立ペース' : ''));
@@ -408,6 +422,11 @@ export function initFutureProjection(getSource) {
         }
     }
     const reset = () => {
+        if (renderTimer !== null) {
+            clearTimeout(renderTimer);
+            renderTimer = null;
+        }
+        cachedNisa = null;
         lastBirthMonth = null;
         age.disabled = true;
         birthSettings.hidden = false;

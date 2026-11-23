@@ -28,7 +28,7 @@ const day=(iso:string):string=>{
 };
 const nextDay=(date:string):string=>new Date(Date.parse(`${date}T00:00:00Z`)+86400000).toISOString().slice(0,10);
 export function reconcileBalance(
-  doc:AssetsDocument, accountId:AssetAccountId, records:CloudRecord[],
+  doc:AssetsDocument, accountId:AssetAccountId, records:readonly CloudRecord[],
   payrollIncome:PayrollIncomeEntry[], payrollDepositAccount:AssetAccountId|null,
   payrollReady:boolean, today:string,
 ):BalanceReconciliation|null {
