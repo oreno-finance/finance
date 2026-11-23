@@ -1,7 +1,7 @@
 /** Manual monthly confirmation for Rakuten -> Mizuho card funding.
  * This is an encrypted CHECKLIST acknowledgement, never a bank transaction.
  * Never modifies cash forecasts, bank balances or the card statement itself. */
-import {DEFAULT_MIZUHO_PLAN, type AssetsDocument} from '../cloud/assets.js';
+import {DEFAULT_MIZUHO_PLAN, type MizuhoBillSnapshot} from '../cloud/assets.js';
 import {estimateMizuhoTransferAmount} from '../cloud/mizuho-transfer.js';
 import {shiftedDay} from './account-events.js';
 import type {MonthlyReport,MonthlySource} from '../summary/monthly-summary.js';
@@ -11,6 +11,8 @@ export interface MizuhoFundingStatus {
   dueDate:string|null;
   amount:number|null;
   billConfirmed:boolean;
+  billSnapshot:MizuhoBillSnapshot|null;
+  changedSinceCheck:boolean;
   completed:boolean;
   updatedAt:string|null;
   periodOpen:boolean;
@@ -38,10 +40,17 @@ export function mizuhoFundingStatusForMonth(
   const dueDate=card?shiftedDay(card.paymentDate,-plan.leadDays):null;
   const amount=card&&card.amount>0?estimateMizuhoTransferAmount(card.amount,plan.extraForSmallBills):null;
   const receipt=source.assets.mizuhoFundingChecks?.[month];
-  const completed=receipt?.done===true;
+  const billConfirmed=card?.confirmation==='confirmed'&&amount!==null;
+  const billSnapshot:MizuhoBillSnapshot|null=billConfirmed&&card?{
+    billAmount:card.amount,paymentDate:card.paymentDate,transferAmount:amount!,billId:card.id}:null;
+  // Legacy acknowledgements without a snapshot are intentionally unverified.
+  const changedSinceCheck=receipt?.done===true&&(!billSnapshot||
+    receipt.billAmount!==billSnapshot.billAmount||receipt.paymentDate!==billSnapshot.paymentDate||
+    receipt.transferAmount!==billSnapshot.transferAmount||receipt.billId!==billSnapshot.billId);
+  const completed=receipt?.done===true&&!changedSinceCheck;
   const periodOpen=today>=`${month}-12`;
-  return {month,dueDate,amount,billConfirmed:card?.confirmation==='confirmed',
-    completed,updatedAt:completed?receipt?.updatedAt??null:null,periodOpen,
+  return {month,dueDate,amount,billConfirmed,billSnapshot,changedSinceCheck,
+    completed,updatedAt:receipt?.done?receipt.updatedAt:null,periodOpen,
     overdue:periodOpen&&!completed&&dueDate!==null&&today>dueDate};
 }
 /** Current-month UI keeps its original strict month contract. */
@@ -56,6 +65,7 @@ export function mizuhoFundingStatus(
 
 /** Read-only. Confirmation does NOT count as proof of a completed bank transfer. */
 export function mizuhoFundingDescription(status:MizuhoFundingStatus):string {
+  if(status.changedSinceCheck)return '請求内容が変更されました。実際の送金額を再確認してください';
   if(status.completed)return '送金済みとして記録済み（手動確認）';
   if(!status.periodOpen)return '毎月12日から送金確認できます';
   if(status.overdue)return '送金期限を過ぎています。実際の振替を確認してください';

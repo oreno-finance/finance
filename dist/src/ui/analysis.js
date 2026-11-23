@@ -31,7 +31,7 @@ function panel(heading) {
     root.append(body);
     return { root, body };
 }
-const quality = (month) => month.coverage === 'missing' ? '未取得' : month.coverage === 'provisional' ? '暫定' : month.coverage === 'review' ? '要確認' : '登録済み';
+const quality = (month) => month.coverage === 'missing' ? '未取得' : month.coverage === 'partial' ? '一部未取得' : month.coverage === 'provisional' ? '暫定' : month.coverage === 'review' ? '要確認' : '登録済み';
 const amountText = (value, month) => value === null ? '未取得' : formatYen(value);
 function metric(label, value, sub) {
     const root = el('div', 'analysis-metric');
@@ -231,7 +231,7 @@ export function initAnalysis(deps) {
         table.append(body);
         scroll.append(table);
         block.body.append(scroll);
-        const caveat = dimension === 'card' ? 'カードごとの引落月で集計しています。' : dimension === 'category' ? 'カード利用と定期支出の分類。NISA・単発支出はこの内訳に含みません。' : 'カード利用先だけを集計しています。';
+        const caveat = dimension === 'card' ? 'カードごとの引落月で集計しています。' : dimension === 'category' ? 'カード利用・定期支出・実行済み単発支出・NISA積立の分類です。' : 'カード利用先だけを集計しています。';
         block.body.append(note(`${caveat} 利用先・金額を選ぶと該当明細へ移動します。未取得月は空白扱いです。`));
         return block.root;
     }
@@ -270,12 +270,12 @@ export function initAnalysis(deps) {
                     section.append(note('大きな変化はありません。'));
                 for (const change of changes) {
                     const line = el('div', 'analysis-change-item');
-                    line.append(action(change.name, () => drill(dimension, change.id, change.name, data.months.map(m => m.period)), 'analysis-link'), el('strong', change.delta > 0 ? 'analysis-increase' : '', signedYen(change.delta)));
+                    line.append(action(change.name, () => drill(dimension, change.id, change.name, [...prior.months.map(m => m.period), ...data.months.map(m => m.period)]), 'analysis-link'), el('strong', change.delta > 0 ? 'analysis-increase' : '', signedYen(change.delta)));
                     section.append(line);
                 }
                 comparisons.append(section);
             }
-            block.body.append(comparisons);
+            block.body.append(comparisons, note('前年比の項目から、前年・今年の両方の明細と月別内訳を確認できます。'));
         }
         return block.root;
     }

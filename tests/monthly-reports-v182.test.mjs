@@ -52,7 +52,7 @@ test('report uses payment month and separates NISA, missing amounts and as-of ba
   const s=base();s.assets.nisaCardRule={cardId:'smbc-nl',merchantContains:'MARKET',enabled:true};
   const invested=reportSnapshot('2026-11',s);
   assert.equal(invested.nisaOutflow,15000);assert.equal(invested.livingOutflow,0);
-  assert.equal(invested.categories.length,0);
+  assert.deepEqual(invested.categories,[{name:'NISA積立（資産移動）',amount:15000}]);
 });
 
 test('report encryption has a dedicated authenticated domain and rejects ciphertext swapping',async()=>{

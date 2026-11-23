@@ -2,26 +2,27 @@
  * observed snapshot, never a bank API balance. No assets or statements are mutated. */
 import { ASSET_ACCOUNTS, recurringCoveredByOneTime, type AssetAccountId, type BalanceSnapshot } from '../cloud/assets.js';
 import { recurringInMonth } from '../cloud/recurring-schedule.js';
+import { estimatedCardFixedBills } from '../cloud/card-fixed-estimates.js';
 import { mizuhoTransferForBill } from '../cloud/mizuho-transfer.js';
 import { expectedMainSalaries } from '../cloud/salary-projection.js';
 import { changePeriod, monthlyReport, type MonthlyReport, type MonthlySource, type SummaryCard } from '../summary/monthly-summary.js';
 
 export type BankAccountId = Exclude<AssetAccountId, 'nisa'>;
-export type CashEventKind = 'card' | 'transfer' | 'recurring' | 'one-time' | 'salary' | 'salary-estimate';
+export type CashEventKind = 'card' | 'card-estimate' | 'transfer' | 'recurring' | 'one-time' | 'salary' | 'salary-estimate';
 export interface AccountCashEvent {
   id: string; date: string; accountId: BankAccountId; amount: number; title: string;
-  kind: CashEventKind; recordId?: string; cardId?: string; confirmation?: SummaryCard['confirmation'];
+  kind: CashEventKind; recordId?: string; cardId?: string; confirmation?: SummaryCard['confirmation']; estimated?:boolean;
 }
 export interface AccountBalanceForecast {
   accountId: BankAccountId; name: string; observed: BalanceSnapshot | null;
   projected: number | null; projectedAt: string; reliable: boolean;
   days: ReadonlyArray<{date: string; balance: number; events: AccountCashEvent[]}>;
-  reason: 'no-snapshot' | 'stale-snapshot' | 'missing-card-account' | 'possible-duplicate' | 'unverified-debit' | 'payroll-unavailable' | 'invalid-statement' | null;
+  reason: 'estimated-card-debit' | 'no-snapshot' | 'stale-snapshot' | 'missing-card-account' | 'possible-duplicate' | 'unverified-debit' | 'payroll-unavailable' | 'invalid-statement' | null;
 }
 export interface DueCard {
   id: string; cardId: string; name: string; date: string; amount: number;
   confirmation: SummaryCard['confirmation']; accountId: BankAccountId | null;
-  afterBalance: number | null; balanceReliable: boolean;
+  afterBalance: number | null; balanceReliable: boolean; estimated?:boolean;
 }
 export interface AccountForecasts {
   accounts: AccountBalanceForecast[]; debits: DueCard[];
@@ -103,6 +104,14 @@ export function forecastAccounts(source:MonthlySource,today:string,horizonDays=4
       addMovement(`recurring:${occurrence.id}`,occurrence.date,entry.name,entry.amount,'recurring',entry.fromAccountId,entry.toAccountId);
     }
   }
+  const estimates=estimatedCardFixedBills(source.assets as import('../cloud/assets.js').AssetsDocument,
+    source.records,today,until);
+  for(const item of estimates){
+    const assigned=source.assets.cardDebitAccounts?.[item.cardId];
+    if(!assigned||assigned==='nisa'){missingCardIds.add(item.cardId);continue;}
+    push({id:item.id,date:item.paymentDate,accountId:assigned,amount:-item.amount,
+      title:item.name,kind:'card-estimate',cardId:item.cardId,confirmation:'unknown',estimated:true});
+  }
   for(const entry of source.assets.oneTime??[])addMovement(`once:${entry.id}`,entry.date,entry.name,entry.amount,'one-time',entry.fromAccountId,entry.toAccountId);
   const payrollAccount=source.assets.payrollDepositAccount;
   if(source.payroll.ready&&payrollAccount&&payrollAccount!=='nisa'){
@@ -128,6 +137,7 @@ export function forecastAccounts(source:MonthlySource,today:string,horizonDays=4
     const affectedInvalid=start&&invalidMonths.some(month=>month>=period(start));
     const reason:AccountBalanceForecast['reason']=!start?'no-snapshot':start<cutoff?'stale-snapshot':unknownAfterBaseline?'missing-card-account':
       affectedOverlap?'possible-duplicate':affectedInvalid?'invalid-statement':unverified?'unverified-debit':
+      events.some(e=>e.accountId===accountId&&e.kind==='card-estimate')?'estimated-card-debit':
       ((!source.payroll.ready||payrollStale)&&(!source.assets.payrollDepositAccount||source.assets.payrollDepositAccount===accountId))||
       (source.payroll.entries.length>0&&!source.assets.payrollDepositAccount)?'payroll-unavailable':null;
     if(!snapshot||!start||start<cutoff)return {accountId,name,observed:snapshot,projected:null,projectedAt:until,
@@ -144,14 +154,16 @@ export function forecastAccounts(source:MonthlySource,today:string,horizonDays=4
     return {accountId,name,observed:snapshot,projected:balance,projectedAt:until,
       reliable:reason===null,days,reason};
   });
-  const debits=cardLines.filter(card=>card.paymentDate>=today&&card.paymentDate<=until)
+  const predictedCards:SummaryCard[]=estimates.map(e=>({id:e.id,cardId:e.cardId,name:e.name,
+    billingMonth:null,paymentDate:e.paymentDate,amount:e.amount,confirmation:'unknown'}));
+  const debits=[...cardLines,...predictedCards].filter(card=>card.paymentDate>=today&&card.paymentDate<=until)
     .map(card=>{
       const assigned=source.assets.cardDebitAccounts?.[card.cardId];
       const accountId=assigned&&assigned!=='nisa'?assigned:null;
       const forecast=forecasts.find(a=>a.accountId===accountId);
       const day=forecast?.days.find(d=>d.date===card.paymentDate);
       return {id:card.id,cardId:card.cardId,name:card.name,date:card.paymentDate,amount:card.amount,
-        confirmation:card.confirmation,accountId,afterBalance:forecast?.reliable&&day?day.balance:null,
+        confirmation:card.confirmation,accountId,estimated:card.id.startsWith('estimate:'),afterBalance:forecast?.reliable&&day?day.balance:null,
         balanceReliable:!!forecast?.reliable&&!!day};
     })
     .sort((a,b)=>a.date.localeCompare(b.date)||a.cardId.localeCompare(b.cardId)||a.id.localeCompare(b.id));

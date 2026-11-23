@@ -149,7 +149,19 @@ test('unconfirmed previous month remains actionable after rollover and its statu
   assert.equal(prior?.month,'2026-11');assert.equal(prior?.completed,false);assert.equal(prior?.overdue,true);
   assert.equal(prior?.periodOpen,true);
   const done={...s,assets:{...s.assets,mizuhoFundingChecks:{'2026-11':{done:true,updatedAt:'2026-11-23T00:00:00.000Z'}}}};
-  assert.equal(homeOverview(done,'2026-12-03').priorFundingReport,null);
+  // Phase 7: a legacy done-only receipt does not prove that the current bill was funded.
+  const legacyReport=homeOverview(done,'2026-12-03').priorFundingReport;
+  assert.equal(legacyReport?.period,'2026-11');
+  const legacyStatus=mizuhoFundingStatusForMonth(done,legacyReport,'2026-12-03');
+  assert.equal(legacyStatus?.completed,false);
+  assert.equal(legacyStatus?.changedSinceCheck,true);
+  const verified={...s,assets:{...s.assets,mizuhoFundingChecks:{'2026-11':{
+    done:true,updatedAt:'2026-11-23T00:00:00.000Z',
+    billAmount:24245,paymentDate:'2026-11-27',transferAmount:30000,billId:'a'
+  }}}};
+  const verifiedReport=homeOverview(verified,'2026-12-03').priorFundingReport;
+  assert.equal(verifiedReport?.period,'2026-11');
+  assert.equal(mizuhoFundingStatusForMonth(verified,verifiedReport,'2026-12-03')?.completed,true);
   assert.deepEqual(homeOverview(s,'2026-12-03').forecast,homeOverview(done,'2026-12-03').forecast);
 });
 

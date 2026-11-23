@@ -176,6 +176,37 @@ export function initSubscriptions(deps) {
         body.append(el('p', 'subscriptions-muted', '銀行・現金の予定は支払実績ではありません。契約額の変更は履歴として保存されます。'));
         const buttons = el('div', 'fixed-cost-form-actions');
         buttons.append(btn('閉じる', () => detailDialog.close()), btn('編集', () => { detailDialog.close(); startEdit(item); }, 'save-action'));
+        if (item.contract || item.bank) {
+            buttons.append(btn('誤登録を削除', () => {
+                const vault = deps.vault();
+                if (!vault?.unlocked || busy)
+                    return;
+                if (!window.confirm(`「${item.name}」の固定費登録を完全に削除しますか？過去の登録履歴も取り消されます。`))
+                    return;
+                busy = true;
+                showActivity('固定費の削除をOneDriveに保存中…', 'working');
+                void (async () => {
+                    try {
+                        if (item.contract)
+                            await vault.deleteFixedCost(item.contract.id);
+                        else if (item.bank)
+                            await vault.deleteRecurring(item.bank.id);
+                        detailDialog.close();
+                        deps.onSaved();
+                        render();
+                        showActivity('誤登録した固定費を削除しました。', 'good');
+                    }
+                    catch (e) {
+                        notice = e instanceof Error ? e.message : '削除できませんでした。';
+                        showActivity(notice, 'bad');
+                    }
+                    finally {
+                        busy = false;
+                        render();
+                    }
+                })();
+            }));
+        }
         body.append(buttons);
         detailDialog.append(body);
         detailDialog.showModal();
@@ -219,7 +250,7 @@ export function initSubscriptions(deps) {
             return;
         editing = item;
         error.textContent = '';
-        title.textContent = item ? '固定支出を編集' : '固定支出を追加';
+        title.textContent = item?.candidate && !item.contract && !item.decision ? '検出候補の内容を確認して登録' : item ? '固定支出を編集' : '固定支出を追加';
         const today = localDate();
         const data = item?.contract, bank = item?.bank;
         const legacy = item?.decision;
@@ -252,7 +283,7 @@ export function initSubscriptions(deps) {
         set('status', item?.status === 'scheduled' ? 'active' : item?.status ?? 'active');
         set('statusDate', today);
         set('note', data?.note ?? bank?.note ?? '');
-        input('startOn').readOnly = !!item;
+        input('startOn').readOnly = !!item && !item.candidate;
         input('merchant').readOnly = !!knownKey;
         updateConditional();
         resetDirty();
@@ -387,12 +418,19 @@ export function initSubscriptions(deps) {
         const vault = deps.vault();
         if (!vault?.unlocked || busy)
             return;
+        if (!ignore) {
+            // A detection hint is not a registered contract. Review the estimated
+            // amount, recurrence and start date before an encrypted cloud write.
+            startEdit({ kind: 'card', id: `candidate:${candidate.key}`, name: candidate.merchant, amount: candidate.amount,
+                frequency: candidate.frequency, payment: candidate.cardName, status: 'active', priceKind: 'fixed', candidate });
+            return;
+        }
         busy = true;
         try {
-            await vault.setCardRecurringDecision(candidate.key, subscriptionDecision(candidate, ignore ? 'ignored' : 'registered'));
+            await vault.setCardRecurringDecision(candidate.key, subscriptionDecision(candidate, 'ignored'));
             deps.onSaved();
             render();
-            showActivity(ignore ? '候補から除外しました。' : 'カード定期支出を登録しました。', 'good');
+            showActivity('候補から除外しました。', 'good');
         }
         catch (e) {
             notice = e instanceof Error ? e.message : '保存に失敗しました。';
@@ -444,7 +482,7 @@ export function initSubscriptions(deps) {
                 const right = el('div', 'fixed-cost-item-price');
                 right.append(el('strong', '', yen(candidate.amount)));
                 const actions = el('div', 'fixed-cost-item-actions');
-                actions.append(btn('登録', () => { void markCandidate(candidate, false); }, 'save-action'), btn('候補から除外', () => { void markCandidate(candidate, true); }));
+                actions.append(btn('内容を確認して登録', () => { void markCandidate(candidate, false); }, 'save-action'), btn('候補から除外', () => { void markCandidate(candidate, true); }));
                 card.append(left, right, actions);
                 list.append(card);
             }
@@ -485,6 +523,8 @@ export function initSubscriptions(deps) {
                     const delta = item.lastAmount - (item.currentAmount ?? item.amount);
                     info.append(el('small', '', `登録時の推定額：${yen(item.currentAmount ?? item.amount)} · 最新の確認済み明細：${yen(item.lastAmount)}（${item.lastMonth ?? '年月不明'}） · 登録時との差額 ${delta > 0 ? '+' : ''}${yen(delta)}`));
                 }
+                if (item.decision && !item.contract)
+                    info.append(el('small', '', '旧形式の簡易登録です。詳細・編集から正式な契約情報を保存してください。'));
                 if (item.kind === 'bank' && !item.bank?.enabled)
                     info.append(el('small', '', `口座管理で停止された予定です。編集時に過去分も含めて有効状態へ移行します。`));
                 card.append(info, price, actions);

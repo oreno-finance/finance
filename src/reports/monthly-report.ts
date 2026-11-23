@@ -47,8 +47,8 @@ export function validateReportDocument(raw:unknown,expectedPeriod?:string):Month
 export function reportSnapshot(period:string,source:MonthlySource):ReportSnapshot {
   const now=monthlyReport(period,source);
   const prev=monthlyReport(changePeriod(period,-1),source);
-  const expense=now.cardOutflow===null?null:now.cardOutflow+now.recurringExpense+now.oneTimeExpense;
-  const previousExpense=prev.cardOutflow===null?null:prev.cardOutflow+prev.recurringExpense+prev.oneTimeExpense;
+  const expense=now.cardOutflow===null?((now.recurringExpense+now.oneTimeExpense)||null):now.cardOutflow+now.recurringExpense+now.oneTimeExpense;
+  const previousExpense=prev.cardOutflow===null?((prev.recurringExpense+prev.oneTimeExpense)||null):prev.cardOutflow+prev.recurringExpense+prev.oneTimeExpense;
   const cardMap=new Map<string,number>();
   for(const card of now.cardLines)cardMap.set(card.name,(cardMap.get(card.name)??0)+card.amount);
   const cards=[...cardMap].map(([name,amount])=>({name,amount})).sort((a,b)=>b.amount-a.amount||a.name.localeCompare(b.name,'ja'));
@@ -62,7 +62,8 @@ export function reportSnapshot(period:string,source:MonthlySource):ReportSnapsho
     if(current)balances.push({name:account.name,balance:current.balance,observedAt:current.observedAt});
   }
   const quality:string[]=[];
-  if(now.cardOutflow===null)quality.push('カード明細未取得');
+  if(now.cardOutflow===null)quality.push('カード明細未取得','支出は一部判明分のみ');
+  if(now.pastUnconfirmedOneTime)quality.push(`未実行の過去予定 ${now.pastUnconfirmedOneTime}件`);
   if(now.provisional.length)quality.push(`暫定明細 ${now.provisional.length}件`);
   if(now.unknownConfirmationCount)quality.push(`確定状態不明 ${now.unknownConfirmationCount}件`);
   if(now.issues.length)quality.push(`要修正 ${now.issues.length}件`);

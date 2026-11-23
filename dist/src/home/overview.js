@@ -18,13 +18,13 @@ export function homeOverview(source, today) {
     const report = reportForMonth(currentPeriod);
     const forecast = forecastAccounts(source, today, 45, reportForMonth);
     const previousPeriod = changePeriod(currentPeriod, -1);
+    // Even a prior 'done' needs revalidation after a bill has changed.
     const priorFundingReport = source.assets.mizuhoTransferPlan?.enabled &&
-        source.assets.cardDebitAccounts?.['rakuten-mizuho'] === 'mizuho-bank' &&
-        !source.assets.mizuhoFundingChecks?.[previousPeriod]?.done
+        source.assets.cardDebitAccounts?.['rakuten-mizuho'] === 'mizuho-bank'
         ? reportForMonth(previousPeriod) : null;
-    const coverage = report.cardLines.length === 0 ? 'missing' : report.issues.length || report.unknownConfirmationCount ? 'needs-review' :
+    const coverage = report.cardOutflow === null ? (report.recurringExpense + report.oneTimeExpense > 0 ? 'partial' : 'missing') : report.issues.length || report.unknownConfirmationCount ? 'needs-review' :
         report.provisional.length ? 'provisional' : 'registered';
-    const outflow = report.cardOutflow === null ? null : report.cardOutflow + report.recurringExpense + report.oneTimeExpense;
+    const outflow = report.cardOutflow === null ? (report.recurringExpense + report.oneTimeExpense || null) : report.cardOutflow + report.recurringExpense + report.oneTimeExpense;
     if (outflow !== null && !Number.isSafeInteger(outflow))
         throw new Error('ホームの支出額が大きすぎます。');
     const bankAccountIds = ['rakuten-bank', 'mizuho-bank', 'cash-savings', 'nisa'];

@@ -4,6 +4,7 @@
 import { forecastAssets, matchingNisaRows } from './asset-projection.js';
 import { recurringInMonth } from './recurring-schedule.js';
 import { monthlyReport, prepareMonthlyReports } from '../summary/monthly-summary.js';
+import { estimatedCardFixedBills } from './card-fixed-estimates.js';
 import { mizuhoTransferForBill } from './mizuho-transfer.js';
 const period = (date) => date.slice(0, 7);
 const monthIndex = (date) => Number(date.slice(0, 4)) * 12 + Number(date.slice(5, 7));
@@ -69,6 +70,7 @@ export function forecastBankBalances(doc, asOf, records, income, payrollDepositA
     const accounts = forecastAssets(doc, asOf, records, income, payrollDepositAccount, context.nisaRows);
     const estimatedByAccount = {};
     const cardDebitByAccount = {};
+    const fixedCostCardEstimatesByAccount = {};
     const autoTransferByAccount = {};
     for (const month of context.months) {
         if (month > monthFromIndex(monthIndex(asOf) + 1))
@@ -107,11 +109,26 @@ export function forecastBankBalances(doc, asOf, records, income, payrollDepositA
             }
         }
     }
+    // Imported payment-month statements override all estimated contracts for that card.
+    for (const estimate of estimatedCardFixedBills(doc, records, today, asOf)) {
+        const account = doc.cardDebitAccounts?.[estimate.cardId];
+        if (!account)
+            continue;
+        const bank = accounts[account];
+        if (bank.balance === null || !bank.baseline || estimate.paymentDate <= snapshotDay(bank.baseline))
+            continue;
+        const result = bank.balance - estimate.amount;
+        if (!Number.isSafeInteger(result))
+            throw new Error('カード固定費の残高予測が大きすぎます。');
+        bank.balance = result;
+        fixedCostCardEstimatesByAccount[account] = (fixedCostCardEstimatesByAccount[account] ?? 0) + estimate.amount;
+        bank.warning = [bank.warning, '固定費から推定したカード引落額を含みます（請求額未確定）。'].filter(Boolean).join(' ');
+    }
     if (!payrollDepositAccount || !['rakuten-bank', 'cash-savings'].includes(payrollDepositAccount) || asOf < today)
-        return { accounts, estimatedByAccount, estimates: [], cardDebitByAccount, autoTransferByAccount };
+        return { accounts, estimatedByAccount, estimates: [], cardDebitByAccount, fixedCostCardEstimatesByAccount, autoTransferByAccount };
     const balance = accounts[payrollDepositAccount];
     if (balance.balance === null || !balance.baseline)
-        return { accounts, estimatedByAccount, estimates: [], cardDebitByAccount, autoTransferByAccount };
+        return { accounts, estimatedByAccount, estimates: [], cardDebitByAccount, fixedCostCardEstimatesByAccount, autoTransferByAccount };
     const baselineDay = snapshotDay(balance.baseline);
     const estimates = expectedMainSalaries(income, today, asOf).filter(estimate => {
         if (estimate.date <= baselineDay)
@@ -132,5 +149,5 @@ export function forecastBankBalances(doc, asOf, records, income, payrollDepositA
         balance.balance = next;
         estimatedByAccount[payrollDepositAccount] = sum;
     }
-    return { accounts, estimatedByAccount, estimates, cardDebitByAccount, autoTransferByAccount };
+    return { accounts, estimatedByAccount, estimates, cardDebitByAccount, fixedCostCardEstimatesByAccount, autoTransferByAccount };
 }
