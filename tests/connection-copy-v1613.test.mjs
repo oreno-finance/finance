@@ -14,7 +14,8 @@ test('OneDrive connecting status is concise and does not explain that navigation
 });
 
 test('Settings shows only the state under the OneDrive heading',()=>{
-  assert.match(main, /label\.textContent=connectionIssue\?\?state;/);
+  assert.match(main, /const cloudIssue=cloudConnectionNotice\(\)/);
+  assert.match(main, /\?cloudIssue\.message:connectionIssue\?\?state;/);
   assert.doesNotMatch(main, /label\.textContent=`OneDrive：\$\{state\}`/);
   assert.match(html, /id="cloud-live-status"/);
 });

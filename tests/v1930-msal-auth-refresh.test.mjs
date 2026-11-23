@@ -157,7 +157,7 @@ test('GitHub Pages ships an isolated MSAL v5 bridge, no login redirects on passi
   const main=readFileSync('src/main.ts','utf8');
   assert.match(cloud,/cacheLocation:'localStorage'/);
   assert.match(cloud,/redirectUri:redirectUri\(\)/);
-  assert.match(cloud,/selectMicrosoftAccount\(instance\.getAllAccounts\(\)/);
+  assert.match(cloud,/selectMicrosoftAccount\(all,redirect\?\.account/);
   assert.doesNotMatch(cloud,/getAllAccounts\(\)\[0\]/);
   assert.match(cloud,/await graphClientWithoutRedirect\(\)/);
   const switchHandler=cloud.split("$('cloud-switch-account').addEventListener('click'")[1]?.split("$('cloud-logout').addEventListener('click'")[0]??'';

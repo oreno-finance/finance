@@ -27,8 +27,8 @@ test('startup sign-in invitation is a dismissible native dialog with two clear a
 test('connect invitation follows account status, not a generic network error',()=>{
   assert.match(cloud,/if\(!validId\(id\)\)return 'setup'/);
   assert.match(cloud,/if\(!msal\|\|activeId!==id\)return null/);
+  assert.match(cloud,/if\(reauthenticationRequired\|\|authState==='mismatch'\|\|authState==='restore'\)return 'reconnect'/);
   assert.match(cloud,/if\(!account\(\)\)return 'connect'/);
-  assert.match(cloud,/return reauthenticationRequired\?'reconnect':null/);
   assert.match(main,/showCloudConnectDialog\(cloudConnectPrompt\(\)\)/);
   assert.ok(main.indexOf('showCloudConnectDialog(cloudConnectPrompt())')>main.indexOf('async function startCloud()'));
   assert.ok(main.indexOf('showCloudConnectDialog(cloudConnectPrompt())')<main.indexOf('async function refreshCloud()'));
