@@ -7,6 +7,8 @@ import { monthlyReport, prepareMonthlyReports } from '../summary/monthly-summary
 import { estimatedCardFixedBills } from './card-fixed-estimates.js';
 import { mizuhoTransferForBill } from './mizuho-transfer.js';
 const period = (date) => date.slice(0, 7);
+/** New producer includes job separately; old income files used employerId=main/side. */
+const roleOf = (item) => item.job ?? (item.employerId === 'main' ? 'main' : item.employerId === 'side' ? 'side' : null);
 const monthIndex = (date) => Number(date.slice(0, 4)) * 12 + Number(date.slice(5, 7));
 const monthFromIndex = (value) => `${Math.floor((value - 1) / 12)}-${String(((value - 1) % 12) + 1).padStart(2, '0')}`;
 const validDay = (day) => /^\d{4}-\d{2}-\d{2}$/.test(day) && !Number.isNaN(Date.parse(day + 'T00:00:00Z')) && new Date(day + 'T00:00:00Z').toISOString().slice(0, 10) === day;
@@ -27,7 +29,7 @@ export function expectedMainSalaries(entries, today, until) {
     if (!validDay(today) || !validDay(until) || until < today)
         return [];
     const current = monthIndex(today), last = monthIndex(until);
-    const past = entries.filter(item => item.employerId === 'main' && item.kind === 'salary' &&
+    const past = entries.filter(item => roleOf(item) === 'main' && item.kind === 'salary' &&
         validDay(item.paidOn) && item.paidOn <= today && sane(item.netPay))
         .sort((a, b) => b.paidOn.localeCompare(a.paidOn) || b.revision - a.revision);
     const latest = past[0];
@@ -48,7 +50,7 @@ export function expectedMainSalaries(entries, today, until) {
     const result = [];
     for (let i = current; i <= Math.min(last, current + 1); i++) {
         const month = monthFromIndex(i);
-        if (entries.some(item => item.employerId === 'main' && item.kind === 'salary' && period(item.paidOn) === month))
+        if (entries.some(item => roleOf(item) === 'main' && item.kind === 'salary' && period(item.paidOn) === month))
             continue;
         const date = payday(month, Number(latest.paidOn.slice(8, 10)));
         if (date <= until)

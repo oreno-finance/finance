@@ -8,6 +8,8 @@ export type IncomeKind = 'salary' | 'bonus' | 'adjustment';
 export interface PayrollIncomeEntry {
   id: string;
   employerId: string;
+  /** Optional stable work role: employerId is no longer synonymous with main/side. */
+  job?: 'main' | 'side';
   payPeriod: string; // YYYY-MM of work, may differ from paidOn month
   paidOn: string; // YYYY-MM-DD of actual bank deposit
   grossPay: number | null; // null when Payroll only published its net amount
@@ -50,6 +52,7 @@ export function validatePayrollIncome(raw:unknown):PayrollIncomeDocument {
   for(const item of raw.entries){
     if(!isObject(item)||typeof item.id!=='string'||!idPattern.test(item.id)||
       typeof item.employerId!=='string'||!idPattern.test(item.employerId)||
+      (item.job!==undefined&&item.job!=='main'&&item.job!=='side')||
       typeof item.payPeriod!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(item.payPeriod)||
       !validDate(item.paidOn)||(item.grossPay!==null&&!money(item.grossPay))||!money(item.netPay)||item.currency!=='JPY'||
       (item.taxablePay!==null&&item.taxablePay!==undefined&&!money(item.taxablePay))||
@@ -59,7 +62,7 @@ export function validatePayrollIncome(raw:unknown):PayrollIncomeDocument {
       throw new Error('Payrollの収入明細に不正または重複した値があります。');
     seen.add(item.id);
     if(tombstones.has(item.id))continue;
-    entries.push({id:item.id,employerId:item.employerId,payPeriod:item.payPeriod,paidOn:item.paidOn,
+    entries.push({id:item.id,employerId:item.employerId,...(item.job?{job:item.job as 'main'|'side'}:{}),payPeriod:item.payPeriod,paidOn:item.paidOn,
       grossPay:item.grossPay,netPay:item.netPay,taxablePay:item.taxablePay??null,currency:'JPY',
       kind:(item.kind??'salary') as IncomeKind,revision:item.revision as number});
   }

@@ -64,6 +64,7 @@ export function adaptPayrollSource(doc) {
         if (!obj(item) || !Number.isSafeInteger(item.id) || item.id <= 0 || seen.has(item.id) ||
             typeof item.paymentDate !== 'string' || typeof item.targetMonth !== 'string' ||
             !(['main', 'side'].includes(String(item.job))) || !(['salary', 'bonus'].includes(String(item.kind))) ||
+            (item.employerId !== undefined && (typeof item.employerId !== 'string' || !/^emp_[0-9a-f]{32}$/.test(item.employerId))) ||
             !Number.isSafeInteger(item.netPaymentYen) || item.netPaymentYen < 0 ||
             (item.grossPaymentYen !== undefined && (!Number.isSafeInteger(item.grossPaymentYen) || item.grossPaymentYen < 0)) ||
             (item.taxablePaymentYen !== undefined && (!Number.isSafeInteger(item.taxablePaymentYen) || item.taxablePaymentYen < 0)) ||
@@ -71,7 +72,8 @@ export function adaptPayrollSource(doc) {
             throw Error('Payrollの給与レコードに不正なデータがあります。');
         const id = item.id;
         seen.add(id);
-        return { id: `pay-${id}`, employerId: item.job, payPeriod: item.targetMonth, paidOn: item.paymentDate,
+        return { id: `pay-${id}`, employerId: (item.employerId ?? item.job),
+            ...(item.employerId ? { job: item.job } : {}), payPeriod: item.targetMonth, paidOn: item.paymentDate,
             grossPay: item.grossPaymentYen === undefined ? null : item.grossPaymentYen,
             netPay: item.netPaymentYen, taxablePay: item.taxablePaymentYen === undefined ? null : item.taxablePaymentYen,
             currency: 'JPY', kind: item.kind, revision: item.revision };
