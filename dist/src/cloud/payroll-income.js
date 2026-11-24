@@ -36,6 +36,7 @@ export function validatePayrollIncome(raw) {
     for (const item of raw.entries) {
         if (!isObject(item) || typeof item.id !== 'string' || !idPattern.test(item.id) ||
             typeof item.employerId !== 'string' || !idPattern.test(item.employerId) ||
+            (item.job !== undefined && item.job !== 'main' && item.job !== 'side') ||
             typeof item.payPeriod !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(item.payPeriod) ||
             !validDate(item.paidOn) || (item.grossPay !== null && !money(item.grossPay)) || !money(item.netPay) || item.currency !== 'JPY' ||
             (item.taxablePay !== null && item.taxablePay !== undefined && !money(item.taxablePay)) ||
@@ -46,7 +47,7 @@ export function validatePayrollIncome(raw) {
         seen.add(item.id);
         if (tombstones.has(item.id))
             continue;
-        entries.push({ id: item.id, employerId: item.employerId, payPeriod: item.payPeriod, paidOn: item.paidOn,
+        entries.push({ id: item.id, employerId: item.employerId, ...(item.job ? { job: item.job } : {}), payPeriod: item.payPeriod, paidOn: item.paidOn,
             grossPay: item.grossPay, netPay: item.netPay, taxablePay: item.taxablePay ?? null, currency: 'JPY',
             kind: (item.kind ?? 'salary'), revision: item.revision });
     }

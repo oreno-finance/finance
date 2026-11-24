@@ -12,7 +12,7 @@ const uuid=/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const year=/^(19|20|21)\d{2}$/;
 interface Envelope{format:'payroll-cloud-envelope-v1';kind:'index'|'income';salt?:string;iterations?:number;iv:string;data:string}
 interface PayrollIndex{format:'payroll-index-v1';years:string[];incomeYears:string[];generation?:string;rotation?:unknown}
-interface SourceIncome {format:'payroll-income-v1';year:string;records:Array<{id:number;paymentDate:string;targetMonth:string;job:string;kind:string;netPaymentYen:number;grossPaymentYen?:number;taxablePaymentYen?:number;revision:number}>}
+interface SourceIncome {format:'payroll-income-v1';year:string;records:Array<{id:number;paymentDate:string;targetMonth:string;job:string;kind:string;employerId?:string;netPaymentYen:number;grossPaymentYen?:number;taxablePaymentYen?:number;revision:number}>}
 function obj(raw:unknown):raw is Record<string,unknown>{return raw!==null&&typeof raw==='object'&&!Array.isArray(raw);}
 function b64(value:unknown,limit=30_000_000):Uint8Array<ArrayBuffer>{
  if(typeof value!=='string'||value.length>Math.ceil(limit*4/3)+8||!/^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value))throw Error('Payroll暗号データの形式が不正です。');
@@ -54,13 +54,15 @@ export function adaptPayrollSource(doc:unknown):PayrollIncomeDocument{
   if(!obj(item)||!Number.isSafeInteger(item.id)||(item.id as number)<=0||seen.has(item.id as number)||
      typeof item.paymentDate!=='string'||typeof item.targetMonth!=='string'||
      !(['main','side'].includes(String(item.job)))||!(['salary','bonus'].includes(String(item.kind)))||
+     (item.employerId!==undefined&&(typeof item.employerId!=='string'||!/^emp_[0-9a-f]{32}$/.test(item.employerId)))||
      !Number.isSafeInteger(item.netPaymentYen)||(item.netPaymentYen as number)<0||
      (item.grossPaymentYen!==undefined&&(!Number.isSafeInteger(item.grossPaymentYen)||(item.grossPaymentYen as number)<0))||
      (item.taxablePaymentYen!==undefined&&(!Number.isSafeInteger(item.taxablePaymentYen)||(item.taxablePaymentYen as number)<0))||
      !Number.isSafeInteger(item.revision)||(item.revision as number)<1)
      throw Error('Payrollの給与レコードに不正なデータがあります。');
   const id=item.id as number;seen.add(id);
-  return {id:`pay-${id}`,employerId:item.job as string,payPeriod:item.targetMonth as string,paidOn:item.paymentDate as string,
+  return {id:`pay-${id}`,employerId:(item.employerId??item.job) as string,
+   ...(item.employerId?{job:item.job as 'main'|'side'}:{}),payPeriod:item.targetMonth as string,paidOn:item.paymentDate as string,
    grossPay:item.grossPaymentYen===undefined?null:item.grossPaymentYen as number,
    netPay:item.netPaymentYen as number,taxablePay:item.taxablePaymentYen===undefined?null:item.taxablePaymentYen as number,
    currency:'JPY',kind:item.kind as 'salary'|'bonus',revision:item.revision as number};
