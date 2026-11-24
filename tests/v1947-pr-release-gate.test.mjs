@@ -166,3 +166,19 @@ test('an actual Git push triggers pre-push: hidden committed PII is blocked desp
   const remoteSha=execFileSync('git',['--git-dir',remote,'rev-parse','refs/heads/main'],{encoding:'utf8'}).trim();
   assert.notEqual(remoteSha,f.git('rev-parse','HEAD'),'remote must remain at safe baseline');
 });
+
+test('Round4C historical merge exception rejects an imitation with identical custom subject',()=>{
+  const f=setup();
+  f.git('switch','-qc','feature');
+  writeFileSync(join(f.cwd,'feature.md'),'clean feature');
+  f.git('add','feature.md');f.git('commit','-qm','feature');
+  f.git('switch','main');
+  writeFileSync(join(f.cwd,'base.md'),'clean base');
+  f.git('add','base.md');f.git('commit','-qm','base');
+  const env={...f.env,GIT_COMMITTER_NAME:'GitHub',GIT_COMMITTER_EMAIL:['noreply','github.com'].join('@')};
+  const merge=spawnSync('git',['merge','--no-ff','-m','Payrollの勤務先IDをFinanceの給与連携へ反映（#12）','feature'],{cwd:f.cwd,env,encoding:'utf8'});
+  assert.equal(merge.status,0,merge.stderr);
+  const r=f.audit();
+  assert.notEqual(r.status,0);
+  assert.match(r.stderr,/コミット履歴のCommitter/);
+});
