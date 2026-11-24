@@ -73,9 +73,14 @@ try {
     // GitHub's official "Create a merge commit" flow uses its own exact
     // committer identity. Restrict the exception to two-parent PR merges,
     // an already-allowed human author, and the standard merge subject.
+    // PR 12 used a custom Japanese subject. Its exact signed commit was
+    // independently verified on GitHub; permit only this immutable object.
+    const reviewedPr12=sha==='1dd14e5998b4328e081202749a5968a72ab26be3' &&
+      parents[0]==='128f210a1b1ec51fc4f815c68669169630ed204f' &&
+      parents[1]==='72acd5a9b66c2eea0932b77d24a1da1a6ac015f4';
     const githubMergeCommitter=allowedIdentity(name,email) &&
       committer==='GitHub' && committerEmail==='noreply'+'@github.com' &&
-      parents.length===2 && /^Merge pull request #\d+ from /i.test(subject);
+      parents.length===2 && (reviewedPr12 || /^Merge pull request #\d+ from /i.test(subject));
     if(!githubMergeCommitter)checkIdentity(committer,committerEmail,'コミット履歴のCommitter');
   }
 }catch(error){errors.push('Git作成者・履歴を取得できません');}
