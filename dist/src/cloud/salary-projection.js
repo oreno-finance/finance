@@ -74,6 +74,8 @@ export function forecastBankBalances(doc, asOf, records, income, payrollDepositA
             context.reports.set(month, report);
         }
         for (const line of report.cardLines) {
+            if (!line.paymentDate)
+                continue;
             const transfer = mizuhoTransferForBill(line, doc);
             if (transfer) {
                 for (const [id, sign] of [['rakuten-bank', -1], ['mizuho-bank', 1]]) {

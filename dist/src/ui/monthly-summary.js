@@ -1,3 +1,4 @@
+import { statementPeriod } from '../models/types.js';
 import { requestConfirmation, confirmationPending, cancelConfirmation } from './modal.js';
 import { formatYen as sharedYen, formatSignedYen, formatMonth, formatDate, formatShortDate, formatDateTime } from './formatters.js';
 import { bindMonthNavigator, localMonth, monthInRange } from './period-navigator.js';
@@ -52,7 +53,7 @@ function cardRows(root, items, open) {
         return;
     }
     for (const item of items) {
-        const title = `${item.name} · ${formatDate(item.paymentDate)}（請求月 ${item.billingMonth ?? '不明'}）${item.confirmation === 'provisional' ? ' · 暫定' : ''}`;
+        const title = `${item.name} · ${item.paymentDate ? formatDate(item.paymentDate) : '利用なし確認済み'}（請求月 ${item.billingMonth ?? '不明'}）${item.confirmation === 'provisional' ? ' · 暫定' : ''}`;
         line(root, title, yen(item.amount), () => open(item.id));
     }
 }
@@ -255,7 +256,7 @@ export function initMonthlySummary(deps) {
         const grid = element('div', 'monthly-metrics');
         main.append(grid);
         metric(grid, (report.incomeEstimates.length || report.recurringIncome > 0) ? '月間収入（入金予定含む）' : '月間収入', yen(report.income), [report.recurringIncome ? `定期入金 ${yen(report.recurringIncome)}` : '', report.oneTimeIncome ? `単発入金 ${yen(report.oneTimeIncome)}` : ''].filter(Boolean).join(' · '));
-        metric(grid, 'カード引落予定額', yen(report.cardOutflow), report.cardNoUseConfirmed ? '利用なし確認済み' : report.provisional.length ? '暫定明細を含む' : report.cardOutflow === null ? '明細未取得' : '');
+        metric(grid, 'カード引落予定額', yen(report.cardOutflow), report.cardNoUseConfirmed ? '利用なし確認済み' : report.provisional.length ? '暫定明細を含む' : report.cardOutflow === null ? (report.cardLines.length ? '一部カードのみ確認済み' : '明細未取得') : '');
         metric(grid, '定期・単発支出', yen(report.recurringExpense + report.oneTimeExpense), [report.recurringExpense ? `定期予定 ${yen(report.recurringExpense)}` : '', report.oneTimeExpense ? `単発実行済み ${yen(report.oneTimeExpense)}` : ''].filter(Boolean).join(' · '));
         const delta = report.monthlyBalance === null || prev.monthlyBalance === null ? null : report.monthlyBalance - prev.monthlyBalance;
         metric(grid, '月間収支', report.monthlyBalance === null ? '算出不可' : yen(report.monthlyBalance), `前月比：${delta === null ? '比較不可' : formatSignedYen(delta)}`, report.monthlyBalance !== null ? (report.monthlyBalance >= 0 ? 'monthly-positive' : 'monthly-negative') : '');
@@ -264,13 +265,13 @@ export function initMonthlySummary(deps) {
         if (status)
             alert.append(element('p', '', status));
         if (report.cardOutflow === null)
-            alert.append(element('p', '', 'カード明細が未取得です。登録済みの銀行定期支出・単発支出は別に確認できますが、月の支出総額は確定していません。'));
+            alert.append(element('p', '', report.cardLines.length ? '利用なしを確認したカードがあります。他カードの明細は未取得のため、月の支出総額は確定していません。' : 'カード明細が未取得です。登録済みの銀行定期支出・単発支出は別に確認できますが、月の支出総額は確定していません。'));
         if (report.pastUnconfirmedOneTime) {
             const warning = element('p', 'monthly-overlap-warning', `過去の未実行予定が${report.pastUnconfirmedOneTime}件あります。実績には含めていません。単発入出金の記録を確認してください。`);
             warning.setAttribute('role', 'alert');
             alert.append(warning);
         }
-        if (deps.saveCardNoUseMonth && period <= localPeriod() && (report.cardOutflow === null || report.cardNoUseConfirmed) && report.issues.every(issue => issue.month !== period)) {
+        if (deps.saveCardNoUseMonth && period <= localPeriod() && (report.cardOutflow === null && report.cardLines.length === 0 || report.cardNoUseConfirmed) && report.issues.every(issue => issue.month !== period)) {
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'secondary-action';
@@ -289,7 +290,7 @@ export function initMonthlySummary(deps) {
                         const current = monthlyReport(target, latest);
                         return current.cardNoUseConfirmed === confirmed && (current.cardOutflow === null || current.cardNoUseConfirmed) &&
                             current.issues.every(issue => issue.month !== target) &&
-                            (!confirmed ? !latest.records.some(record => record.statement.paymentDate?.slice(0, 7) === target) : true);
+                            (!confirmed ? !latest.records.some(record => statementPeriod(record.statement) === target) : true);
                     }
                     catch {
                         return false;
@@ -445,10 +446,10 @@ export function initMonthlySummary(deps) {
         const cards = addPair('カード別引落額');
         if (report.cardNoUseConfirmed)
             empty(cards, '利用なし確認済み');
-        else if (report.cardOutflow === null)
+        else if (!report.cardLines.length)
             empty(cards, '明細未取得');
         else
-            cardRows(cards, [...report.cardLines].sort((a, b) => a.paymentDate.localeCompare(b.paymentDate) || a.name.localeCompare(b.name, 'ja')), deps.openRecord);
+            cardRows(cards, [...report.cardLines].sort((a, b) => (a.paymentDate ?? '').localeCompare(b.paymentDate ?? '') || a.name.localeCompare(b.name, 'ja')), deps.openRecord);
         if (report.cardOutflow !== null) {
             line(cards, 'カード合計', yen(report.cardOutflow));
             line(cards, 'うちNISA積立（資産移動）', yen(report.nisaOutflow));

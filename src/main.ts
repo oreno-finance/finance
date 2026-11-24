@@ -1,7 +1,7 @@
 import {bindModalDismiss,requestConfirmation,confirmationPending,cancelAllConfirmations} from './ui/modal.js';
 import {formatYen,formatDate,formatMonth,formatPoints,formatNumber} from './ui/formatters.js';
 import {bindMonthNavigator,localMonth,monthInRange} from './ui/period-navigator.js';
-import { CARDS, calculatedTotal, getCard, type ParsedStatement, type ImportRow } from './models/types.js';
+import { CARDS, calculatedTotal, getCard, isZeroUsage, type ParsedStatement, type ImportRow } from './models/types.js';
 import { parseStatementText } from './importers/statement-parser.js';
 import { parsePdfFile, assertPdfLimits } from './importers/pdf-reader.js';
 import { decodeCardCsv, identifyCardCsv, parseCardCsv } from './importers/card-csv.js';
@@ -245,7 +245,7 @@ function setBadgeState(className: string, text: string): void {
   detailBadge.className = className;
   detailBadge.textContent = text;
 }
-function balanced(s: ParsedStatement): boolean { return s.rows.length > 0 && s.statedTotal !== null && s.statedTotal === calculatedTotal(s); }
+function balanced(s: ParsedStatement): boolean { return (s.rows.length > 0 || isZeroUsage(s)) && s.statedTotal !== null && s.statedTotal === calculatedTotal(s); }
 function issues(s: ParsedStatement): string[] {
   const errors = importErrors(s, pendingSources.has(s) || originalSaved.has(s));
   const idx = statements.indexOf(s);
@@ -403,7 +403,7 @@ function createStatementEntry(index: number, withDelete: boolean): HTMLElement {
   const right = div('statement-end');
   const amount = document.createElement('strong'); amount.textContent = yen(statement.statedTotal);
   const flag = document.createElement('span'); flag.className = `statement-flag ${state}`;
-  flag.textContent = statement.sourceKind==='csv'&&!statement.paymentDate ? '引落日未設定' : state === 'review' ? '要確認' : state === 'selection' ? 'カード選択待ち' : state === 'provisional' ? '暫定明細' : '照合OK';
+  flag.textContent = statement.sourceKind==='csv'&&!statement.paymentDate ? '引落日未設定' : state === 'review' ? '要確認' : state === 'selection' ? 'カード選択待ち' : state === 'provisional' ? '暫定明細' : isZeroUsage(statement)?'利用なし確認済み':'照合OK';
   // Save state is shown in the batch action / management status, not on every list row.
   right.append(amount, flag);
   left.append(title, subtitle);
@@ -628,7 +628,7 @@ function renderSummary(): void {
     }
   }
   $('detail-month').textContent = s.billingMonth ? `${s.billingMonth.slice(0, 4)}年${Number(s.billingMonth.slice(5))}月` : '未取得';
-  $('detail-date').textContent = s.sourceKind==='csv'&&!s.paymentDate?'未設定':dateDisplay(s.paymentDate);
+  $('detail-date').textContent = isZeroUsage(s)?'引落なし':s.sourceKind==='csv'&&!s.paymentDate?'未設定':dateDisplay(s.paymentDate);
   $('detail-count').textContent = `${s.rows.length}件`;
   $('amount-stated').textContent = yen(s.statedTotal);
   $('amount-calculated').textContent = yen(calculatedTotal(s));
@@ -640,6 +640,7 @@ function renderSummary(): void {
   else if (validationIssues.length) setBadgeState('pill bad', '要確認');
   else if (cardSelectionPending(s)) setBadgeState('pill info', 'カード選択待ち');
   else if (s.confirmation === 'provisional') setBadgeState('pill info', '暫定明細・照合OK');
+  else if(isZeroUsage(s))setBadgeState('pill good','利用なし確認済み');
   else setBadgeState('pill good', '照合OK');
   const notices = $('notice-list'); notices.replaceChildren();
   if (!balanced(s) && s.rows.length && s.statedTotal !== null) notices.append(notice(`差額が${yen(diff)}あります。金額や未抽出の行を確認してください。`, 'bad'));
@@ -735,7 +736,7 @@ function renderRows(): void {
   if (!s) return;
   if (!s.rows.length) {
     const tr = document.createElement('tr'), td = document.createElement('td');
-    td.colSpan = 4; td.textContent = '取引がありません。明細の管理から修正するか、読み直してください。';
+    td.colSpan = 4; td.textContent = isZeroUsage(s)?'請求0円・取引なし（PDF確認済み）':'取引がありません。明細の管理から修正するか、読み直してください。';
     tr.append(td); rowBody.append(tr); return;
   }
   for (const row of orderedPreviewRows(s.rows, previewSort)) {
@@ -1453,14 +1454,14 @@ function updateManagerEditState(s:ParsedStatement):void {
   $('manage-points').querySelector('strong')!.textContent=s.cardId&&!displayIssues(s).length?formatPoints(statementPoints(s,liveVault?.unlocked?liveVault.assetSettings().cardPreferences:undefined)):'—';
   $<HTMLButtonElement>('manage-save').disabled=batchBusy||filesBusy||!hasUnsavedChanges(s);
   const errors=displayIssues(s);
-  $('manage-validation').textContent=errors.length?`要修正：${errors.join(' / ')}`:cardSelectionPending(s)?'カード選択待ち':hasUnsavedChanges(s)?'変更は保存ボタンを押すまで反映されません。':'検証OK。';
+  $('manage-validation').textContent=errors.length?`要修正：${errors.join(' / ')}`:cardSelectionPending(s)?'カード選択待ち':hasUnsavedChanges(s)?'変更は保存ボタンを押すまで反映されません。':isZeroUsage(s)?'請求0円・取引なし（PDF確認済み）':'検証OK。';
   const selected=$('manage-list').querySelector<HTMLElement>('.statement-card.selected');
   const flag=selected?.querySelector<HTMLElement>('.statement-flag');
   if(selected&&flag){
     const state=errors.length?'review':cardSelectionPending(s)?'selection':s.confirmation==='provisional'?'provisional':'verified';
     selected.className=`statement-card ${state} selected`;
     flag.className=`statement-flag ${state}`;
-    flag.textContent=s.sourceKind==='csv'&&!s.paymentDate?'引落日未設定':state==='review'?'要確認':state==='selection'?'カード選択待ち':state==='provisional'?'暫定明細':'照合OK';
+    flag.textContent=s.sourceKind==='csv'&&!s.paymentDate?'引落日未設定':state==='review'?'要確認':state==='selection'?'カード選択待ち':state==='provisional'?'暫定明細':isZeroUsage(s)?'利用なし確認済み':'照合OK';
   }
 }
 
@@ -1509,19 +1510,20 @@ function renderManager(): void {
   if (!s) { $<HTMLButtonElement>('manage-clear-changes').disabled=true; return; }
   renderCardOptions(s);
   $('manage-month').textContent = formatMonth(s.billingMonth,'未取得');
-  $('manage-payment').textContent = dateDisplay(s.paymentDate);
+  $('manage-payment').textContent = isZeroUsage(s)?'引落なし':dateDisplay(s.paymentDate);
   const originalButton=$<HTMLButtonElement>('manage-original-download');
   const savedId=savedIds.get(s);
   const hasOriginal=!!savedId&&!!liveVault?.unlocked&&liveVault.readonlyRecords().some(record=>record.id===savedId&&!!record.originalId);
   originalButton.classList.toggle('hidden',!hasOriginal);
   originalButton.disabled=batchBusy||filesBusy||!hasOriginal;
   originalButton.title=hasOriginal?'復号したPDFが端末のダウンロード先に保存されます。':'';
-  $<HTMLButtonElement>('manage-add-row').disabled=!!activeAnalysisDrilldown;
+  $<HTMLButtonElement>('manage-add-row').disabled=!!activeAnalysisDrilldown||isZeroUsage(s);
   $<HTMLButtonElement>('manage-delete').disabled = batchBusy || filesBusy;
   updateManagerEditState(s);
   for (const [key,id,label] of [['usedOn','manage-sort-date','利用日'],['amount','manage-sort-amount','当月請求額']] as const)
     renderStatementSortControl(id,label,manageSort?.key===key?manageSort.direction:null);
   const body = $('manage-rows'); body.replaceChildren();
+  if(isZeroUsage(s)){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=5;td.textContent='請求0円・取引なし（PDF確認済み）';tr.append(td);body.append(tr);return;}
   // Sorting is display-only: deletions must continue to address original row indices.
   const matchingRows=activeAnalysisDrilldown?drilldownRows.get(savedIds.get(s)??''):null;
   const visibleRows=s.rows.map((row,index)=>({row,index,usedOn:row.usedOn,amount:row.amount}))
@@ -2717,7 +2719,7 @@ function init(): void {
   $('manage-clear-changes').addEventListener('click',()=>{void clearManagerChanges();});
   $('manage-save').addEventListener('click',()=>{const s=active();if(s){if(savedIds.has(s)){void saveEditedStatement(s,true);}else void saveAllPending();}});
   $('manage-delete').addEventListener('click', () => { if (activeIndex >= 0) void deleteStatement(activeIndex); });
-  $('manage-add-row').addEventListener('click', () => { const s = active(); if (!s) return; s.rows.push({id: crypto.randomUUID(), usedOn: new Date().toISOString().slice(0,10),merchant:'',amount:0}); markDirty(s); });
+  $('manage-add-row').addEventListener('click', () => { const s = active(); if (!s||isZeroUsage(s)) return; s.rows.push({id: crypto.randomUUID(), usedOn: new Date().toISOString().slice(0,10),merchant:'',amount:0}); markDirty(s); });
   $<HTMLInputElement>('file-input').addEventListener('change', event => {
     const input = event.target as HTMLInputElement;
     // Copy the FileList before resetting the input; some browsers expose a live list.

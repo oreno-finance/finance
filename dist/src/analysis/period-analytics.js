@@ -24,7 +24,7 @@ function createGroups(months, dimension) {
             item.report.merchants.map(merchant => ({ id: merchant.name, label: merchant.name, amount: merchant.amount })));
     records.forEach((items, index) => {
         for (const item of items) {
-            const group = groups.get(item.id) ?? { id: item.id, label: item.label, amounts: months.map(m => m.report.cardOutflow === null ? null : 0) };
+            const group = groups.get(item.id) ?? { id: item.id, label: item.label, amounts: months.map(m => dimension === 'card' ? (m.report.cardNoUseConfirmed ? 0 : null) : m.report.cardOutflow === null ? null : 0) };
             group.label = item.label; // Latest configured display name.
             group.amounts[index] = add(group.amounts[index] ?? 0, item.amount);
             groups.set(item.id, group);

@@ -79,7 +79,9 @@ export function forecastAccounts(source, today, horizonDays = 45, reportForMonth
         if (report.issues.some(issue => issue.month === month || issue.month === null))
             invalidMonths.push(month);
         for (const card of report.cardLines) {
-            cardLines.push(card);
+            if (!card.paymentDate)
+                continue;
+            cardLines.push({ ...card, paymentDate: card.paymentDate });
             if (card.paymentDate >= today && card.confirmation !== 'confirmed')
                 unverified = true;
             const accountId = source.assets.cardDebitAccounts?.[card.cardId];

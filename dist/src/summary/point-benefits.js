@@ -118,7 +118,7 @@ export function pointBenefitsFromMonthlyReport(report, source, byId = new Map(so
         }
         entry.base.amount += card.amount;
         for (const row of record.statement.rows) {
-            const date = validDay(row.usedOn) ? row.usedOn : card.paymentDate;
+            const date = validDay(row.usedOn) ? row.usedOn : card.paymentDate ?? undefined;
             const rate = pointRate(card.cardId, source.assets.cardPreferences, date);
             entry.charges.push({ amount: row.amount, rate });
             entry.rates.add(rate);

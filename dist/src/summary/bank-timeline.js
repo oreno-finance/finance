@@ -39,6 +39,8 @@ export function bankTimeline(period, source, today, work) {
     for (let month = start.slice(0, 7); month <= nextMonth(period); month = nextMonth(month)) {
         const report = work?.reports.get(month) ?? monthlyReport(month, source, work?.prepared);
         for (const card of report.cardLines) {
+            if (!card.paymentDate)
+                continue;
             const account = assets.cardDebitAccounts?.[card.cardId];
             if (!account) {
                 missing.add(card.name);

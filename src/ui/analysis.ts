@@ -1,3 +1,4 @@
+import {statementPeriod} from '../models/types.js';
 import {formatYen as sharedYen,formatSignedYen,formatMonth} from './formatters.js';
 /** Finance P1-A: in-browser multi-month / annual analysis, no additional persistence. */
 import {annualAnalytics,comparableDelta,priorYearAnalytics,rollingAnalytics,type AnalysisDimension,type AnalysisMonth,type PeriodAnalytics} from '../analysis/period-analytics.js';
@@ -62,7 +63,7 @@ export function initAnalysis(deps:AnalysisDeps):AnalysisUi{
       area.append(options);
       area.append(monthNavigator(end,(next)=>{end=next;render();},{label:'分析終了月',max:today,min:'1900-12',today}));
     }else{
-      const years=[...(source?.records??[]).map(r=>Number(r.statement.paymentDate?.slice(0,4))),
+      const years=[...(source?.records??[]).map(r=>Number(statementPeriod(r.statement)?.slice(0,4))),
         ...(source?.payroll.entries??[]).map(p=>Number(p.paidOn.slice(0,4))),year,Number(today.slice(0,4))-5];
       const first=Math.max(1900,Math.min(...years.filter(y=>Number.isInteger(y)&&y>=1900)));
       area.append(yearNavigator(year,(next)=>{year=next;render();},{min:first,max:Number(today.slice(0,4))}));

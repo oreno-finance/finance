@@ -41,6 +41,7 @@ export function bankTimeline(period:string,source:MonthlySource,today:string,
   for(let month=start.slice(0,7);month<=nextMonth(period);month=nextMonth(month)){
     const report=work?.reports.get(month)??monthlyReport(month,source,work?.prepared);
     for(const card of report.cardLines){
+      if(!card.paymentDate)continue;
       const account=assets.cardDebitAccounts?.[card.cardId];
       if(!account){missing.add(card.name);continue;}
       if(account==='rakuten-bank')add({date:card.paymentDate,title:card.name,amount:-card.amount,kind:'card',provisional:card.confirmation==='provisional'});

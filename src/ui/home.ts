@@ -107,7 +107,7 @@ export function initHome(deps:HomeDeps):HomeUi {
   function renderOverview(model:HomeOverview,source:MonthlySource):void {
     const {report,forecast,accounts,actions}=model;
     const metrics=element('div','home-metrics');
-    const dataNotice=model.coverage==='missing'?'カード明細未取得':model.coverage==='partial'?'一部未取得・銀行支出は反映':model.coverage==='needs-review'?'明細要確認':
+    const dataNotice=model.coverage==='missing'?'カード明細未取得':model.coverage==='partial'?(report.cardLines.length?'一部カードのみ確認済み':'一部未取得・銀行支出は反映'):model.coverage==='needs-review'?'明細要確認':
       model.coverage==='provisional'?'暫定明細を含む':'';
     metrics.append(
       metric('今月の収入',yen(report.income),report.incomeEstimates.length||report.recurringIncome>0?'給与見込み・入金予定を含む':'',()=>go('summary')),

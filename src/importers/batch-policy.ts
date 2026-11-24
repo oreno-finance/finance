@@ -1,4 +1,4 @@
-import { CARDS, calculatedTotal, type ParsedStatement } from '../models/types.js';
+import { CARDS, calculatedTotal, isZeroUsage, type ParsedStatement } from '../models/types.js';
 
 function realDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -10,9 +10,11 @@ export function importErrors(statement: ParsedStatement, hasPdf: boolean): strin
   const issues: string[] = [];
   if (!CARDS.some(c => c.id === statement.cardId && c.provider === statement.provider)) issues.push('カード種別が不明です');
   if (!statement.billingMonth || !/^\d{4}-(0[1-9]|1[0-2])$/.test(statement.billingMonth)) issues.push('請求月が不正です');
-  if (!statement.paymentDate || !realDate(statement.paymentDate)) issues.push('支払日が不明または不正です');
+  const zero=isZeroUsage(statement);
+  if(statement.zeroUsage!==undefined&&!zero)issues.push('利用なし明細の形式が不正です');
+  if (!zero&&(!statement.paymentDate || !realDate(statement.paymentDate))) issues.push('支払日が不明または不正です');
   if (statement.statedTotal === null || !Number.isSafeInteger(statement.statedTotal)) issues.push('請求総額が不正です');
-  if (!statement.rows.length) issues.push('取引がありません');
+  if (!zero&&!statement.rows.length) issues.push('取引がありません');
   if (statement.rows.some(row => !realDate(row.usedOn) || !row.merchant.trim() || !Number.isSafeInteger(row.amount))) issues.push('利用日・利用先・金額に不備があります');
   if (statement.statedTotal !== null && calculatedTotal(statement) !== statement.statedTotal) issues.push('請求総額と明細合計が一致しません');
   if (statement.sourceKind === 'pdf' && !hasPdf) issues.push('PDF原本がありません');

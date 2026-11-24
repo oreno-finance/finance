@@ -2,8 +2,8 @@
  * A forecast is never marked completed and never written as a recurring entry. */
 import { DEFAULT_MIZUHO_PLAN, type AssetsDocument, type MizuhoTransferPlan } from './assets.js';
 import { recurringOccursOn } from './recurring-schedule.js';
-export interface MizuhoBill {cardId:string; paymentDate:string; amount:number}
-export interface MizuhoPlannedTransfer {date:string; paymentDate:string; amount:number; cardId:string}
+export interface MizuhoBill {cardId:string; paymentDate:string|null; amount:number}
+export interface MizuhoPlannedTransfer {date:string; paymentDate:string|null; amount:number; cardId:string}
 export function estimateMizuhoTransferAmount(bill:number,extraForSmallBills=true):number {
   if(!Number.isSafeInteger(bill)||bill<0)throw Error('カード請求額が不正です。');
   if(bill===0)return 0;
@@ -13,7 +13,7 @@ export function estimateMizuhoTransferAmount(bill:number,extraForSmallBills=true
 }
 export function mizuhoTransferForBill(bill:MizuhoBill,assets:Pick<AssetsDocument,'mizuhoTransferPlan'|'cardDebitAccounts'|'recurring'|'oneTime'>):MizuhoPlannedTransfer|null {
   const plan: MizuhoTransferPlan=assets.mizuhoTransferPlan??DEFAULT_MIZUHO_PLAN;
-  if(!plan.enabled||bill.cardId!=='rakuten-mizuho'||assets.cardDebitAccounts?.[bill.cardId]!=='mizuho-bank'||bill.amount<=0)return null;
+  if(!plan.enabled||bill.cardId!=='rakuten-mizuho'||assets.cardDebitAccounts?.[bill.cardId]!=='mizuho-bank'||bill.amount<=0||!bill.paymentDate)return null;
   const day=new Date(`${bill.paymentDate}T00:00:00Z`);
   if(Number.isNaN(day.getTime()))return null;
   day.setUTCDate(day.getUTCDate()-plan.leadDays);
@@ -27,7 +27,7 @@ export function mizuhoTransferForBill(bill:MizuhoBill,assets:Pick<AssetsDocument
   earliest.setUTCDate(earliest.getUTCDate()-Math.max(14,plan.leadDays));
   const isFunding=(assets.oneTime??[]).some(e=>e.kind==='transfer'&&
     e.fromAccountId==='rakuten-bank'&&e.toAccountId==='mizuho-bank'&&
-    ((e.cardFunding===true && e.date>=earliest.toISOString().slice(0,10) && e.date<=bill.paymentDate) || e.date===date));
+    ((e.cardFunding===true && e.date>=earliest.toISOString().slice(0,10) && e.date<=bill.paymentDate!) || e.date===date));
   if(userTransfer||isFunding)return null;
   const amount=estimateMizuhoTransferAmount(bill.amount,plan.extraForSmallBills);
   return amount?{date,paymentDate:bill.paymentDate,amount,cardId:bill.cardId}:null;

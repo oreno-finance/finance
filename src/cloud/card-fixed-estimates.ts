@@ -7,7 +7,7 @@ import {mizuhoTransferForBill,type MizuhoPlannedTransfer} from './mizuho-transfe
 import type {CloudRecord} from './merge.js';
 import {fixedCostOccurrences} from '../fixed-costs/contracts.js';
 import {cardPaymentDate, type CardPaymentTiming} from '../importers/payment-date.js';
-import {CARDS} from '../models/types.js';
+import {CARDS,statementPeriod} from '../models/types.js';
 
 export interface EstimatedCardFixedBill {id:string;cardId:string;name:string;paymentDate:string;amount:number;contractIds:string[];estimated:true}
 const month=(day:string)=>day.slice(0,7);
@@ -29,9 +29,9 @@ export function estimatedCardFixedBills(doc:AssetsDocument,records:readonly Clou
   if(toDay<fromDay||!/^20\d\d-\d\d-\d\d$/.test(fromDay)||!/^20\d\d-\d\d-\d\d$/.test(toDay))return [];
   const months=new Set<string>();
   for(let i=index(month(fromDay))-2;i<=index(month(toDay))&&months.size<=7;i++)months.add(fromIndex(i));
-  const seen=new Set(records.filter(r=>r.statement.cardId&&r.statement.paymentDate)
-    .map(r=>`${r.statement.cardId}|${month(r.statement.paymentDate!)}`));
-  const observedMonths=new Set(records.flatMap(r=>r.statement.paymentDate?[month(r.statement.paymentDate)]:[]));
+  const seen=new Set(records.filter(r=>r.statement.cardId&&statementPeriod(r.statement))
+    .map(r=>`${r.statement.cardId}|${statementPeriod(r.statement)}`));
+  const observedMonths=new Set(records.flatMap(r=>{const p=statementPeriod(r.statement);return p?[p]:[];}));
   const buckets=new Map<string,EstimatedCardFixedBill>();
   for(const contract of fixedCostsForCalculation(doc)){
     if(contract.payment!=='card'||!contract.cardId)continue;

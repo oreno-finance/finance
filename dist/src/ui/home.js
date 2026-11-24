@@ -139,7 +139,7 @@ export function initHome(deps) {
     function renderOverview(model, source) {
         const { report, forecast, accounts, actions } = model;
         const metrics = element('div', 'home-metrics');
-        const dataNotice = model.coverage === 'missing' ? 'カード明細未取得' : model.coverage === 'partial' ? '一部未取得・銀行支出は反映' : model.coverage === 'needs-review' ? '明細要確認' :
+        const dataNotice = model.coverage === 'missing' ? 'カード明細未取得' : model.coverage === 'partial' ? (report.cardLines.length ? '一部カードのみ確認済み' : '一部未取得・銀行支出は反映') : model.coverage === 'needs-review' ? '明細要確認' :
             model.coverage === 'provisional' ? '暫定明細を含む' : '';
         metrics.append(metric('今月の収入', yen(report.income), report.incomeEstimates.length || report.recurringIncome > 0 ? '給与見込み・入金予定を含む' : '', () => go('summary')), metric('今月の支出', yen(model.outflow), [dataNotice, report.nisaOutflow > 0 ? `NISA積立 ${yen(report.nisaOutflow)} を含む` : ''].filter(Boolean).join(' · '), () => go('summary')), metric('収支見込み', report.monthlyBalance === null ? '算出不可' : yen(report.monthlyBalance), report.cardOutflow === null ? 'カード明細未取得' : report.income === null ? '収入未取得' : dataNotice, () => go('summary'), report.monthlyBalance !== null && report.monthlyBalance < 0 ? 'home-negative' : ''));
         root.append(metrics);

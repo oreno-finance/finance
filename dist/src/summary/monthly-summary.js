@@ -1,9 +1,9 @@
 import { estimateRegularNet, regularSalarySample } from '../cloud/salary-estimate.js';
 import { recurringForCalculation, fixedCostsForCalculation } from '../fixed-costs/payment-history.js';
-/** Finance monthly report. All periods are assigned from the statement's paymentDate,
- * never from a statement's billingMonth or a transaction's usedOn.
+/** Finance monthly report. Real debits follow paymentDate, never transaction usedOn.
+ * A verified no-charge PDF has no debit; its explicit billing month is the evidence period.
  * This module is pure and has no persistence or bank-balance side effects. */
-import { getCard } from '../models/types.js';
+import { getCard, isZeroUsage, statementPeriod } from '../models/types.js';
 import { importErrors } from '../importers/batch-policy.js';
 import { displayMerchant, matchingRule } from '../cloud/merchant-rules.js';
 import { recurringOneTimeMatch, nisaRuleOnDay } from '../cloud/assets.js';
@@ -58,7 +58,7 @@ export function prepareMonthlyReports(records) {
         const key = statement.cardId && statement.billingMonth ? `${statement.cardId}|${statement.billingMonth}` : null;
         if (key)
             counts.set(key, (counts.get(key) ?? 0) + 1);
-        const period = validDay(statement.paymentDate) ? statement.paymentDate.slice(0, 7) : null;
+        const period = statementPeriod(statement);
         const ref = { position, record };
         if (period) {
             const month = months.get(period) ?? [];
@@ -106,7 +106,7 @@ export function monthlyReport(period, source, prepared) {
     })();
     for (const record of indexed) {
         const s = record.statement;
-        const month = validDay(s.paymentDate) ? s.paymentDate.slice(0, 7) : null;
+        const month = statementPeriod(s);
         // Undated records are visible as unresolved data quality issues in every month.
         if (month !== period && month !== null)
             continue;
@@ -138,7 +138,8 @@ export function monthlyReport(period, source, prepared) {
         const line = { id: record.id, cardId: s.cardId, name: cardTitle(record, source), billingMonth: s.billingMonth, paymentDate: s.paymentDate, amount: amt, confirmation: s.confirmation };
         if (s.confirmation === 'provisional')
             provisional.push(line);
-        included++;
+        if (!isZeroUsage(s))
+            included++;
         sum = add(sum, amt);
         cardLines.push(line);
         if (s.confirmation === 'unknown')
@@ -299,7 +300,7 @@ export function monthlyReport(period, source, prepared) {
     // Payroll observation. Without any main evidence, preserve the unknown total.
     const incomeBase = payrollIncome === null && manualMain ? 0 : payrollIncome;
     const income = incomeBase === null ? null : add(add(incomeBase, recurringIncome), oneTimeIncome);
-    const cardNoUseConfirmed = included === 0 && source.assets.cardNoUseMonths?.includes(period) === true && excludedCount === 0;
+    const cardNoUseConfirmed = cardLines.length === 0 && source.assets.cardNoUseMonths?.includes(period) === true && excludedCount === 0;
     const cardOutflow = included > 0 ? sum : cardNoUseConfirmed ? 0 : null;
     const livingOutflow = cardOutflow === null ? null : add(cardOutflow, -nisa);
     // Unknown card spending is not zero. Only explicit no-use or a registered
@@ -314,7 +315,7 @@ export function monthlyReport(period, source, prepared) {
 }
 export function monthlyCashflow(report) {
     const nonCard = add(report.recurringExpense, report.oneTimeExpense);
-    const coverage = report.cardOutflow === null ? (nonCard > 0 ? 'partial' : 'missing') :
+    const coverage = report.cardOutflow === null ? (nonCard > 0 || report.cardLines.some(card => card.paymentDate === null) ? 'partial' : 'missing') :
         report.issues.length || report.unknownConfirmationCount || report.recurringCardOverlap ? 'review' : report.provisional.length ? 'provisional' : 'registered';
     return { coverage, expense: report.cardOutflow === null ? (nonCard || null) : add(report.cardOutflow, nonCard),
         livingExpense: report.livingOutflow === null ? (nonCard || null) : add(report.livingOutflow, nonCard), balance: report.monthlyBalance };

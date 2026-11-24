@@ -931,6 +931,32 @@ class FinanceBrowserTests(unittest.TestCase):
         finally:
             context.close()
 
+    def test_rakuten_explicit_zero_statement(self):
+        html=self.offline_document()
+        for width,mobile in ((1100,False),(390,True)):
+            with self.subTest(width=width):
+                context=self.browser.new_context(viewport={'width':width,'height':800},is_mobile=mobile,has_touch=mobile)
+                try:
+                    page=context.new_page();errors=[]
+                    page.on('pageerror',lambda exc:errors.append(str(exc)))
+                    page.route('**/*',lambda route:route.abort());page.set_content(html)
+                    page.evaluate("""async()=>{
+                      const {emptyAssets}=await import('finance-fixture/cloud/assets.js');
+                      const {initMonthlySummary}=await import('finance-fixture/ui/monthly-summary.js');
+                      const period='2024-04';
+                      const source={records:[{id:'empty-card',originalId:'synthetic',statement:{provider:'rakuten',cardId:'rakuten-etc',sourceKind:'pdf',sourceName:'synthetic',billingMonth:period,paymentDate:null,statedTotal:0,confirmation:'confirmed',zeroUsage:true,warnings:[],rows:[]}}],rules:[],categories:[],assets:emptyAssets(),payroll:{ready:false,syncedAt:null,entries:[]},currentPeriod:period};
+                      window.openedZero=null;
+                      const summary=initMonthlySummary({source:()=>source,openRecord(id){window.openedZero=id;},openDrilldown(){},openCardSettings(){}});
+                      for(const n of document.querySelectorAll('.workspace .content > :is(section,div)[id]'))n.classList.toggle('hidden',n.id!=='summary-view');
+                      document.getElementById('summary-view').classList.remove('hidden');summary.setPeriod(period);
+                    }""")
+                    summary=page.locator('#monthly-content')
+                    self.assertIn('一部カードのみ確認済み',summary.inner_text())
+                    self.assertIn('利用なし確認済み',summary.inner_text())
+                    self.assertEqual(errors,[])
+                finally:
+                    context.close()
+
     def test_polish_dashboard_coverage_and_report_preview(self):
         html=self.offline_document()
         for width,mobile in ((1100,False),(390,True),(320,True)):

@@ -1,3 +1,4 @@
+import { isZeroUsage } from '../models/types.js';
 export function emptyDocument() {
     return { format: 'finance-cloud-document-v1', records: [], deleted: [], conflicts: [] };
 }
@@ -92,6 +93,8 @@ export function validateCloudDocument(raw) {
     for (const rec of d.records) {
         if (!rec || typeof rec.id !== 'string' || !rec.id || seen.has(rec.id) || !rec.statement || !Array.isArray(rec.statement.rows) || rec.statement.rows.length > 10000)
             throw new Error('クラウド明細に不正なレコードがあります。');
+        if (rec.statement.zeroUsage !== undefined && (!isZeroUsage(rec.statement) || !rec.originalId))
+            throw new Error('利用なし明細の形式が不正です。');
         seen.add(rec.id);
     }
     return d;
