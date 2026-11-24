@@ -1,9 +1,9 @@
 import {estimateRegularNet,regularSalarySample} from '../cloud/salary-estimate.js';
 import {recurringForCalculation,fixedCostsForCalculation} from '../fixed-costs/payment-history.js';
-/** Finance monthly report. All periods are assigned from the statement's paymentDate,
- * never from a statement's billingMonth or a transaction's usedOn.
+/** Finance monthly report. Real debits follow paymentDate, never transaction usedOn.
+ * A verified no-charge PDF has no debit; its explicit billing month is the evidence period.
  * This module is pure and has no persistence or bank-balance side effects. */
-import { getCard, type ImportRow, type ParsedStatement } from '../models/types.js';
+import { getCard, isZeroUsage, statementPeriod, type ImportRow, type ParsedStatement } from '../models/types.js';
 import type { CloudRecord } from '../cloud/merge.js';
 import { importErrors } from '../importers/batch-policy.js';
 import { displayMerchant, matchingRule, type CategoryDefinition, type MerchantRule } from '../cloud/merchant-rules.js';
@@ -14,7 +14,7 @@ import { payrollRole, payrollCoversRecurringSalary, recurringSalaryRole, type Pa
 
 export interface SummaryIncome { id: string; employerId: string; job: PayrollJob|null; kind: string; date: string; amount: number }
 export interface SummaryIncomeEstimate { employerId: string; job: 'main'; kind: 'salary'; sourcePeriod: string; amount: number; method: 'previous-regular-net-excluding-nontaxable' | 'previous-regular-net-fallback' }
-export interface SummaryCard { id: string; cardId: string; name: string; billingMonth: string | null; paymentDate: string; amount: number; confirmation: ParsedStatement['confirmation'] }
+export interface SummaryCard { id: string; cardId: string; name: string; billingMonth: string | null; paymentDate: string|null; amount: number; confirmation: ParsedStatement['confirmation'] }
 export interface SummaryCategory { id: string; name: string; color: string | null; amount: number; count: number }
 export interface SummaryMerchant { name: string; amount: number; count: number }
 export interface SummaryRecurring { id:string; entryId:string; name:string; date:string; kind:'expense'|'income'|'transfer'; amount:number; fromAccountId:AssetAccountId|null; toAccountId:AssetAccountId|null; categoryId:string|null; payrollOverlap:boolean; cardOverlap:boolean }
@@ -110,7 +110,7 @@ export function prepareMonthlyReports(records:readonly CloudRecord[]):PreparedMo
     const statement=record.statement;
     const key=statement.cardId&&statement.billingMonth?`${statement.cardId}|${statement.billingMonth}`:null;
     if(key)counts.set(key,(counts.get(key)??0)+1);
-    const period=validDay(statement.paymentDate)?statement.paymentDate.slice(0,7):null;
+    const period=statementPeriod(statement);
     const ref={position,record};
     if(period){const month=months.get(period)??[];month.push(ref);months.set(period,month);}
     else undated.push(ref);
@@ -149,7 +149,7 @@ export function monthlyReport(period: string, source: MonthlySource, prepared?:P
   })();
   for(const record of indexed) {
     const s=record.statement;
-    const month=validDay(s.paymentDate)?s.paymentDate.slice(0,7):null;
+    const month=statementPeriod(s);
     // Undated records are visible as unresolved data quality issues in every month.
     if(month!==period && month!==null)continue;
     const identity=s.cardId && s.billingMonth?`${s.cardId}|${s.billingMonth}`:null;
@@ -166,9 +166,10 @@ export function monthlyReport(period: string, source: MonthlySource, prepared?:P
     if(reason){issues.push({id:record.id,title:cardTitle(record,source),reason,month});if(month===period)excludedCount++;continue;}
     if(month!==period)continue;
     const amt=s.rows.reduce((acc,row)=>add(acc,row.amount),0);
-    const line:SummaryCard={id:record.id,cardId:s.cardId!,name:cardTitle(record,source),billingMonth:s.billingMonth,paymentDate:s.paymentDate!,amount:amt,confirmation:s.confirmation};
+    const line:SummaryCard={id:record.id,cardId:s.cardId!,name:cardTitle(record,source),billingMonth:s.billingMonth,paymentDate:s.paymentDate,amount:amt,confirmation:s.confirmation};
     if(s.confirmation==='provisional')provisional.push(line);
-    included++;sum=add(sum,amt);cardLines.push(line);
+    if(!isZeroUsage(s))included++;
+    sum=add(sum,amt);cardLines.push(line);
     if(s.confirmation==='unknown')unknownConfirmationCount++;
     for(const row of s.rows){
       if(isNisaCardRow(row,s,source.assets)) {
@@ -300,7 +301,7 @@ export function monthlyReport(period: string, source: MonthlySource, prepared?:P
   // Payroll observation. Without any main evidence, preserve the unknown total.
   const incomeBase=payrollIncome===null&&manualMain?0:payrollIncome;
   const income=incomeBase===null?null:add(add(incomeBase,recurringIncome),oneTimeIncome);
-  const cardNoUseConfirmed=included===0&&source.assets.cardNoUseMonths?.includes(period)===true&&excludedCount===0;
+  const cardNoUseConfirmed=cardLines.length===0&&source.assets.cardNoUseMonths?.includes(period)===true&&excludedCount===0;
   const cardOutflow=included>0?sum:cardNoUseConfirmed?0:null;
   const livingOutflow=cardOutflow===null?null:add(cardOutflow,-nisa);
   // Unknown card spending is not zero. Only explicit no-use or a registered
@@ -318,7 +319,7 @@ export function monthlyReport(period: string, source: MonthlySource, prepared?:P
 export type CashflowCoverage='missing'|'partial'|'review'|'provisional'|'registered';
 export function monthlyCashflow(report:MonthlyReport):{coverage:CashflowCoverage;expense:number|null;livingExpense:number|null;balance:number|null} {
   const nonCard=add(report.recurringExpense,report.oneTimeExpense);
-  const coverage:CashflowCoverage=report.cardOutflow===null?(nonCard>0?'partial':'missing'):
+  const coverage:CashflowCoverage=report.cardOutflow===null?(nonCard>0||report.cardLines.some(card=>card.paymentDate===null)?'partial':'missing'):
     report.issues.length||report.unknownConfirmationCount||report.recurringCardOverlap?'review':report.provisional.length?'provisional':'registered';
   return {coverage,expense:report.cardOutflow===null?(nonCard||null):add(report.cardOutflow,nonCard),
     livingExpense:report.livingOutflow===null?(nonCard||null):add(report.livingOutflow,nonCard),balance:report.monthlyBalance};

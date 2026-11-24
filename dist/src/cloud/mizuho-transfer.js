@@ -14,7 +14,7 @@ export function estimateMizuhoTransferAmount(bill, extraForSmallBills = true) {
 }
 export function mizuhoTransferForBill(bill, assets) {
     const plan = assets.mizuhoTransferPlan ?? DEFAULT_MIZUHO_PLAN;
-    if (!plan.enabled || bill.cardId !== 'rakuten-mizuho' || assets.cardDebitAccounts?.[bill.cardId] !== 'mizuho-bank' || bill.amount <= 0)
+    if (!plan.enabled || bill.cardId !== 'rakuten-mizuho' || assets.cardDebitAccounts?.[bill.cardId] !== 'mizuho-bank' || bill.amount <= 0 || !bill.paymentDate)
         return null;
     const day = new Date(`${bill.paymentDate}T00:00:00Z`);
     if (Number.isNaN(day.getTime()))

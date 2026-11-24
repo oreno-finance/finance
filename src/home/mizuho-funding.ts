@@ -37,11 +37,12 @@ export function mizuhoFundingStatusForMonth(
   const cards=report.cardLines.filter(c=>c.cardId==='rakuten-mizuho');
   // Multiple different bills in one payment month make the target ambiguous.
   const card=cards.length===1?cards[0]:null;
-  const dueDate=card?shiftedDay(card.paymentDate,-plan.leadDays):null;
+  if(card&&card.paymentDate===null&&card.amount===0&&card.confirmation==='confirmed')return null;
+  const dueDate=card?.paymentDate?shiftedDay(card.paymentDate,-plan.leadDays):null;
   const amount=card&&card.amount>0?estimateMizuhoTransferAmount(card.amount,plan.extraForSmallBills):null;
   const receipt=source.assets.mizuhoFundingChecks?.[month];
   const billConfirmed=card?.confirmation==='confirmed'&&amount!==null;
-  const billSnapshot:MizuhoBillSnapshot|null=billConfirmed&&card?{
+  const billSnapshot:MizuhoBillSnapshot|null=billConfirmed&&card?.paymentDate?{
     billAmount:card.amount,paymentDate:card.paymentDate,transferAmount:amount!,billId:card.id}:null;
   // Legacy acknowledgements without a snapshot are intentionally unverified.
   const changedSinceCheck=receipt?.done===true&&(!billSnapshot||

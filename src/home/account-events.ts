@@ -81,7 +81,7 @@ export function forecastAccounts(source:MonthlySource,today:string,horizonDays=4
     if(to&&to!=='nisa')push({id:`${id}:to`,date,title,amount,kind,accountId:to,movementStatus,route});
   };
   const missingCardIds=new Set<string>();
-  const cardLines:SummaryCard[]=[];
+  const cardLines:(SummaryCard&{paymentDate:string})[]=[];
   const overlapMonths:string[]=[];const invalidMonths:string[]=[];let unverified=false;
   const recurring=recurringForCalculation(source.assets);
   for(const month of addMonths(cutoff,until)){
@@ -89,7 +89,8 @@ export function forecastAccounts(source:MonthlySource,today:string,horizonDays=4
     if(report.recurringCardOverlap>0)overlapMonths.push(month);
     if(report.issues.some(issue=>issue.month===month||issue.month===null))invalidMonths.push(month);
     for(const card of report.cardLines){
-      cardLines.push(card);
+      if(!card.paymentDate)continue;
+      cardLines.push({...card,paymentDate:card.paymentDate});
       if(card.paymentDate>=today&&card.confirmation!=='confirmed')unverified=true;
       const accountId=source.assets.cardDebitAccounts?.[card.cardId];
       if(!accountId||accountId==='nisa')missingCardIds.add(card.cardId);
@@ -175,7 +176,7 @@ export function forecastAccounts(source:MonthlySource,today:string,horizonDays=4
     return {accountId,name,observed:snapshot,projected:balance,projectedAt:until,
       reliable:reason===null,days,reason};
   });
-  const predictedCards:SummaryCard[]=estimates.map(e=>({id:e.id,cardId:e.cardId,name:e.name,
+  const predictedCards:(SummaryCard&{paymentDate:string})[]=estimates.map(e=>({id:e.id,cardId:e.cardId,name:e.name,
     billingMonth:null,paymentDate:e.paymentDate,amount:e.amount,confirmation:'unknown'}));
   const debits=[...cardLines,...predictedCards].filter(card=>card.paymentDate>=today&&card.paymentDate<=until)
     .map(card=>{

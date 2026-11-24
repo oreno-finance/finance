@@ -6,7 +6,7 @@ import { DEFAULT_MIZUHO_PLAN } from './assets.js';
 import { mizuhoTransferForBill } from './mizuho-transfer.js';
 import { fixedCostOccurrences } from '../fixed-costs/contracts.js';
 import { cardPaymentDate } from '../importers/payment-date.js';
-import { CARDS } from '../models/types.js';
+import { CARDS, statementPeriod } from '../models/types.js';
 const month = (day) => day.slice(0, 7);
 const index = (m) => Number(m.slice(0, 4)) * 12 + Number(m.slice(5, 7)) - 1;
 const fromIndex = (i) => `${Math.floor(i / 12)}-${String(i % 12 + 1).padStart(2, '0')}`;
@@ -31,9 +31,9 @@ export function estimatedCardFixedBills(doc, records, fromDay, toDay) {
     const months = new Set();
     for (let i = index(month(fromDay)) - 2; i <= index(month(toDay)) && months.size <= 7; i++)
         months.add(fromIndex(i));
-    const seen = new Set(records.filter(r => r.statement.cardId && r.statement.paymentDate)
-        .map(r => `${r.statement.cardId}|${month(r.statement.paymentDate)}`));
-    const observedMonths = new Set(records.flatMap(r => r.statement.paymentDate ? [month(r.statement.paymentDate)] : []));
+    const seen = new Set(records.filter(r => r.statement.cardId && statementPeriod(r.statement))
+        .map(r => `${r.statement.cardId}|${statementPeriod(r.statement)}`));
+    const observedMonths = new Set(records.flatMap(r => { const p = statementPeriod(r.statement); return p ? [p] : []; }));
     const buckets = new Map();
     for (const contract of fixedCostsForCalculation(doc)) {
         if (contract.payment !== 'card' || !contract.cardId)

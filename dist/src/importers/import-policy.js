@@ -14,6 +14,7 @@ export function statementSignature(s) {
         paymentDate: s.paymentDate,
         statedTotal: s.statedTotal,
         confirmation: s.confirmation,
+        ...(s.zeroUsage === true ? { zeroUsage: true } : {}),
         rows: entries,
     });
 }
@@ -24,7 +25,10 @@ export function statementSignature(s) {
  */
 export function planStatementImport(statements, incoming, getSignature = statementSignature) {
     const incomingSignature = statementSignature(incoming);
-    const exactIndex = statements.findIndex(existing => existing.provider === incoming.provider &&
+    // Two different unselected cards can issue identical empty PDFs. Let the
+    // explicit card selection and duplicate-month gate resolve their identity.
+    const exactIndex = statements.findIndex(existing => !(incoming.zeroUsage === true && incoming.cardId === null) &&
+        existing.provider === incoming.provider &&
         existing.cardId === incoming.cardId &&
         getSignature(existing) === incomingSignature);
     if (exactIndex !== -1)

@@ -18,7 +18,7 @@ function addRow(rows, date, merchant, amount, sourceLine, description) {
         return;
     rows.push({ id: rowId(rows.length), usedOn: date, merchant: squish(merchant), amount, sourceLine, ...(description ? { description: squish(description) } : {}) });
 }
-function parseRakuten(text, rows) {
+function parseRakuten(text, rows, sourceKind) {
     const n = normalize(text);
     const lines = lineList(n);
     const billHeaderIndex = lines.findIndex(line => /(20\d{2})年(\d{1,2})月ご請求金額/.test(line));
@@ -33,10 +33,12 @@ function parseRakuten(text, rows) {
     const date = dateMatch ? isoDate(+dateMatch[1], +dateMatch[2], +dateMatch[3]) : matchPaymentDate(n);
     let previous;
     let inItems = false;
+    let amountColumns = 0;
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         if (/^利用日\s+利用店名/.test(line)) {
             inItems = true;
+            amountColumns = /当月請求額\s+翌月繰越残高/.test(line) ? (/当月支払額/.test(line) ? 6 : 5) : 0;
             continue;
         }
         if (/請求金額確定前の明細|リボのお支払予定|お支払予定表|^※/.test(line) && inItems) {
@@ -44,8 +46,11 @@ function parseRakuten(text, rows) {
         }
         if (!inItems)
             continue;
-        const m = /^(20\d{2})\/(\d{1,2})\/(\d{1,2})\s+(.+?)\s+(本人|ETC)\*?\s+(?:\d+回払い|リボ払い|分割払い|ボーナス払い)\s+(.+)$/.exec(line);
+        const m = /^(20\d{2})\/(\d{1,2})\/(\d{1,2})\s+(.+?)\s+(本人|ETC)\*?\s+(?:\d+回払い|リボ払い|分割払い|分割\s*\d+回払い\s*\(\s*\d+回目\s*\)|ボーナス払い)\s+(.+)$/.exec(line);
         if (m) {
+            // For the newly supported installment format, verify each numeric column.
+            if (/分割\s*\d+回払い/.test(line) && (!amountColumns || !m[6].trim().split(/\s+/).every(value => /^[-−]?(?:\d+|\d{1,3}(?:,\d{3})+)$/.test(value)) || m[6].trim().split(/\s+/).length !== amountColumns))
+                continue;
             const digits = [...m[6].matchAll(/[-−]?\d[\d,]*/g)].map(x => parseYen(x[0])).filter((n) => n !== null);
             // Rakuten's last amount is the carried balance; penultimate is "当月請求額".
             const amount = digits.length >= 2 ? digits[digits.length - 2] : null;
@@ -58,7 +63,22 @@ function parseRakuten(text, rows) {
     }
     // ETC purchases do not identify which of the two Rakuten cards was used.
     // Require an explicit choice before the new statement can be saved.
-    return { cardId: null, paymentDate: date, statedTotal: total, billingMonth: billingMonth ?? paymentMonth(date) };
+    // Explicit no-charge PDF, not an extraction failure. Require the entire empty
+    // table, missing debit/confirmation date, zero adjustment/refund and independent
+    // second-page totals. Never infer zero merely from rows.length or a missing date.
+    const table = lines.findIndex(line => /^利用日\s+利用店名\s+利用者\s+支払方法\s+利用金額\s+手数料\/利息\s+支払総額\s+(?:当月支払額\s+)?当月請求額\s+翌月繰越残高$/.test(line));
+    const emptyTable = table >= 0 && /^(?:[-‐‑−]\s+){8,9}[-‐‑−]$/.test(lines[table + 1] ?? '') && /^※ポイントで支払いサービス/.test(lines[table + 2] ?? '');
+    const totals = lines.findIndex(line => /^リボのお支払金額\s+明細中の(?:利用|お支払)金額合計$/.test(line));
+    const jstMonth = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 7);
+    const zeroUsage = sourceKind === 'pdf' && total === 0 && rows.length === 0 && date === null && !!billingMonth && billingMonth < jstMonth &&
+        /^(20\d{2})-(0[1-9]|1[0-2])$/.test(billingMonth) && /^ご利用代金請求明細書$/.test(lines[0] ?? '') &&
+        /^0円\s+楽天カード\([^)]*\)\s+\*{4}-\*{4}-\*{4}-\d{4}$/.test(totalLine ?? '') &&
+        /^(?:[-‐‑−]\s+){5}0円\s+0円$/.test(paymentLine) && emptyTable && totals > table &&
+        /^0\s+0$/.test(lines[totals + 1] ?? '') && /^内\)キャッシング\s+0$/.test(lines[totals + 2] ?? '') &&
+        /^明細中のリボ払い利用金額合計\s+0\s+本カード会員様利用分\s+0$/.test(lines[totals + 3] ?? '') &&
+        classifyStatus(n) !== 'provisional' && lines.filter(line => /^利用日\s+利用店名/.test(line)).length === 1 &&
+        !lines.some(line => /^20\d{2}\/\d{1,2}\/\d{1,2}\s+/.test(line));
+    return { cardId: null, paymentDate: date, statedTotal: total, billingMonth: billingMonth ?? paymentMonth(date), ...(zeroUsage ? { zeroUsage: true } : {}) };
 }
 function parseJcb(text, rows) {
     const n = normalize(text);
@@ -167,7 +187,7 @@ export function parseStatementText(raw, sourceKind, sourceName, html = '') {
     let data;
     switch (provider) {
         case 'rakuten':
-            data = parseRakuten(normalized, rows);
+            data = parseRakuten(normalized, rows, sourceKind);
             break;
         case 'jcb':
             data = parseJcb(normalized, rows);
@@ -186,7 +206,7 @@ export function parseStatementText(raw, sourceKind, sourceName, html = '') {
     if (provider === 'unknown')
         warnings.push('カード会社の明細形式を特定できませんでした。対応形式か確認してください。');
     // Rakuten/みずほ selection is an ordinary required user action, not a parsing warning.
-    if (rows.length === 0)
+    if (rows.length === 0 && !data.zeroUsage)
         warnings.push(sourceKind === 'pdf' ? '明細の行を抽出できませんでした。画像化されたPDFの場合はWeb明細のコピーを貼り付けてください。' : '取引行を抽出できませんでした。Web画面の表全体をコピーして貼り付けてください。');
     if (!data.billingMonth)
         warnings.push('請求月を特定できませんでした。');
@@ -196,5 +216,5 @@ export function parseStatementText(raw, sourceKind, sourceName, html = '') {
     if (rows.length && data.statedTotal !== null && sum !== data.statedTotal)
         warnings.push(`請求金額と明細合計に差額があります（${(data.statedTotal - sum).toLocaleString('ja-JP')}円）。内容を確認してください。`);
     return { provider, cardId: data.cardId, sourceKind, sourceName, billingMonth: data.billingMonth,
-        paymentDate: data.paymentDate, statedTotal: data.statedTotal, confirmation: classifyStatus(normalized), rows, warnings };
+        paymentDate: data.paymentDate, statedTotal: data.statedTotal, confirmation: data.zeroUsage ? 'confirmed' : classifyStatus(normalized), ...(data.zeroUsage ? { zeroUsage: true } : {}), rows, warnings };
 }

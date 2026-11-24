@@ -1,4 +1,4 @@
-import type { ParsedStatement } from '../models/types.js';
+import {isZeroUsage, type ParsedStatement } from '../models/types.js';
 
 export interface CloudRecord {
   id: string;
@@ -106,6 +106,7 @@ export function validateCloudDocument(raw:unknown):CloudDocument {
   const seen=new Set<string>();
   for (const rec of d.records) {
     if(!rec || typeof rec.id !== 'string'||!rec.id||seen.has(rec.id)||!rec.statement||!Array.isArray(rec.statement.rows)|| rec.statement.rows.length>10000) throw new Error('クラウド明細に不正なレコードがあります。');
+    if(rec.statement.zeroUsage!==undefined&&(!isZeroUsage(rec.statement)||!rec.originalId))throw new Error('利用なし明細の形式が不正です。');
     seen.add(rec.id);
   }
   return d;

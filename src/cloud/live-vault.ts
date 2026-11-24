@@ -5,7 +5,8 @@ import { measureFinancePhase } from './performance-diagnostics.js';
 import { appendPaymentChange, reviseFuturePaymentChange, originContracts, type ContractOrigin, type PaymentTerms } from '../fixed-costs/payment-history.js';
 import { validateFixedCosts, type FixedCostEntry } from '../fixed-costs/contracts.js';
 /** Cloud-first, annual-shard vault. IndexedDB is only opened by the explicit legacy import UI. */
-import type { ParsedStatement } from '../models/types.js';
+import { isZeroUsage, statementPeriod, type ParsedStatement } from '../models/types.js';
+import {importErrors} from '../importers/batch-policy.js';
 import type { LocalSource } from '../storage/encrypted-vault.js';
 import { OneDriveTestClient, GraphError, VaultOperationBusyError, type CleanupFile, type DatedOriginalFile, type CleanupSnapshot } from './onedrive-api.js';
 import { decryptDocument, decryptIndex, decryptOriginal, deriveCloudKey, encryptDocument, encryptIndex, encryptOriginal, encryptRules, decryptRules, freshSalt, parseEnvelope, parseIndexEnvelope } from './cloud-crypto.js';
@@ -984,7 +985,7 @@ export class LiveVault {
    * same cross-device mutation right. A failed subsequent year write may
    * require reconfirmation, but can never revive a superseded zero. */
   private async revokeCardNoUseBeforeYear(latest:CloudDocument,merged:CloudDocument,key:CryptoKey,guard:()=>void):Promise<void> {
-    const months=new Set([...latest.records,...merged.records].map(r=>r.statement.paymentDate?.slice(0,7)).filter((m):m is string=>!!m&&/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(m)));
+    const months=new Set([...latest.records,...merged.records].map(r=>statementPeriod(r.statement)).filter((m):m is string=>!!m&&/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(m)));
     if(!months.size)return;
     if(this.assetsNeedRefresh)this.uncertainWrite('assets',null);
     let state:{document:AssetsDocument;ref:FileRef|null};
@@ -1217,7 +1218,7 @@ export class LiveVault {
     if(!/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(month)||month>maxMonth||typeof confirmed!=='boolean')
       throw new Error('カード未利用の確認年月が不正です。');
     if(this.pendingYearBatch)throw new CloudEditCancelledError('未確認の明細保存を解決してから操作してください。');
-    if(confirmed&&this.readonlyRecords().some(record=>record.statement?.paymentDate?.slice(0,7)===month))
+    if(confirmed&&this.readonlyRecords().some(record=>statementPeriod(record.statement)===month))
       throw new Error('既にカード明細がある月は「利用なし」と確認できません。');
     const next=clone(this.assetsDocument);
     const months=new Set(next.cardNoUseMonths??[]);
@@ -1410,7 +1411,7 @@ export class LiveVault {
             let current:Awaited<ReturnType<LiveVault['readCurrent']>>;
             try{current=await this.readCurrent(key,this.salt,undefined,guard);guard();}
             catch(error){guard();throw new CloudEditCancelledError('最新のカード明細を確認できないため「利用なし」の保存を停止しました。');}
-            if([...current.shards.values()].some(shard=>shard.document.records.some(record=>record.statement.paymentDate?.slice(0,7)===noUse.month)))
+            if([...current.shards.values()].some(shard=>shard.document.records.some(record=>statementPeriod(record.statement)===noUse.month)))
               throw new CloudEditCancelledError('OneDriveにカード明細がある月は「利用なし」と確認できません。最新データを取得してください。');
             if(current.shards.size!==this.shards.size||[...current.shards].some(([year,shard])=>{
               const prior=this.shards.get(year)?.ref;return prior?.id!==shard.ref.id||prior?.etag!==shard.ref.etag;
@@ -1480,6 +1481,7 @@ export class LiveVault {
       const year=statementBucket(item.statement.billingMonth);
       let originalId=prior?.originalId;
       let originalMonth=prior?.originalMonth??prior?.statement.billingMonth??null;
+      if(item.statement.zeroUsage!==undefined&&(!isZeroUsage(item.statement)||importErrors(item.statement,!!item.source||!!originalId).length))throw new Error('利用なし明細の形式が不正です。');
       if(item.statement.sourceKind==='pdf'&&item.source) {
         if(item.source.mime!=='application/pdf')throw new Error('PDF原本のファイル形式が不正です。');
         // Deterministic across retries for a draft; never overwrite an existing encrypted PDF.
@@ -1674,11 +1676,12 @@ export class LiveVault {
       const duplicates=duplicateStatementMonths(merged.records,protectedIds);
       if(duplicates.length)throw new CloudEditCancelledError(
         `同じカード・請求月の明細がOneDrive側で重複しています（${duplicates.join('、')}）。最新データを取得し、差し替え先を確認してください。`);
+      if(merged.records.some(r=>r.statement.zeroUsage!==undefined&&(!isZeroUsage(r.statement)||importErrors(r.statement,!!r.originalId).length)))throw new CloudEditCancelledError('利用なし明細が競合しました。最新データを確認してください。');
       const encrypted=await encryptDocument(merged,key,this.salt);
       guard();
       try {
         await this.withMutation(guard,async(activeLease)=>{
-        const checksNoUse=[...latest.records,...merged.records].some(record=>!!record.statement.paymentDate);
+        const checksNoUse=[...latest.records,...merged.records].some(record=>!!statementPeriod(record.statement));
         if(checksNoUse){
           if(this.assetsSaving)throw new CloudEditCancelledError('資産設定を保存中です。完了後に明細を保存してください。');
           this.assetsSaving=true;this.settingsRevision++;
