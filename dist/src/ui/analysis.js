@@ -1,14 +1,15 @@
+import { formatYen as sharedYen, formatSignedYen, formatMonth } from './formatters.js';
 /** Finance P1-A: in-browser multi-month / annual analysis, no additional persistence. */
 import { annualAnalytics, comparableDelta, priorYearAnalytics, rollingAnalytics } from '../analysis/period-analytics.js';
-import { monthNavigator, yearNavigator } from './period-navigator.js';
+import { monthNavigator, yearNavigator, localMonth } from './period-navigator.js';
 import { periodPointBenefitsFromReports } from '../summary/point-benefits.js';
-import { pointBenefitsSection } from './point-benefits.js';
+import { pointBenefitsSection, pointCoverage } from './point-benefits.js';
 import { measureFinanceSync } from '../cloud/performance-diagnostics.js';
-const formatYen = (amount, digits = 0) => amount === null ? '未取得' : `${amount.toLocaleString('ja-JP', { maximumFractionDigits: digits })}円`;
-const signedYen = (value) => `${value > 0 ? '+' : ''}${formatYen(value)}`;
+const formatYen = (amount, digits = 0) => sharedYen(amount, digits, '未取得');
+const signedYen = formatSignedYen;
 const monthLabel = (period) => `${Number(period.slice(5))}月`;
-const labelYearMonth = (period) => `${period.slice(0, 4)}年${monthLabel(period)}`;
-const currentLocal = () => { const date = new Date(); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`; };
+const labelYearMonth = formatMonth;
+const currentLocal = localMonth;
 function el(tag, className = '', text) {
     const node = document.createElement(tag);
     if (className)
@@ -32,10 +33,12 @@ function panel(heading) {
     return { root, body };
 }
 const quality = (month) => month.coverage === 'missing' ? '未取得' : month.coverage === 'partial' ? '一部未取得' : month.coverage === 'provisional' ? '暫定' : month.coverage === 'review' ? '要確認' : '登録済み';
-const amountText = (value, month) => value === null ? '未取得' : formatYen(value);
+const amountText = (value) => value === null ? '未取得' : formatYen(value);
 function metric(label, value, sub) {
     const root = el('div', 'analysis-metric');
-    root.append(el('span', 'analysis-muted', label), el('strong', '', value), el('small', 'analysis-muted', sub));
+    root.append(el('span', 'analysis-muted', label), el('strong', '', value));
+    if (sub)
+        root.append(el('small', 'analysis-muted', sub));
     return root;
 }
 function note(text) { return el('p', 'analysis-muted analysis-note', text); }
@@ -82,16 +85,17 @@ export function initAnalysis(deps) {
         const result = el('div', 'analysis-metrics');
         const totals = data.totals;
         const range = `${data.months[0].period}〜${data.months.at(-1).period}`;
-        result.append(metric('収入（実績・見込み）', formatYen(totals.income), `${totals.knownIncomeMonths}/${data.months.length}か月 · ${range}`), metric('支出（明細・予定）', formatYen(totals.expense), `${totals.knownExpenseMonths}/${data.months.length}か月 · NISAを含む`), metric('収支（実績・見込み）', formatYen(totals.balance), totals.comparable ? '対象期間の登録済み集計' : '欠測・暫定などを含む参考値'), metric('平均支出', formatYen(totals.avgExpense, 0), `${totals.knownExpenseMonths}か月分の平均`));
+        result.append(metric('収入（実績・見込み）', formatYen(totals.income), `${totals.knownIncomeMonths}/${data.months.length}か月 · ${range}`), metric('支出（明細・予定）', formatYen(totals.expense), `${totals.knownExpenseMonths}/${data.months.length}か月 · NISAを含む`), metric('収支（実績・見込み）', formatYen(totals.balance), totals.comparable ? '' : '欠測・暫定などを含む参考値'), metric('平均支出', formatYen(totals.avgExpense, 0), `${totals.knownExpenseMonths}か月分の平均`));
         return result;
     }
     function qualitySummary(data) {
-        const { missingMonths, provisionalMonths, reviewMonths } = data.totals;
+        const { provisionalMonths, reviewMonths } = data.totals;
+        const missingMonths = data.months.filter(m => m.coverage === 'missing' || m.coverage === 'partial').length;
         if (!missingMonths && !provisionalMonths && !reviewMonths)
             return null;
         const bits = [missingMonths ? `未取得 ${missingMonths}か月` : '', provisionalMonths ? `暫定 ${provisionalMonths}か月` : '', reviewMonths ? `要確認 ${reviewMonths}か月` : ''].filter(Boolean);
         const text = el('div', 'analysis-coverage');
-        text.append(el('strong', '', bits.join(' · ')), el('span', '', '集計は登録済みの情報を使用しています。未取得月を0円としていません。'));
+        text.append(el('strong', '', bits.join(' · ')), el('span', '', '登録済み明細分の集計'));
         return text;
     }
     function chart(data) {
@@ -105,7 +109,7 @@ export function initAnalysis(deps) {
         const bars = el('div', 'analysis-chart-bars');
         for (const month of data.months) {
             const cell = action('', () => go(month.period), 'analysis-chart-month');
-            cell.setAttribute('aria-label', `${labelYearMonth(month.period)} · 収入 ${amountText(month.income, month)} · 支出 ${amountText(month.expense, month)} · ${quality(month)}`);
+            cell.setAttribute('aria-label', `${labelYearMonth(month.period)} · 収入 ${amountText(month.income)} · 支出 ${amountText(month.expense)} · ${quality(month)}`);
             const pair = el('span', 'analysis-bar-pair');
             for (const [value, cls] of [[month.income, 'income'], [month.expense, 'expense']]) {
                 const slot = el('span', 'analysis-bar-slot');
@@ -120,12 +124,12 @@ export function initAnalysis(deps) {
                 }
                 pair.append(slot);
             }
-            cell.append(pair, el('span', 'analysis-bar-label', monthLabel(month.period)), el('small', 'analysis-muted', month.coverage === 'missing' ? '未取得' : month.coverage === 'provisional' ? '暫定' : month.coverage === 'review' ? '要確認' : ''));
+            cell.append(pair, el('span', 'analysis-bar-label', monthLabel(month.period)), el('small', 'analysis-muted', month.coverage === 'registered' ? '' : quality(month)));
             bars.append(cell);
         }
         scroll.append(bars);
         block.body.append(scroll);
-        block.body.append(note('月を選択すると月別サマリーへ移動します。登録済みの収入・支出を表示しています。'));
+        block.body.append(note('月を選択して詳細を表示'));
         return block.root;
     }
     function monthTable(data) {
@@ -197,6 +201,8 @@ export function initAnalysis(deps) {
         }
         block.body.append(switcher);
         const groups = data.groups[dimension].slice(0, 12);
+        if (data.groups[dimension].length > 12)
+            block.body.append(note(`上位12件 / 全${data.groups[dimension].length}件`));
         if (!groups.length) {
             block.body.append(note('分析できる取引がありません。'));
             return block.root;
@@ -232,7 +238,7 @@ export function initAnalysis(deps) {
         scroll.append(table);
         block.body.append(scroll);
         const caveat = dimension === 'card' ? 'カードごとの引落月で集計しています。' : dimension === 'category' ? 'カード利用・定期支出・実行済み単発支出・NISA積立の分類です。' : 'カード利用先だけを集計しています。';
-        block.body.append(note(`${caveat} 利用先・金額を選ぶと該当明細へ移動します。未取得月は空白扱いです。`));
+        block.body.append(note(`${caveat} 名称・金額から明細を表示できます。`));
         return block.root;
     }
     function annualCompare(data, prior) {
@@ -302,14 +308,14 @@ export function initAnalysis(deps) {
                 reportContext = { source, reports: new Map(data.months.map(m => [m.period, m.report])) };
                 const header = el('div', 'analysis-range');
                 header.append(el('strong', '', mode === 'month' ? `${labelYearMonth(data.months[0].period)}〜${labelYearMonth(data.months.at(-1).period)}` : `${year}年の収支`));
-                root.append(header, summary(data), pointBenefitsSection('獲得ポイント', measureFinanceSync('ui.analysis.points', () => periodPointBenefitsFromReports(data.months.map(m => m.report), source))));
+                root.append(header, summary(data));
                 const warning = qualitySummary(data);
                 if (warning)
                     root.append(warning);
                 root.append(measureFinanceSync('ui.analysis.chart', () => chart(data)), monthTable(data));
                 if (mode === 'year')
                     root.append(annualCompare(data, priorYearAnalytics(source, year, today)));
-                root.append(rangeInsights(data), ranking(data));
+                root.append(ranking(data), rangeInsights(data), pointBenefitsSection('推定ポイント', measureFinanceSync('ui.analysis.points', () => periodPointBenefitsFromReports(data.months.map(m => m.report), source)), pointCoverage(data.months.map(m => m.report))));
             }
             catch (error) {
                 const problem = panel('収支分析を表示できません');

@@ -141,7 +141,7 @@
     flex-direction:column;
   }
   #manage-view .manage-index > .panel-heading,
-  #manage-view .manage-index > .manage-period-controls {flex:0 0 auto}
+  #manage-view > .manage-period-controls {flex:0 0 auto}
   #manage-view .manage-index > .statement-list {
     flex:1 1 0;
     min-height:0!important;

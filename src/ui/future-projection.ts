@@ -1,3 +1,4 @@
+import {formatYen as sharedYen,formatMonth,formatRate,formatNumber} from './formatters.js';
 /** Long-term savings planner reads persisted settings; only comparison parameters are editable. */
 import type { AssetsDocument } from '../cloud/assets.js';
 import type { CloudRecord } from '../cloud/merge.js';
@@ -6,8 +7,8 @@ import {matchingNisaRows} from '../cloud/asset-projection.js';
 
 export interface FutureProjectionUi {render():void;reset():void}
 export interface FutureSource {assets:AssetsDocument;records:readonly CloudRecord[]}
-const yen=(n:number|null)=>n===null?'未登録':`${Math.round(n).toLocaleString('ja-JP')}円`;
-const short=(n:number|null)=>n===null?'--':Math.abs(n)>=10000?`${(n/10000).toLocaleString('ja-JP',{maximumFractionDigits:1})}万円`:`${Math.round(n).toLocaleString('ja-JP')}円`;
+const yen=(value:number|null)=>sharedYen(value,0,'未登録');
+const short=(n:number|null)=>n===null?'—':Math.abs(n)>=10000?`${formatNumber(n/10000,1)}万円`:yen(n);
 function el(tag:string,className='',text?:string):HTMLElement{
   const node=document.createElement(tag);node.className=className;if(text!==undefined)node.textContent=text;return node;
 }
@@ -21,7 +22,7 @@ function monthAfter(month:string):string{
   const y=Number(month.slice(0,4)),m=Number(month.slice(5));
   return `${y+(m===12?1:0)}-${String(m===12?1:m+1).padStart(2,'0')}`;
 }
-function dateTitle(month:string):string{return `${month.slice(0,4)}年${Number(month.slice(5))}月`;}
+const dateTitle=formatMonth;
 const svgNS='http://www.w3.org/2000/svg';
 function svgNode(tag:string,attrs:Record<string,string>):SVGElement{
   const node=document.createElementNS(svgNS,tag);
@@ -201,6 +202,7 @@ export function initFutureProjection(getSource:()=>FutureSource|null):FutureProj
   let compare=false;
   let chartFilter:ProjectionSeriesFilter='all';
   let chosenMonth:string|null=null;
+  let yearListOpen=false;
   // Only reuse within the same immutable vault snapshot and NISA-rule version.
   let cachedNisa:{records:readonly CloudRecord[];rules:string;rows:ReturnType<typeof matchingNisaRows>}|null=null;
   let renderTimer:ReturnType<typeof setTimeout>|null=null;
@@ -264,8 +266,10 @@ export function initFutureProjection(getSource:()=>FutureSource|null):FutureProj
   function render():void {
     if(renderTimer!==null){clearTimeout(renderTimer);renderTimer=null;}
     const source=getSource();
+    const previousList=results.querySelector<HTMLDetailsElement>('.future-annual-list');if(previousList)yearListOpen=previousList.open;
     results.replaceChildren();
-    if(!source){hint.textContent='OneDrive保管庫の解除後に将来資産を試算できます。';return;}
+    find('future-scenario-hint').textContent='';
+    if(!source){find('future-age-value').textContent='—';find('future-target-label').textContent='';hint.textContent='OneDrive保管庫の解除後に将来資産を試算できます。';return;}
     const birthMonth=source.assets.birthMonth??'';
     const bounds=projectionAgeBounds(birthMonth,localToday().slice(0,7));
     if(lastBirthMonth!==birthMonth){
@@ -280,9 +284,9 @@ export function initFutureProjection(getSource:()=>FutureSource|null):FutureProj
     }else target.value='';
     age.disabled=!bounds;
     birthSettings.hidden=!!birthMonth;
-    find('future-age-value').textContent=`${age.value}歳`;
-    find('future-nisa-rate-value').textContent=`${Number(nisaRate.value).toFixed(1)}%`;
-    find('future-target-label').textContent=birthMonth?`${dateTitle(target.value)}（${age.value}歳）`:'生年月未設定';
+    find('future-age-value').textContent=bounds?`${age.value}歳`:'—';
+    find('future-nisa-rate-value').textContent=formatRate(Number(nisaRate.value));
+    find('future-target-label').textContent=bounds?`目標年月：${dateTitle(target.value)}`:'';
     if(!birthMonth){hint.textContent='生年月を設定してください。';return;}
     if(!bounds){hint.textContent='生年月と現在年月から、50年以内に選べる目標年齢がありません。';return;}
     const cashRules=source.assets.recurring.filter(e=>e.enabled&&e.toAccountId==='cash-savings'&&e.fromAccountId!=='cash-savings'&&(e.kind==='transfer'||e.kind==='income'));
@@ -343,7 +347,7 @@ export function initFutureProjection(getSource:()=>FutureSource|null):FutureProj
           :[dateTitle(point.month)+ageText(point.month,birthMonth),yen(point.cash),yen(point.nisa),yen(point.combined)];
         for(const value of vals)row.append(el('td','',value));tbody.append(row);
       }
-      table.append(tbody);tableWrap.append(table);results.append(tableWrap);
+      table.append(tbody);tableWrap.append(table);const annual=el('details','future-annual-list') as HTMLDetailsElement;annual.open=yearListOpen;annual.append(el('summary','','年別一覧'),tableWrap);annual.addEventListener('toggle',()=>{if(annual.isConnected)yearListOpen=annual.open;});results.append(annual);
     }catch(error){hint.textContent=error instanceof Error?error.message:'将来予測を計算できませんでした。';}
   }
   const reset=()=>{
@@ -351,7 +355,8 @@ export function initFutureProjection(getSource:()=>FutureSource|null):FutureProj
     cachedNisa=null;lastBirthMonth=null;age.disabled=true;birthSettings.hidden=false;target.value=incrementYearMonth(localToday().slice(0,7),18);
     from.value=monthAfter(localToday().slice(0,7));saving.value='20000';nisaScenarioInput.value='20000';
     scenarioCashEdited=false;scenarioNisaEdited=false;results.replaceChildren();hint.textContent='保管庫を解除してください。';
-    compare=false;chartFilter='all';chosenMonth=null;scenarioAccordion.open=false;scenarioPanel.hidden=true;
+    find('future-scenario-hint').textContent='';find('future-age-value').textContent='—';find('future-target-label').textContent='';
+    compare=false;chartFilter='all';chosenMonth=null;yearListOpen=false;scenarioAccordion.open=false;scenarioPanel.hidden=true;
     cashChoice.checked=true;nisaChoice.checked=false;updateScenarioControls();
   };
   return {render,reset};

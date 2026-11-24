@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {CATEGORIES, PALETTE, categoryMeta, emptyRules, validateRules, validateRule, mergeRules, matchingRule} from '../dist/src/cloud/merchant-rules.js';
 import {recentMerchants} from '../dist/src/ui/recent-merchants.js';
-import {LiveVault} from '../dist/src/cloud/live-vault.js';
+import {LiveVault} from './helpers/coordinated-vault.mjs';
 import {GraphError} from '../dist/src/cloud/onedrive-api.js';
 import {freshSalt,deriveCloudKey,encryptRules,decryptRules} from '../dist/src/cloud/cloud-crypto.js';
 

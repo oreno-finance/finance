@@ -49,7 +49,7 @@ test('only accepted, error-free file and paste batches auto-close after parsing'
   assert.match(source,/if\(importBatchIsClean\(accepted,rejected,failed\)\)closeImportAddDialog\(\)/);
   assert.match(source,/if\(added && importBatchIsClean\(1,0,0\)\)closeImportAddDialog\(\)/);
   assert.match(source,/for\(const file of chosen\)/);
-  assert.match(source,/finally\{\s*filesBusy=false;finishActivity/);
+  assert.match(source,/finally\{\s*if\(importAbort===controller\)importAbort=null;\s*filesBusy=false;finishActivity/);
 });
 
 test('card type and totals are never a nested scroll area, while transaction rows are',()=>{

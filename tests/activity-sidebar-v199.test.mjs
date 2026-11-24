@@ -27,7 +27,7 @@ test('only the floating bottom-right card owns global save and loading feedback'
  const reports=read('src/ui/monthly-reports.ts'),subs=read('src/ui/subscriptions.ts');
  assert.match(html,/id="toast" class="toast activity-toast" role="status"/);
  assert.match(css,/#cloud-live-bar,#operation-result \{display:none!important\}/);
- assert.match(css,/right:22px!important;bottom:86px!important;top:auto!important/);
+ assert.match(css,/right:22px!important;bottom:calc\(16px \+ env\(safe-area-inset-bottom,0px\)\)!important;top:auto!important/);
  assert.match(css,/translateX\(24px\)/);
  assert.match(css,/prefers-reduced-motion:reduce/);
  assert.match(main,/operationResult\([^)]*[\s\S]*?showActivity\(message,kind\)/);

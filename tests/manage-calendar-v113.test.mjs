@@ -9,6 +9,6 @@ test('明細管理の初期年月は暦に従い、保存済みデータの最�
   assert.match(main,/let manageYear = initialCalendar\.year;/);
   assert.match(main,/let manageMonth = initialCalendar\.month;/);
   assert.match(main,/function manageChangePeriod/);
-  assert.match(main,/function manageShiftMonth/);
+  assert.match(main,/bindMonthNavigator\(\$\('manage-period-controls'\)/);
   assert.deepEqual(filteredStatementIndices([{billingMonth:'2026-10'}],'2026','11'),[]);
 });

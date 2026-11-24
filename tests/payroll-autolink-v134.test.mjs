@@ -4,7 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {webcrypto} from 'node:crypto';
 import {emptyAssets,validateAssets,mergeAssets,validatePayrollAutoPassphrase} from '../dist/src/cloud/assets.js';
 import {encryptAssets,decryptAssets,deriveCloudKey,freshSalt} from '../dist/src/cloud/cloud-crypto.js';
-import {LiveVault} from '../dist/src/cloud/live-vault.js';
+import {LiveVault} from './helpers/coordinated-vault.mjs';
 import {GraphError} from '../dist/src/cloud/onedrive-api.js';
 if(!globalThis.crypto)globalThis.crypto=webcrypto;
 const payrollSecret='TEST ONLY payroll passphrase 2026';

@@ -87,7 +87,7 @@ test('UI navigation filters rows by stable original row ID, not array position',
   assert.match(html,/id="manage-drilldown-clear"/);
   assert.match(html,/id="manage-period-controls"/);
   assert.match(main,/matchingRows\?\.has\(item\.row\.id\)/);
-  assert.match(main,/s\.rows\.splice\(index, 1\)/);
+  assert.match(main,/s\.rows\.findIndex\(entry=>entry\.id===row\.id\)/);
   assert.match(main,/drilldownRows=source\?analysisDrilldownMatches/);
   assert.match(main,/\$\('manage-period-controls'\)\.classList\.toggle\('hidden',!!drilldown\)/);
   assert.match(analysis,/openDrilldown\(request:AnalysisDrilldown,context:AnalysisReportContext\|null\)/);

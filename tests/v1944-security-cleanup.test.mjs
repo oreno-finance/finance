@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
 import {readFileSync} from 'node:fs';
-import {LiveVault} from '../dist/src/cloud/live-vault.js';
+import {LiveVault} from './helpers/coordinated-vault.mjs';
 import {OneDriveTestClient} from '../dist/src/cloud/onedrive-api.js';
 import {parseIndexEnvelope} from '../dist/src/cloud/cloud-crypto.js';
 if(!globalThis.crypto)globalThis.crypto=webcrypto;
@@ -136,7 +136,7 @@ test('settings and lock notification controls are present in source',()=>{
   for(const id of ['cloud-cleanup-scan','cloud-cleanup-originals','cloud-cleanup-versions','cloud-cleanup-backup','cloud-cleanup-delete'])
     assert.ok(html.includes(`id="${id}"`),id);
   assert.match(main,/addEventListener\('storage',[\s\S]*CROSS_TAB_LOCK_KEY/);
-  assert.match(main,/onLock:\(\)=>\{[\s\S]*broadcastVaultLock\(\)/);
+  assert.match(main,/onLock:async\(\)=>\{[\s\S]*broadcastVaultLock\(\)/);
 });
 
 test('old v1 and backups are only deleted by explicit selection, not by other cleanup choices',async()=>{
@@ -189,4 +189,64 @@ test('cleanup UI requires individual snapshot selection and separately confirms 
   assert.match(graph,/item\.name==='finance-v1-vault\.enc'/);
   assert.match(graph,/isSnapshotName\(item\.name!/);
   assert.match(graph,/If-Match/);
+});
+
+const deferred=()=>{let enter,release;const entered=new Promise(r=>{enter=r;}),done=new Promise(r=>{release=r;});return {entered,release,wait:async()=>{enter();await done;}};};
+const cleanupOriginals={oldGenerations:false,unreferencedOriginals:true,unversionedFolders:false};
+const fixturePdf=new Uint8Array([37,80,68,70,42,5]);
+const pdfItem=id=>({id,statement:structuredClone(statement),source:{bytes:fixturePdf.slice(),mime:'application/pdf'}});
+test('Phase 6E: 原本アップロード中の他端末の整理は失敗し明細とPDFを維持する',async()=>{
+ const {client,vault}=await create();const peer=new LiveVault(new MemoryClient(client.shared));await peer.unlock(secret);
+ const barrier=deferred(),upload=client.uploadDatedOriginal.bind(client);
+ client.uploadDatedOriginal=async(...args)=>{await upload(...args);await barrier.wait();};
+ const id=crypto.randomUUID(),saving=vault.saveBatch([pdfItem(id)]);
+ await barrier.entered;
+ try{
+   assert.equal((await peer.previewCleanup()).unreferencedOriginalCount,1,'保存中の原本を未参照として見つける場合でも削除は不可');
+   await assert.rejects(peer.deletePreviewedCleanup(cleanupOriginals),/別の端末/);
+   assert.equal((await client.listDatedOriginals()).length,1);
+ }finally{barrier.release();await saving;}
+ assert.deepEqual(await vault.original(id),fixturePdf);
+ assert.equal((await peer.previewCleanup()).unreferencedOriginalCount,0);
+});
+test('Phase 6E: 整理中の別端末のPDF登録は原本アップロード前に停止する',async()=>{
+ const {client,vault}=await create();const id=crypto.randomUUID();await vault.saveBatch([pdfItem(id)]);await vault.delete(id);
+ const otherClient=new MemoryClient(client.shared),peer=new LiveVault(otherClient);await peer.unlock(secret);
+ assert.equal((await peer.previewCleanup()).unreferencedOriginalCount,1);
+ const barrier=deferred(),remove=otherClient.deleteCleanupItem.bind(otherClient);
+ otherClient.deleteCleanupItem=async file=>{await barrier.wait();await remove(file);};
+ const cleaning=peer.deletePreviewedCleanup(cleanupOriginals);await barrier.entered;
+ try{await assert.rejects(vault.saveBatch([pdfItem(crypto.randomUUID())]),/別の端末/);assert.equal((await client.listDatedOriginals()).length,1);}
+ finally{barrier.release();assert.equal(await cleaning,1);}
+ const next=crypto.randomUUID();await vault.saveBatch([pdfItem(next)]);assert.deepEqual(await vault.original(next),fixturePdf);
+});
+test('Phase 6E: 整理前にロックされた要求は一件も削除せず旧プレビューを再利用しない',async()=>{
+ const {client,vault}=await create();const id=crypto.randomUUID();await vault.saveBatch([pdfItem(id)]);await vault.delete(id);await vault.previewCleanup();
+ const barrier=deferred(),list=client.listDatedOriginals.bind(client);let paused=true;
+ client.listDatedOriginals=async()=>{const files=await list();if(paused){paused=false;await barrier.wait();}return files;};
+ const deleting=vault.deletePreviewedCleanup(cleanupOriginals),rejected=assert.rejects(deleting,/ロック|保管庫が変更/);await barrier.entered;
+ vault.lock();barrier.release();await rejected;
+ assert.equal(vault.unlocked,false);assert.equal((await client.listDatedOriginals()).length,1);
+ await vault.unlock(secret);await assert.rejects(vault.deletePreviewedCleanup(cleanupOriginals),/先に不要データ/);
+ assert.equal((await vault.previewCleanup()).unreferencedOriginalCount,1);
+});
+test('Phase 6E: 一件目の削除を送信した後のロックでは残りを削除しない',async()=>{
+ const {client,vault}=await create();
+ const ids=[crypto.randomUUID(),crypto.randomUUID()];
+ // Different months satisfy the real card/month uniqueness invariant.
+ const second=pdfItem(ids[1]);second.statement.billingMonth='2026-10';
+ await vault.saveBatch([pdfItem(ids[0]),second]);for(const id of ids)await vault.delete(id);
+ assert.equal((await vault.previewCleanup()).unreferencedOriginalCount,2);
+ const remove=client.deleteCleanupItem.bind(client);let calls=0;
+ client.deleteCleanupItem=async file=>{await remove(file);calls++;if(calls===1)vault.lock();};
+ await assert.rejects(vault.deletePreviewedCleanup(cleanupOriginals),error=>error.name==='CloudWriteUncertainError'&&/1件/.test(error.message));
+ assert.equal(calls,1);assert.equal((await client.listDatedOriginals()).length,1);assert.equal(vault.unlocked,false);
+});
+test('Phase 6E: 整理済みの原本への参照を旧端末から復活させない',async()=>{
+ const {client,vault}=await create();const id=crypto.randomUUID();await vault.saveBatch([pdfItem(id)]);
+ const peer=new LiveVault(new MemoryClient(client.shared));await peer.unlock(secret);const old=peer.records()[0].statement;
+ await vault.delete(id);await vault.previewCleanup();await vault.deletePreviewedCleanup(cleanupOriginals);
+ peer.setStatementConflictResolver(()=>true);
+ await assert.rejects(peer.saveBatch([{id,statement:{...old,sourceName:'別の編集'}}]),/PDF原本|同時編集|保存を中止/);
+ await vault.refresh();assert.equal(vault.records().length,0);assert.equal((await client.listDatedOriginals()).length,0);
 });

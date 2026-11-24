@@ -1,4 +1,4 @@
-import { changePeriod, monthlyReport, prepareMonthlyReports } from '../summary/monthly-summary.js';
+import { changePeriod, monthlyReport, monthlyCashflow, prepareMonthlyReports } from '../summary/monthly-summary.js';
 import { forecastAccounts } from './account-events.js';
 import { homeActions } from './action-items.js';
 import { pendingCardSubscriptions } from '../subscriptions/detect.js';
@@ -22,11 +22,9 @@ export function homeOverview(source, today) {
     const priorFundingReport = source.assets.mizuhoTransferPlan?.enabled &&
         source.assets.cardDebitAccounts?.['rakuten-mizuho'] === 'mizuho-bank'
         ? reportForMonth(previousPeriod) : null;
-    const coverage = report.cardOutflow === null ? (report.recurringExpense + report.oneTimeExpense > 0 ? 'partial' : 'missing') : report.issues.length || report.unknownConfirmationCount ? 'needs-review' :
-        report.provisional.length ? 'provisional' : 'registered';
-    const outflow = report.cardOutflow === null ? (report.recurringExpense + report.oneTimeExpense || null) : report.cardOutflow + report.recurringExpense + report.oneTimeExpense;
-    if (outflow !== null && !Number.isSafeInteger(outflow))
-        throw new Error('ホームの支出額が大きすぎます。');
+    const cashflow = monthlyCashflow(report);
+    const coverage = cashflow.coverage === 'review' ? 'needs-review' : cashflow.coverage;
+    const outflow = cashflow.expense;
     const bankAccountIds = ['rakuten-bank', 'mizuho-bank', 'cash-savings', 'nisa'];
     const labels = { 'rakuten-bank': '楽天銀行', 'mizuho-bank': 'みずほ銀行',
         'cash-savings': '貯金口座', 'nisa': 'NISA' };

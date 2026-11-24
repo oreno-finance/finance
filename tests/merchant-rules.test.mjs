@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {emptyRules,validateRule,validateRules,mergeRules,matchingRule,displayMerchant,normalizeMerchant} from '../dist/src/cloud/merchant-rules.js';
 import {freshSalt,deriveCloudKey,encryptRules,decryptRules,parseEnvelope,decryptDocument,encryptDocument} from '../dist/src/cloud/cloud-crypto.js';
 import {emptyDocument} from '../dist/src/cloud/merge.js';
-import {LiveVault} from '../dist/src/cloud/live-vault.js';
+import {LiveVault} from './helpers/coordinated-vault.mjs';
 import {GraphError} from '../dist/src/cloud/onedrive-api.js';
 
 const secret='長くて安全な1Passwordのパスフレーズ';

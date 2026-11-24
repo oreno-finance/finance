@@ -49,7 +49,7 @@ test('unassigned card debit has no made-up bank account or after-balance and sug
   const home=homeOverview(s,today);
   assert.equal(home.forecast.debits[0].accountId,null);
   assert.equal(home.forecast.debits[0].afterBalance,null);
-  assert.ok(home.actions.some(a=>a.kind==='card-account'&&a.target==='assets'));
+  assert.ok(home.actions.some(a=>a.kind==='card-account'&&a.target==='settings'));
   assert.ok(!home.actions.some(a=>a.kind==='shortage'));
 });
 

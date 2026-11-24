@@ -53,7 +53,9 @@ test('cloud connects and syncs in primary grid, account switching in its own gro
   }
   assert.match(css,/\.cloud-primary-actions\{display:grid/);
   assert.match(css,/\.cloud-account-actions\{display:flex/);
-  assert.match(css,/@media\(min-width:681px\) and \(max-width:1150px\)/);
+  assert.match(css,/@container cloud-connection \(min-width:240px\)/);
+  assert.match(css,/@container cloud-connection \(min-width:520px\)/);
+  assert.doesNotMatch(css,/\.cloud-primary-actions #cloud-login\{grid-column/);
   assert.equal(read('dist/index.html'),html);
 });
 

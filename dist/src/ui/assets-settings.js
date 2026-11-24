@@ -1,3 +1,5 @@
+import { bindModalDismiss, requestConfirmation, confirmationPending, cancelConfirmation } from './modal.js';
+import { formatYen as sharedYen, formatDate, formatDateTime } from './formatters.js';
 import { ASSET_ACCOUNTS, latestBalance, validateRecurring, validateSnapshot, validateNisaCardRule, validateOneTime } from '../cloud/assets.js';
 import { CloudWriteUncertainError } from '../cloud/live-vault.js';
 import { CARDS } from '../models/types.js';
@@ -7,6 +9,9 @@ import { reconcileBalance } from '../cloud/balance-reconciliation.js';
 import { estimateMizuhoTransferAmount } from '../cloud/mizuho-transfer.js';
 import { DEFAULT_MIZUHO_PLAN } from '../cloud/assets.js'; /* finance-v148 */
 import { PayrollReadSession } from '../cloud/payroll-bridge.js';
+import { recurringSalaryRole, payrollRole } from '../cloud/payroll-income.js';
+import { originContracts, paymentTermsOn } from '../fixed-costs/payment-history.js';
+import { priceOnDay, fixedCostState } from '../fixed-costs/contracts.js';
 import { simpleActivity } from './activity-feedback.js';
 const $ = (id) => {
     const value = document.getElementById(id);
@@ -15,7 +20,7 @@ const $ = (id) => {
     return value;
 };
 const accountName = (id) => ASSET_ACCOUNTS.find(a => a.id === id)?.name ?? '未設定';
-const yen = (value) => `${value.toLocaleString('ja-JP')}円`;
+const yen = (value) => sharedYen(value, 0, '—');
 const localDate = (date = new Date()) => {
     const adjusted = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
     return adjusted.toISOString().slice(0, 10);
@@ -53,11 +58,10 @@ function addButton(label, handler, remove = false) {
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = label;
-    button.className = remove ? 'assets-item-button danger' : 'assets-item-button';
+    button.className = remove ? 'assets-item-button danger danger-action' : 'assets-item-button';
     button.addEventListener('click', handler);
     return button;
 }
-const kindName = { expense: '支出', income: '収入', transfer: '振替' };
 const weekdayLabels = ['日', '月', '火', '水', '木', '金', '土'];
 function frequencyLabel(e) {
     if (e.frequency === 'weekly')
@@ -77,7 +81,7 @@ export function recurringSwitchNeedsConfirmation(changed, editingId, nextId) {
 export function payrollPassphraseUpdate(entered, saved) {
     return entered && entered !== saved ? entered : undefined;
 }
-export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollChange = () => { }) {
+export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollChange = () => { }, openFixedCosts = () => { }) {
     let busy = false, nisaDirty = false, birthDirty = false, editingId = null;
     let recurringBaseline = '';
     let payrollSession = null;
@@ -94,6 +98,9 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
     let mizuhoPlanDirty = false;
     let onceEditingId = null, onceShowAll = false;
     let onceBaseline = '';
+    const confirmationOwner = {};
+    let onceEpoch = 0;
+    const confirming = () => confirmationPending(confirmationOwner);
     const value = (id) => $(id).value;
     const choices = (select, options) => {
         select.replaceChildren(...options.map(o => new Option(o.label, o.value)));
@@ -130,12 +137,11 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
         $('assets-recurring-month').value = String(new Date().getMonth() + 1);
         $('assets-recurring-weekday').value = String(new Date().getDay());
         $('assets-recurring-day').value = String(new Date().getDate());
-        $('assets-recurring-kind').value = 'expense';
+        $('assets-recurring-kind').value = 'income';
         $('assets-recurring-from').value = 'rakuten-bank';
         $('assets-recurring-to').value = 'cash-savings';
-        $('assets-recurring-category').value = '';
         $('assets-recurring-enabled').checked = true;
-        $('assets-recurring-form-title').textContent = '定期入出金を追加';
+        $('assets-recurring-form-title').textContent = '定期入金・振替を追加';
         $('assets-recurring-save').textContent = '保存';
         updateFormFields();
         recurringBaseline = recurringSnapshot();
@@ -147,37 +153,53 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
         $('assets-weekday-wrap').classList.toggle('hidden', frequency !== 'weekly');
         $('assets-recurring-day').closest('label').classList.toggle('hidden', frequency === 'weekly');
         $('assets-recurring-from').closest('label').classList.toggle('hidden', kind === 'income');
-        $('assets-recurring-to').closest('label').classList.toggle('hidden', kind === 'expense');
-        $('assets-category-wrap').classList.toggle('hidden', kind !== 'expense');
+        $('assets-recurring-to').closest('label').classList.remove('hidden');
     }
     function readEntry() {
         const frequency = value('assets-recurring-frequency');
         const kind = value('assets-recurring-kind');
         const from = value('assets-recurring-from');
         const to = value('assets-recurring-to');
+        if (kind !== 'income' && kind !== 'transfer')
+            throw new Error('銀行引落は固定費管理で登録してください。');
+        if (editingId && requireVault().assetSettings().recurring.find(x => x.id === editingId)?.kind === 'expense')
+            throw new Error('銀行引落は固定費管理で編集してください。');
         const amount = Number(value('assets-recurring-amount'));
         const entry = {
             id: editingId ?? crypto.randomUUID(), name: value('assets-recurring-name').trim(), amount, kind,
-            fromAccountId: kind === 'income' ? null : from, toAccountId: kind === 'expense' ? null : to,
+            fromAccountId: kind === 'income' ? null : from, toAccountId: to,
             frequency, dayOfMonth: frequency === 'weekly' ? null : Number(value('assets-recurring-day')),
             monthOfYear: frequency === 'yearly' ? Number(value('assets-recurring-month')) : null,
             weekday: frequency === 'weekly' ? Number(value('assets-recurring-weekday')) : null,
             startOn: value('assets-recurring-start'), endOn: value('assets-recurring-end') || null,
-            categoryId: kind === 'expense' ? value('assets-recurring-category') || null : null,
+            categoryId: null,
             enabled: $('assets-recurring-enabled').checked,
         };
         return validateRecurring(entry);
     }
-    function openRecurringEditor(item) {
-        if (busy)
+    async function openRecurringEditor(item) {
+        const vault = getVault(), epoch = onceEpoch;
+        if (busy || confirming() || !vault?.unlocked)
             return false;
-        // Re-selecting the current entry must not overwrite its in-progress draft.
-        if (editingId === item.id) {
-            $('assets-recurring-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const unchanged = () => getVault() === vault && vault.unlocked && onceEpoch === epoch && !busy &&
+            JSON.stringify(vault.assetSettings().recurring.find(x => x.id === item.id)) === JSON.stringify(item);
+        if (!unchanged())
+            return false;
+        if (item.kind === 'expense') {
+            openFixedCosts(item.id);
             return true;
         }
-        if (recurringSwitchNeedsConfirmation(recurringHasChanges(), editingId, item.id) && !window.confirm('編集中の入力を破棄して、指定した定期入出金を開きますか？'))
-            return false;
+        // Re-selecting the current entry must not overwrite its in-progress draft.
+        if (editingId === item.id)
+            return true;
+        const draft = recurringSnapshot(), previousId = editingId;
+        if (recurringSwitchNeedsConfirmation(recurringHasChanges(), editingId, item.id)) {
+            if (!await requestConfirmation({ owner: confirmationOwner, title: '未保存の変更を破棄しますか？',
+                message: `編集中の入力を破棄して「${item.name}」を開きます。`, acceptLabel: '破棄して開く', cancelLabel: '編集を続ける', destructive: true }))
+                return false;
+            if (!unchanged() || editingId !== previousId || recurringSnapshot() !== draft)
+                return false;
+        }
         populateForm(item);
         return true;
     }
@@ -194,16 +216,14 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
         $('assets-recurring-weekday').value = String(item.weekday ?? 1);
         $('assets-recurring-start').value = item.startOn;
         $('assets-recurring-end').value = item.endOn ?? '';
-        $('assets-recurring-category').value = item.categoryId ?? '';
         $('assets-recurring-enabled').checked = item.enabled;
         $('assets-recurring-form-title').textContent = `「${item.name}」を編集`;
         $('assets-recurring-save').textContent = '保存';
         updateFormFields();
         recurringBaseline = recurringSnapshot();
-        $('assets-recurring-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
     async function saveSnapshots() {
-        if (busy)
+        if (busy || confirming())
             return;
         const node = $('assets-balances-status');
         const entered = ASSET_ACCOUNTS.filter(account => amounts.get(account.id).value.trim() !== '');
@@ -239,14 +259,27 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             toggleBusy(false);
         }
     }
-    async function deleteSnapshot(id, accountId) {
-        if (busy || !window.confirm('この残高記録を削除しますか？ 最新残高の基準が変わる場合があります。'))
+    async function deleteSnapshot(item) {
+        const vault = getVault(), epoch = onceEpoch, { id, accountId } = item;
+        if (busy || confirming() || !vault?.unlocked)
             return;
+        const unchanged = () => JSON.stringify(vault.assetSettings().snapshots.find(x => x.id === id)) === JSON.stringify(item);
+        if (!unchanged())
+            return;
+        if (!await requestConfirmation({ owner: confirmationOwner, title: '残高記録を削除しますか？',
+            message: `${accountName(accountId)}：${formatDateTime(item.observedAt, true)} ${yen(item.balance)}\n最新残高の基準が変わる場合があります。`, acceptLabel: '削除する', destructive: true }))
+            return;
+        if (epoch !== onceEpoch || busy || getVault() !== vault || !vault.unlocked)
+            return;
+        if (!unchanged()) {
+            status($('assets-balances-status'), '残高記録が更新されました。最新情報から確認してください。', true);
+            return;
+        }
         const node = $('assets-balances-status');
         toggleBusy(true);
         status(node, `${accountName(accountId)}の残高記録を削除しています…`);
         try {
-            await requireVault().deleteBalanceSnapshot(id);
+            await vault.deleteBalanceSnapshot(id);
             status(node, `${accountName(accountId)}の残高記録を削除しました。`);
             onSaved('残高記録をOneDriveから削除しました。');
             render();
@@ -281,7 +314,7 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
         document.body.style.overflow = 'hidden';
     }
     function unlockOncePage() {
-        if (!document.documentElement.classList.contains('assets-once-page-locked'))
+        if (onceDialog.open || !document.documentElement.classList.contains('assets-once-page-locked'))
             return;
         document.documentElement.classList.remove('assets-once-page-locked');
         document.body.style.position = previousBodyPosition;
@@ -336,8 +369,9 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
         onceBaseline = onceSnapshot();
     }
     function openOnce(entry) {
-        if (busy || !getVault()?.unlocked)
+        if (busy || confirming() || onceDialog.open || !getVault()?.unlocked)
             return;
+        onceEpoch++;
         resetOnceForm();
         if (entry) {
             onceEditingId = entry.id;
@@ -358,11 +392,17 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
         onceDialog.showModal();
         lockOncePage();
     }
-    function closeOnce() {
-        if (busy)
+    async function closeOnce() {
+        if (busy || confirming() || !onceDialog.open)
             return;
-        if (onceHasChanges() && !window.confirm('編集中の入力を破棄して閉じますか？'))
-            return;
+        const epoch = onceEpoch, snapshot = onceSnapshot();
+        if (onceHasChanges()) {
+            if (!await requestConfirmation({ owner: confirmationOwner, parent: onceDialog, title: '未保存の変更を破棄しますか？',
+                message: '入力した内容は保存されません。', acceptLabel: '破棄する', cancelLabel: '編集を続ける', destructive: true }))
+                return;
+            if (epoch !== onceEpoch || busy || !onceDialog.open || onceSnapshot() !== snapshot)
+                return;
+        }
         onceDialog.close();
         resetOnceForm();
     }
@@ -389,9 +429,9 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             detail.append(make('strong', '', entry.name));
             const from = accountName(entry.fromAccountId), to = accountName(entry.toAccountId);
             const route = entry.kind === 'transfer' ? `${from} → ${to}` : entry.kind === 'income' ? to : from;
-            detail.append(make('small', '', `${entry.date.replace(/-/g, '/')} · ${onceKinds[entry.kind]} · ${route} · ${entry.status === 'done' ? '実行済み' : '予定'}${entry.kind === 'expense' ? ' · ' + (getCategories().find(c => c.id === entry.categoryId)?.name ?? '未分類') : ''}`));
+            detail.append(make('small', '', `${formatDate(entry.date)} · ${onceKinds[entry.kind]} · ${route} · ${entry.status === 'done' ? '実行済み' : '予定'}${entry.kind === 'expense' ? ' · ' + (getCategories().find(c => c.id === entry.categoryId)?.name ?? '未分類') : ''}`));
             const right = make('div', 'assets-once-item-action');
-            right.append(make('b', '', `${entry.kind === 'income' ? '+' : entry.kind === 'expense' || entry.kind === 'withdrawal' ? '−' : ''}${yen(entry.amount)}`), addButton('編集', () => openOnce(entry)), addButton('削除', () => { void deleteOnce(entry.id); }, true));
+            right.append(make('b', '', `${entry.kind === 'income' ? '+' : entry.kind === 'expense' || entry.kind === 'withdrawal' ? '−' : ''}${yen(entry.amount)}`), addButton('編集', () => openOnce(entry)), addButton('削除', () => { void deleteOnce(entry); }, true));
             row.append(detail, right);
             list.append(row);
         }
@@ -400,7 +440,7 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
         more.textContent = onceShowAll ? '閉じる' : `すべて表示（${entries.length}件）`;
     }
     async function saveOnce() {
-        if (busy)
+        if (busy || confirming() || !onceDialog.open)
             return;
         const node = $('assets-once-error');
         try {
@@ -421,12 +461,26 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             toggleBusy(false);
         }
     }
-    async function deleteOnce(id) {
-        if (busy || !window.confirm('この入出金記録を削除しますか？'))
+    async function deleteOnce(entry) {
+        const vault = getVault();
+        if (busy || confirming() || !vault?.unlocked)
             return;
+        const id = entry.id, epoch = onceEpoch;
+        const unchanged = () => JSON.stringify(vault.assetSettings().oneTime?.find(x => x.id === id)) === JSON.stringify(entry);
+        if (!unchanged())
+            return;
+        if (!await requestConfirmation({ owner: confirmationOwner, title: '入出金記録を削除しますか？',
+            message: `「${entry.name}」（${formatDate(entry.date)}）の記録を削除します。`, acceptLabel: '削除する', destructive: true }))
+            return;
+        if (epoch !== onceEpoch || busy || getVault() !== vault || !vault.unlocked)
+            return;
+        if (!unchanged()) {
+            status($('assets-once-status'), '記録が更新されました。最新情報から確認してください。', true);
+            return;
+        }
         toggleBusy(true);
         try {
-            await requireVault().deleteOneTime(id);
+            await vault.deleteOneTime(id);
             status($('assets-once-status'), '入出金を削除しました。');
             onSaved('入出金記録を削除しました。');
             render();
@@ -455,7 +509,7 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             label.replaceChildren();
             label.append(make('small', 'assets-balance-caption', '現在の推定残高'), make('strong', 'assets-balance', current.balance !== null ? yen(current.balance) : '未登録'));
             if (latest) {
-                label.append(make('small', 'assets-balance-date', `最終確認：${yen(latest.balance)}（${new Date(latest.observedAt).toLocaleString('ja-JP')}）`));
+                label.append(make('small', 'assets-balance-date', `最終確認：${yen(latest.balance)}（${formatDateTime(latest.observedAt, true)}）`));
                 const parts = [];
                 if (current.recurringDelta)
                     parts.push(`定期入出金 ${current.recurringDelta > 0 ? '+' : ''}${yen(current.recurringDelta)}`);
@@ -482,6 +536,11 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
                     details.append(make('p', '', parts.join(' / ')));
                 if (current.warning)
                     details.append(make('p', '', current.warning));
+                const estimatedTransfer = nextReport.estimatedTransferByAccount[account.id] ?? 0;
+                if (estimatedTransfer)
+                    details.append(make('p', '', `来月末までの仮送金 ${estimatedTransfer > 0 ? '+' : ''}${yen(estimatedTransfer)}（固定費から推定・未確定）`));
+                if (upcoming.warning && upcoming.warning !== current.warning)
+                    details.append(make('p', '', upcoming.warning));
                 if (data.payrollDepositAccount === account.id) {
                     if (payrollStale && payrollUseStale && payrollOwner === vault)
                         details.append(make('p', '', 'Payrollの前回取得分を使用中（最新同期失敗）。'));
@@ -564,20 +623,19 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
                         body.append(action);
                     }
                 }
-                body.append(make('p', 'assets-reconcile-footnote', '今回保存されている設定と記録で過去期間を再計算した参考値です。当時保存していた予測値ではありません。確認当日の入出金や設定変更で差額が生じる場合があり、使途不明金とは断定できません。'));
+                const explanation = make('details', 'assets-reconcile-footnote');
+                explanation.append(make('summary', '', '現在の設定による再計算値'), make('p', '', '当時保存していた予測値ではありません。確認当日の入出金や設定変更で差額が生じる場合があり、使途不明金とは断定できません。'));
+                body.append(explanation);
                 block.append(body);
                 reconciliation.append(block);
-            }
-            else if (!reconciliation.childElementCount && latest) {
-                reconciliation.append(make('p', 'assets-reconcile-unavailable', '前回の別日に確認した残高があると、予測と実績の差を表示します。'));
             }
             const history = histories.get(account.id);
             history.replaceChildren();
             const items = data.snapshots.filter(x => x.accountId === account.id).sort((a, b) => b.observedAt.localeCompare(a.observedAt) || b.id.localeCompare(a.id));
             for (const item of items.slice(0, 12)) {
                 const row = make('div', 'assets-history-row');
-                const copy = make('span', '', `${new Date(item.observedAt).toLocaleString('ja-JP')}　${yen(item.balance)}`);
-                row.append(copy, addButton('削除', () => { void deleteSnapshot(item.id, account.id); }, true));
+                const copy = make('span', '', `${formatDateTime(item.observedAt, true)}　${yen(item.balance)}`);
+                row.append(copy, addButton('削除', () => { void deleteSnapshot(item); }, true));
                 history.append(row);
             }
             if (!items.length)
@@ -701,12 +759,29 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
         const vault = getVault();
         if (!vault?.unlocked)
             return;
-        const entries = [...vault.assetSettings().recurring].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+        const all = [...vault.assetSettings().recurring].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+        const entries = all.filter(item => item.kind !== 'expense');
+        const references = $('assets-fixed-cost-list');
+        references.replaceChildren();
+        const today = localDate();
+        for (const item of originContracts(vault.assetSettings()).sort((a, b) => a.name.localeCompare(b.name, 'ja'))) {
+            const terms = paymentTermsOn(item, today);
+            if (terms.payment !== 'bank')
+                continue;
+            const card = make('div', 'assets-recurring-item'), top = make('div', 'assets-recurring-top');
+            top.append(make('strong', '', item.name), make('b', '', yen(priceOnDay(item.pricing ?? [], today, item.amount))));
+            const state = fixedCostState({ ...item, pauses: item.pauses ?? [] }, today);
+            const label = state === 'ended' ? '終了済み' : state === 'scheduled' ? '開始予定' : ('kind' in item && !item.enabled) || state === 'paused' ? '停止中' : '利用中';
+            card.append(top, make('p', 'assets-recurring-route', `${accountName(terms.accountId)} · ${frequencyLabel(terms)} · ${label}`));
+            references.append(card);
+        }
+        if (!references.childElementCount)
+            references.append(make('p', 'assets-empty', '銀行引落の固定費はありません。'));
         $('assets-recurring-count').textContent = `${entries.length}件`;
         const list = $('assets-recurring-list');
         list.replaceChildren();
         if (!entries.length) {
-            list.append(make('p', 'assets-empty', '定期入出金はまだありません。左のフォームから登録できます。'));
+            list.append(make('p', 'assets-empty', '登録済みの設定はありません。'));
             return;
         }
         for (const item of entries) {
@@ -718,27 +793,47 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
                 item.kind === 'income' ? `${accountName(item.toAccountId)}へ入金` : `${accountName(item.fromAccountId)} → ${accountName(item.toAccountId)}`;
             const category = item.categoryId ? getCategories().find(c => c.id === item.categoryId)?.name : '';
             const tags = make('div', 'assets-recurring-tags');
-            tags.append(make('span', 'assets-recurring-tag', kindName[item.kind]), make('span', 'assets-recurring-tag', frequencyLabel(item)));
+            tags.append(make('span', 'assets-recurring-tag', frequencyLabel(item)));
             if (category)
                 tags.append(make('span', 'assets-recurring-tag', category));
             if (!item.enabled)
                 tags.append(make('span', 'assets-recurring-tag is-paused', '停止中'));
             const route = make('p', 'assets-recurring-route', path);
-            const dates = make('p', 'assets-recurring-dates', `${item.startOn.replace(/-/g, '/')} ～ ${item.endOn?.replace(/-/g, '/') ?? '無期限'}`);
+            if (item.endOn && item.endOn < today)
+                tags.append(make('span', 'assets-recurring-tag', '終了済み'));
+            else if (item.startOn > today)
+                tags.append(make('span', 'assets-recurring-tag', `開始予定 ${formatDate(item.startOn)}`));
+            else if (item.endOn)
+                tags.append(make('span', 'assets-recurring-tag', `終了予定 ${formatDate(item.endOn)}`));
             const actions = make('div', 'assets-recurring-actions');
-            actions.append(addButton('編集', () => { openRecurringEditor(item); }), addButton('削除', () => { void removeRecurring(item); }, true));
-            card.append(top, tags, route, dates, actions);
+            actions.append(addButton('編集', () => { void openRecurringEditor(item); }), addButton('削除', () => { void removeRecurring(item); }, true));
+            card.append(top, route, tags, actions);
             list.append(card);
         }
     }
     async function removeRecurring(item) {
-        if (busy || !window.confirm(`「${item.name}」を削除しますか？`))
+        const vault = getVault(), epoch = onceEpoch;
+        if (busy || confirming() || item.kind === 'expense' || !vault?.unlocked)
             return;
+        const unchanged = () => JSON.stringify(vault.assetSettings().recurring.find(x => x.id === item.id)) === JSON.stringify(item);
+        if (!unchanged())
+            return;
+        const draft = recurringSnapshot(), previousId = editingId;
+        if (!await requestConfirmation({ owner: confirmationOwner, title: '定期入出金を削除しますか？',
+            message: `「${item.name}」の定期入出金を削除します。${editingId === item.id && recurringHasChanges() ? '\n編集中の入力も破棄されます。' : ''}`,
+            acceptLabel: '削除する', destructive: true }))
+            return;
+        if (epoch !== onceEpoch || busy || getVault() !== vault || !vault.unlocked)
+            return;
+        if (!unchanged() || editingId !== previousId || recurringSnapshot() !== draft) {
+            status($('assets-recurring-status'), '記録または入力が更新されました。再確認してください。', true);
+            return;
+        }
         const node = $('assets-recurring-status');
         toggleBusy(true);
         status(node, 'OneDriveから削除しています…');
         try {
-            await requireVault().deleteRecurring(item.id);
+            await vault.deleteRecurring(item.id);
             if (editingId === item.id)
                 resetForm();
             status(node, '削除しました。');
@@ -760,19 +855,23 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             $('assets-payroll-deposit').value = vault.assetSettings().payrollDepositAccount ?? '';
         const haveLast = payrollOwner === vault && payrollSyncedAt > 0;
         $('assets-payroll-count').textContent = haveLast ? `${payrollIncome.length}件` : '0件';
-        $('assets-payroll-last').textContent = haveLast ? `${new Date(payrollSyncedAt).toLocaleString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit' })}${payrollStale ? '（更新失敗・古いデータ）' : ''}` : '未同期';
+        $('assets-payroll-last').textContent = haveLast ? `${formatDateTime(payrollSyncedAt)}${payrollStale ? '（更新失敗・古いデータ）' : ''}` : '未同期';
         const staleBox = $('assets-payroll-stale');
         staleBox.classList.toggle('hidden', !payrollStale || !haveLast);
         $('assets-payroll-use-stale').checked = payrollUseStale;
-        const recurring = vault.assetSettings().recurring.filter(e => e.enabled && e.kind === 'income' && /給与|給料|salary|payroll/i.test(e.name));
+        const recurring = vault.assetSettings().recurring.filter(e => e.enabled && e.startOn <= localDate() && (!e.endOn || e.endOn >= localDate()) && recurringSalaryRole(e) !== null);
         if (payrollStale && haveLast) {
             const note = $('assets-payroll-status');
-            note.textContent = `Payrollの最新同期に失敗しました。最終成功：${new Date(payrollSyncedAt).toLocaleString('ja-JP')}。${payrollUseStale ? '古い給与情報を予測に使用中です。' : '古い給与情報は予測から除外しています。'}`;
+            note.textContent = `Payrollの最新同期に失敗しました。最終成功：${formatDateTime(payrollSyncedAt, true)}。${payrollUseStale ? '古い給与情報を予測に使用中です。' : '古い給与情報は予測から除外しています。'}`;
             note.classList.add('bad');
             note.setAttribute('role', 'alert');
         }
-        if (!payrollStale && recurring.length)
-            status($('assets-payroll-status'), `給与を${payrollIncome.length}件読み込みました。注意：給与らしい定期入金が${recurring.length}件登録されています。二重計上にご注意ください。`);
+        const warning = $('assets-payroll-mapping-warning');
+        const deposit = vault.assetSettings().payrollDepositAccount;
+        const unknown = payrollIncome.some(e => e.kind === 'salary' && payrollRole(e) === null);
+        const mismatch = !!deposit && recurring.some(e => e.toAccountId !== deposit && payrollIncome.some(p => p.kind === 'salary' && payrollRole(p) === recurringSalaryRole(e) && p.paidOn.slice(0, 7) === localDate().slice(0, 7)));
+        warning.textContent = haveLast && !payrollStale && payrollIncome.length && (!deposit || unknown || mismatch) ?
+            [!deposit ? '給与の入金先が未設定です。' : '', unknown ? '勤務区分不明の給与があります。Payrollの勤務先設定を確認してください。' : '', mismatch ? '給与の定期入金と入金先設定が一致していません。重複計上にご注意ください。' : ''].filter(Boolean).join(' ') : '';
     }
     /** Manual registration is explicit; automatic reads use only the encrypted settings document. */
     async function syncPayroll(automatic = false) {
@@ -881,14 +980,18 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
     async function forgetPayroll() {
         if (busy || payrollBusy)
             return;
-        if (!getVault()?.unlocked)
+        const vault = getVault();
+        if (!vault?.unlocked || confirming())
             return;
-        if (!window.confirm('Payroll連携を解除しますか？保存済みのパスフレーズと、このタブの給与情報を破棄します。給与の原本は変更しません。'))
+        const credential = vault.assetSettings().payrollAutoPassphrase, epoch = onceEpoch;
+        if (!await requestConfirmation({ owner: confirmationOwner, title: 'Payroll連携を解除しますか？', message: '保存済みのパスフレーズと、このタブの給与情報を破棄します。給与の原本は変更しません。', acceptLabel: '連携を解除する', destructive: true }))
+            return;
+        if (getVault() !== vault || !vault.unlocked || onceEpoch !== epoch || busy || payrollBusy || vault.assetSettings().payrollAutoPassphrase !== credential)
             return;
         payrollBusy = true;
         $('assets-payroll-forget').disabled = true;
         try {
-            await requireVault().setPayrollAutoPassphrase(null);
+            await vault.setPayrollAutoPassphrase(null);
             payrollSession = null;
             payrollIncome = [];
             payrollSynced = false;
@@ -948,10 +1051,6 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
         $('assets-workspace').classList.toggle('hidden', !unlocked);
         if (!unlocked)
             return;
-        const cat = $('assets-recurring-category');
-        const selected = cat.value;
-        choices(cat, [{ value: '', label: '分類しない' }, ...getCategories().map(c => ({ value: c.id, label: c.name }))]);
-        cat.value = selected;
         renderAccounts();
         renderOnce();
         renderNisaLink();
@@ -1010,7 +1109,7 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
     $('assets-once-toggle').addEventListener('click', () => { onceShowAll = !onceShowAll; renderOnce(); });
     $('assets-once-close').addEventListener('click', closeOnce);
     $('assets-once-cancel').addEventListener('click', closeOnce);
-    onceDialog.addEventListener('cancel', event => { event.preventDefault(); closeOnce(); });
+    bindModalDismiss(onceDialog, () => { void closeOnce(); });
     $('assets-once-form').addEventListener('change', onceFormFields);
     $('assets-once-form').addEventListener('submit', event => { event.preventDefault(); void saveOnce(); });
     $('assets-balances-form').addEventListener('submit', event => { event.preventDefault(); void saveSnapshots(); });
@@ -1042,11 +1141,24 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
     choices($('assets-recurring-weekday'), weekdayLabels.map((label, i) => ({ value: String(i), label: `${label}曜日` })));
     $('assets-recurring-kind').addEventListener('change', updateFormFields);
     $('assets-recurring-frequency').addEventListener('change', updateFormFields);
-    $('assets-recurring-clear').addEventListener('click', () => { if (recurringHasChanges() && !window.confirm('編集中の入力を破棄してクリアしますか？'))
-        return; resetForm(); status($('assets-recurring-status'), '入力をクリアしました。'); });
+    $('assets-fixed-cost-open').addEventListener('click', () => openFixedCosts());
+    $('assets-recurring-clear').addEventListener('click', async () => {
+        const vault = getVault(), epoch = onceEpoch, draft = recurringSnapshot(), previousId = editingId;
+        if (busy || confirming() || !vault?.unlocked)
+            return;
+        if (recurringHasChanges()) {
+            if (!await requestConfirmation({ owner: confirmationOwner, title: '未保存の変更を破棄しますか？',
+                message: '編集中の入力をクリアします。', acceptLabel: '破棄する', cancelLabel: '編集を続ける', destructive: true }))
+                return;
+            if (epoch !== onceEpoch || busy || getVault() !== vault || !vault.unlocked || editingId !== previousId || recurringSnapshot() !== draft)
+                return;
+        }
+        resetForm();
+        status($('assets-recurring-status'), '入力をクリアしました。');
+    });
     $('assets-recurring-form').addEventListener('submit', event => {
         event.preventDefault();
-        if (busy)
+        if (busy || confirming())
             return;
         void (async () => {
             const node = $('assets-recurring-status');
@@ -1085,7 +1197,7 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
     window.setInterval(refreshForNewDay, 120000);
     window.setInterval(() => { if (!document.hidden)
         void refreshPayroll(); }, 10 * 60 * 1000);
-    return { render, openRecurring: (id) => {
+    return { render, openRecurring: async (id) => {
             const vault = getVault();
             if (!vault?.unlocked || busy)
                 return false;
@@ -1097,6 +1209,11 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             const ready = !!getVault()?.unlocked && payrollOwner === getVault() && (payrollSynced || (payrollStale && payrollUseStale));
             return ready ? { ready: true, syncedAt: payrollSyncedAt, entries: structuredClone(payrollIncome) } : { ready: false, syncedAt: null, entries: [] };
         }, reset: () => {
+            onceEpoch++;
+            cancelConfirmation(confirmationOwner);
+            if (onceDialog.open)
+                onceDialog.close();
+            unlockOncePage();
             resetForm();
             resetOnceForm();
             onceShowAll = false;
@@ -1117,13 +1234,34 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             $('assets-payroll-last').textContent = '未同期';
             $('assets-payroll-stale').classList.add('hidden');
             status($('assets-payroll-status'), '');
-            for (const account of ASSET_ACCOUNTS)
+            for (const account of ASSET_ACCOUNTS) {
                 amounts.get(account.id).value = '';
+                latestTexts.get(account.id).replaceChildren();
+                histories.get(account.id).replaceChildren();
+                reconciliationViews.get(account.id).replaceChildren();
+                accountDetails.get(account.id).replaceChildren();
+                $(`assets-history-count-${account.id}`).textContent = '（0件）';
+            }
+            for (const id of ['assets-once-list', 'assets-recurring-list', 'assets-fixed-cost-list', 'assets-nisa-match-count', 'assets-payroll-stale-note', 'assets-payroll-mapping-warning'])
+                document.getElementById(id)?.replaceChildren();
+            $('assets-once-count').textContent = '0件';
+            $('assets-recurring-count').textContent = '0件';
+            $('assets-once-toggle').textContent = 'すべて表示';
+            $('assets-once-toggle').classList.add('hidden');
+            $('assets-nisa-merchant').value = '';
+            $('assets-nisa-card').value = CARDS[0].id;
+            $('assets-payroll-deposit').value = '';
+            $('assets-payroll-use-stale').checked = false;
+            $('mizuho-plan-enabled').checked = false;
+            $('mizuho-plan-extra').checked = false;
+            $('mizuho-plan-lead').value = '';
+            status($('assets-nisa-status'), '');
+            status($('mizuho-plan-status'), '');
             status($('assets-birth-status'), '');
             status($('assets-balances-status'), '');
             status($('assets-recurring-status'), '');
             status($('assets-once-status'), '');
             render();
             onPayrollChange();
-        }, isBusy: () => busy || payrollBusy, isDirty: () => onceHasChanges() || recurringHasChanges() || nisaDirty || birthDirty || payrollAccountDirty || mizuhoPlanDirty || [...amounts.values()].some(input => input.value.trim() !== '') };
+        }, isBusy: () => busy || payrollBusy || confirming(), isDirty: () => onceHasChanges() || recurringHasChanges() || nisaDirty || birthDirty || payrollAccountDirty || mizuhoPlanDirty || [...amounts.values()].some(input => input.value.trim() !== '') };
 }

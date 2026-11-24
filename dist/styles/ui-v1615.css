@@ -19,11 +19,6 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 .assets-links-grid{grid-template-columns:minmax(0,1fr)}
 .assets-links-grid>.assets-card-debits{height:auto}
 .future-birth-settings{align-self:flex-start;padding:3px 0}
-/* Month switcher uses the same touch target and arrow proportions as statement management. */
-@media(max-width:800px){
-  .monthly-controls{gap:5px}
-  .monthly-controls #monthly-prev,.monthly-controls #monthly-next{width:35px;min-width:35px;height:37px;min-height:37px;padding:1px 5px;font-size:19px;font-weight:700;line-height:1}
-}
 @media(max-width:650px){
   .settings-nisa-panel{padding:15px}
   .settings-nisa-panel .assets-nisa-fields{grid-template-columns:minmax(0,1fr)}

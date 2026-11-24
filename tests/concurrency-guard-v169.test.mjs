@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
-import {LiveVault,CloudWriteUncertainError} from '../dist/src/cloud/live-vault.js';
+import {LiveVault,CloudWriteUncertainError} from './helpers/coordinated-vault.mjs';
 import {GraphError} from '../dist/src/cloud/onedrive-api.js';
 import {emptyDocument,detectDocumentEditCollisions} from '../dist/src/cloud/merge.js';
 import {emptyRules,detectRuleEditCollisions} from '../dist/src/cloud/merchant-rules.js';
@@ -193,3 +193,119 @@ test('concurrent edits to a category definition detect name conflict, independen
  right.categoryDefinitions[0].name='外食';
  assert.deepEqual(detectRuleEditCollisions(base,left,right).map(c=>c.field),['name']);
 });
+
+/** Actual encrypted files and delayed approvals, no real Graph requests. */
+function deferredApproval(){
+ let entered,release;
+ const waiting=new Promise(resolve=>{entered=resolve;});
+ const answer=new Promise(resolve=>{release=resolve;});
+ return {waiting,release,resolver:()=>{entered();return answer;}};
+}
+const onceEntry={id:'once-test-a',date:'2026-11-18',name:'test',amount:1000,kind:'expense',status:'done',fromAccountId:'rakuten-bank',toAccountId:null};
+async function conflictFixture(domain){
+ const f=await pair(),{a,b,state}=f;
+ const initial=domain==='statement'?()=>a.saveBatch([{id:'stmt',statement:statement()}]):domain==='rules'?()=>a.upsertMerchantRule(rule()):()=>a.upsertOneTime(onceEntry);
+ const remote=domain==='statement'?()=>a.saveBatch([{id:'stmt',statement:statement(120)}]):domain==='rules'?()=>a.upsertMerchantRule(rule('Remote')):()=>a.upsertOneTime({...onceEntry,amount:1200});
+ const local=domain==='statement'?()=>b.saveBatch([{id:'stmt',statement:statement(150)}]):domain==='rules'?()=>b.upsertMerchantRule(rule('Local')):()=>b.upsertOneTime({...onceEntry,amount:1500});
+ await initial();await b.unlock(password);await remote();
+ const setResolver=domain==='statement'?fn=>b.setStatementConflictResolver(fn):domain==='rules'?fn=>b.setRuleConflictResolver(fn):fn=>b.setAssetConflictResolver(fn);
+ return {...f,local,setResolver,remoteFile:domain==='statement'?bucket('2026'):domain==='rules'?'rules':'assets'};
+}
+test('非同期の競合承認中にロックまたは再解除しても旧編集を書き込まない',async()=>{
+ for(const domain of ['statement','rules','assets'])for(const reopen of [false,true]){
+  const {b,state,local,setResolver,remoteFile}=await conflictFixture(domain);
+  const before=state.get(remoteFile),approval=deferredApproval();setResolver(approval.resolver);
+  const operation=local();const rejected=assert.rejects(operation,/保管庫が変更|中止/);
+  await approval.waiting;b.lock();if(reopen)await b.unlock(password);
+  approval.release(true);await rejected;
+  assert.equal(state.get(remoteFile),before);assert.equal(b.unlocked,reopen);
+  assert.equal(b.hasPendingYearBatch,false);
+ }
+});
+test('非同期の競合承認後に索引の世代を確認できなければ保存を中止する',async()=>{
+ for(const domain of ['statement','rules','assets']){
+  const {bGraph,state,local,setResolver,remoteFile}=await conflictFixture(domain);
+  const before=state.get(remoteFile),approval=deferredApproval();setResolver(approval.resolver);
+  const operation=local();const rejected=assert.rejects(operation,/現行世代を確認できません/);
+  await approval.waiting;
+  const otherState=new Map(),other=new LiveVault(new Graph(otherState));await other.create(password);
+  bGraph.readFinanceIndex=async()=>new Graph(otherState).read('index');
+  approval.release(true);await rejected;assert.equal(state.get(remoteFile),before);
+ }
+});
+test('承認待ちの間にETagが変われば新しい競合内容の承認を要求する',async()=>{
+ for(const domain of ['statement','rules','assets']){
+  const {a,state,local,setResolver,remoteFile}=await conflictFixture(domain);
+  const approval=deferredApproval();let calls=0;setResolver(()=>++calls===1?approval.resolver():false);
+  const operation=local();const rejected=assert.rejects(operation,/中止/);await approval.waiting;
+  if(domain==='statement')await a.saveBatch([{id:'stmt',statement:statement(130)}]);
+  else if(domain==='rules')await a.upsertMerchantRule(rule('New remote'));
+  else await a.upsertOneTime({...onceEntry,amount:1300});
+  const before=state.get(remoteFile);approval.release(true);await rejected;
+  assert.equal(calls,2);assert.equal(state.get(remoteFile),before);
+ }
+});
+
+// Gate precisely the first read after invocation, without timers. Capture the
+// response before blocking so a delayed refresh really contains stale data.
+function pauseNextRead(graph,method){
+ const original=graph[method].bind(graph);let entered,release;
+ const waiting=new Promise(resolve=>{entered=resolve;});
+ const proceed=new Promise(resolve=>{release=resolve;});
+ graph[method]=async(...args)=>{graph[method]=original;const result=await original(...args);entered();await proceed;return result;};
+ return {waiting,release};
+}
+async function settingsRaceFixture(domain){
+ const f=await pair(),{a,b}=f;
+ if(domain==='assets')await a.setBirthMonth('2000-01');else await a.upsertMerchantRule(rule());
+ await b.unlock(password);
+ const changeRemote=()=>domain==='assets'?a.setBirthMonth('2001-02'):a.upsertMerchantRule(rule('Remote'));
+ const saveLocal=()=>domain==='assets'?b.setPayrollDepositAccount('rakuten-bank'):b.upsertMerchantRule(rule('Added','OTHER','rule-b'));
+ const check=v=>{
+   if(domain==='assets'){
+     assert.equal(v.assetSettings().birthMonth,'2001-02');
+     assert.equal(v.assetSettings().payrollDepositAccount,'rakuten-bank');
+   }else{
+     assert.equal(v.merchantRules().find(r=>r.id==='rule-a')?.displayName,'Remote');
+     assert.equal(v.merchantRules().find(r=>r.id==='rule-b')?.displayName,'Added');
+   }
+ };
+ return {...f,changeRemote,saveLocal,check,readMethod:domain==='assets'?'readAssetSettings':'readMerchantRules',file:domain};
+}
+for(const domain of ['assets','rules']){
+ test(`最終監査: ${domain} の保存開始後に先行refreshが完了しても別端末の変更を失わない`,async()=>{
+   const {a,b,bGraph,state,changeRemote,saveLocal,check,readMethod}=await settingsRaceFixture(domain);
+   await changeRemote();
+   const read=pauseNextRead(bGraph,readMethod);
+   const refresh=b.refresh();const rejected=assert.rejects(refresh,/取得中に設定の保存/);await read.waiting;
+   const index=pauseNextRead(bGraph,'readFinanceIndex');
+   const save=saveLocal();await index.waiting;
+   try{
+     read.release();await rejected;
+     await assert.rejects(b.refresh(),/設定を保存中/);
+     await assert.rejects(saveLocal(),/保存中/);
+   }finally{index.release();}
+   await save;check(b);await a.refresh();check(a);
+   const fresh=new LiveVault(new Graph(state));await fresh.unlock(password);check(fresh);
+ });
+ test(`最終監査: ${domain} の保存完了より遅いrefreshで保存済み状態を巻き戻さない`,async()=>{
+   const {a,b,bGraph,changeRemote,saveLocal,check,readMethod}=await settingsRaceFixture(domain);
+   const read=pauseNextRead(bGraph,readMethod);
+   const refresh=b.refresh();const rejected=assert.rejects(refresh,/取得中に設定の保存/);await read.waiting;
+   try{await changeRemote();await saveLocal();check(b);}finally{read.release();}
+   await rejected;check(b);await a.refresh();check(a);
+ });
+ test(`最終監査: ${domain} の旧refreshで保存結果未確認の再保存禁止を解除しない`,async()=>{
+   const {b,bGraph,state,changeRemote,saveLocal,check,readMethod,file}=await settingsRaceFixture(domain);
+   await changeRemote();
+   const read=pauseNextRead(bGraph,readMethod);
+   const refresh=b.refresh();const rejected=assert.rejects(refresh,/取得中に設定の保存/);await read.waiting;
+   const method=domain==='assets'?'writeAssetSettings':'writeMerchantRules';
+   const original=bGraph[method].bind(bGraph);
+   bGraph[method]=async(...args)=>{await original(...args);throw new Error('test response lost');};
+   try{await assert.rejects(saveLocal(),CloudWriteUncertainError);}finally{read.release();bGraph[method]=original;}
+   await rejected;
+   const committed=state.get(file);await assert.rejects(saveLocal(),CloudWriteUncertainError);assert.equal(state.get(file),committed);
+   await b.refresh();check(b);
+ });
+}

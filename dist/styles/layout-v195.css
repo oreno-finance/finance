@@ -6,7 +6,8 @@
 }
 .finance-period-nav>button{min-width:39px;display:inline-flex;align-items:center;justify-content:center;font-weight:650}
 .finance-period-nav>input,.finance-period-nav>select{width:148px;min-width:0;max-width:148px;font-variant-numeric:tabular-nums}
-.finance-period-nav>button:not(:disabled):hover{border-color:var(--accent);background:var(--accent-bg)}
+.finance-period-nav>button[aria-label="前月"],.finance-period-nav>button[aria-label="翌月"],.finance-period-nav>button[aria-label="前年"],.finance-period-nav>button[aria-label="翌年"]{width:39px;padding:1px 5px;font-size:19px;line-height:1}
+.finance-period-nav>button[aria-pressed="true"],.finance-period-nav>button:not(:disabled):hover{border-color:var(--accent);background:var(--accent-bg)}
 .finance-period-nav>:is(button,input,select):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .finance-period-nav>button:disabled{opacity:.4;cursor:not-allowed}
 .reports-controls,.analysis-controls{gap:10px;align-items:center}
@@ -24,4 +25,6 @@
  .settings-view .card-setting-secondary-fields{grid-template-columns:minmax(0,1fr)}
  .finance-period-nav>input,.finance-period-nav>select{width:145px;max-width:145px}
 }
-@media(max-width:390px){.finance-period-nav{gap:5px}.finance-period-nav>button{min-width:35px;padding:7px}.finance-period-nav>input,.finance-period-nav>select{max-width:132px;width:132px}}
+@media(max-width:390px){.finance-period-nav{gap:5px}.finance-period-nav>button{min-width:39px;padding:7px}.finance-period-nav>input,.finance-period-nav>select{max-width:132px;width:132px}}
+
+#manage-view > .finance-period-nav{margin:0 0 14px;max-width:100%;align-self:flex-start}

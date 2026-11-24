@@ -74,8 +74,8 @@ test('別端末の独立した契約追加を三者マージし、同一契約�
 });
 test('月別操作は見出しの直下、固定費UIに保存操作と履歴確認がある',()=>{
   const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
-  assert.match(html,/<section id="summary-view"[\s\S]*?monthly-heading[\s\S]*?<\/div>\s*<div class="monthly-controls finance-period-nav"/);
-  assert.match(html,/固定費・サブスク管理/);
+  assert.match(html,/<section id="summary-view"[\s\S]*?monthly-heading[\s\S]*?<\/div>\s*<div id="monthly-period-controls" class="monthly-controls finance-period-nav"/);
+  assert.match(html,/固定費管理/);
   const ui=readFileSync(new URL('../src/ui/subscriptions.ts',import.meta.url),'utf8');
   assert.match(ui,/料金変更履歴/);assert.match(ui,/候補から除外/);
   assert.match(ui,/if\(\!force&&isDirty\(\)/);

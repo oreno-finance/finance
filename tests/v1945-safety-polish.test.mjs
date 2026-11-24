@@ -57,11 +57,12 @@ test('unchanged legacy display decisions stay recognized; renamed ones need expl
 
 test('CSV is rejected based on File.size before allocating an ArrayBuffer',()=>{
   const main=readFileSync(new URL('../src/main.ts',import.meta.url),'utf8');
-  assert.match(main,/if\(file\.size===0\|\|file\.size>2_000_000\)throw new Error\('CSVのサイズが不正です（上限2MB）。'\);\s*const text=decodeCardCsv\(await file\.arrayBuffer\(\)\)/);
+  assert.match(main,/if\(file\.size===0\|\|file\.size>2_000_000\)throw new Error\('CSVのサイズが不正です（上限2MB）。'\);\s*const bytes=await file\.arrayBuffer\(\);if\(!current\(\)\)return;\s*const text=decodeCardCsv\(bytes\)/);
 });
 
 class Node {
   constructor(tag='div'){this.tag=tag;this.children=[];this.attrs={};this.handlers={};this.value='';this.className='';this.textContent='';}
+  get classList(){return {add:(name)=>{this.className=[...new Set([...this.className.split(/\s+/).filter(Boolean),name])].join(' ');}};}
   append(...items){this.children.push(...items);}
   replaceChildren(...items){this.children=[...items];}
   setAttribute(k,v){this.attrs[k]=v;}

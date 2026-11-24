@@ -36,9 +36,11 @@ test('開閉ボタンは他のナビゲーションと同じ下部領域に置�
   assert.match(css,/\.sidebar-bottom-actions #sidebar-collapse-toggle\{[\s\S]*?position:static!important/);
 });
 
-test('Payrollの3カードには固定最小高さ・高さストレッチが残らない',()=>{
-  assert.match(css,/\.assets-payroll-layout\{align-items:start!important\}/);
-  assert.match(css,/\.assets-payroll-layout>form,\s*\.settings-view \.assets-payroll-layout>\.assets-payroll-history-card\{\s*min-height:0!important;height:auto!important/);
+test('Payrollは単一パネルで固定高さを持たない',()=>{
+  const current=src('public/styles/settings-v194.css');
+  assert.match(html,/class="settings-payroll-content"/);
+  assert.match(current,/\.settings-payroll-content\{display:grid;gap:18px;min-width:0\}/);
+  assert.doesNotMatch(html,/class="assets-payroll-layout"/);
   for(const path of ['index.html','styles/navigation-polish-v1916.css','scripts/nav-boot.js']){
     assert.equal(src('public/'+path),src('dist/'+path),path);
   }

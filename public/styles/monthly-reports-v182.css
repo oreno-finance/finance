@@ -22,7 +22,7 @@
 .reports-period-button.selected{border-color:var(--accent);color:var(--accent)}
 .reports-memo-label{font-size:12px;font-weight:700}
 .reports-memo{width:100%;min-height:85px;max-width:100%;background:var(--panel);color:var(--ink);font-size:13px}
-.reports-panel .primary-action{width:auto;display:inline-flex;justify-content:center;margin:0}
+.reports-panel .save-action{width:auto;display:inline-flex;justify-content:center;margin:0}
 .reports-panel .secondary-action{width:fit-content}
 .reports-revision-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .reports-feedback{margin:0;font-size:12px;color:var(--accent)}

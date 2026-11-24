@@ -129,7 +129,7 @@ test('year-over-year drilldown accepts up to 24 months and shows side-by-side ye
 
 test('report archive warns about previous-month missing history without automatically writing',()=>{
  const reports=read('src/ui/monthly-reports.ts');
- assert.match(reports,/前月のレポートはまだ保存されていません/);
+ assert.match(reports,/前月：未保存/);
  assert.match(reports,/button\(`\$\{month\(previous\)\}を開く`/);
  assert.doesNotMatch(reports,/setInterval\([^)]*save/);
 });

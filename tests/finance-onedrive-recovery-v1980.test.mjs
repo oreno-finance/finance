@@ -12,7 +12,7 @@ function fakeCloudDom(){
   const objects=new Map();
   return {getElementById(id){
     if(!objects.has(id))objects.set(id,{value:id==='cloud-client-id'?'12345678-1234-1234-1234-123456789abc':'',
-      dataset:{},textContent:'',toggleAttribute(){},className:'',setAttribute(){}});
+      dataset:{},textContent:'',classList:{toggle(){}},toggleAttribute(){},className:'',setAttribute(){}});
     return objects.get(id);
   }};
 }
@@ -102,8 +102,8 @@ test('notification close control dismisses the notice without cancelling backgro
 test('toast has an accessible dismiss button and leaves bottom-right actions unobstructed',()=>{
   const html=file('public/index.html'),css=file('public/styles/activity-v199.css');
   assert.match(html,/class="activity-dismiss" aria-label="通知を閉じる"/);
-  assert.match(css,/bottom:86px!important/);
+  assert.match(css,/bottom:calc\(16px \+ env\(safe-area-inset-bottom,0px\)\)!important/);
   assert.match(css,/pointer-events:none/);
   assert.match(css,/activity-toast \.activity-dismiss\{pointer-events:auto/);
-  assert.match(css,/\.toast\.activity-toast\{bottom:76px!important/);
+  assert.match(css,/\.toast\.activity-toast\{bottom:calc\(12px \+ env\(safe-area-inset-bottom,0px\)\)!important/);
 });

@@ -1,5 +1,5 @@
 import type { ParsedStatement } from '../models/types.js';
-import { normalize, squish } from './utils.js';
+import { squish } from './utils.js';
 
 /** A content-based identity for an imported version, independent of file name or pasted HTML format. */
 export function statementSignature(s: ParsedStatement): string {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
-import { LiveVault } from '../dist/src/cloud/live-vault.js';
+import { LiveVault } from './helpers/coordinated-vault.mjs';
 import { GraphError } from '../dist/src/cloud/onedrive-api.js';
 import { emptyDocument } from '../dist/src/cloud/merge.js';
 import { encryptDocument, deriveCloudKey, freshSalt } from '../dist/src/cloud/cloud-crypto.js';
@@ -330,4 +330,67 @@ test('CSV v1.9.2: simultaneous independent IDs for the same card/month are rejec
   await fresh.refresh();
   assert.equal(fresh.records().length,1);
   assert.equal(fresh.records()[0].statement.sourceKind,'csv');
+});
+
+test('Phase 6B: ロック中に保存再開が失敗しても平文の再開情報を復活させない',async()=>{
+ for(const reopen of [false,true]){
+  const [a,,mock]=drivers();await a.create(secret);
+  const remembered=a.verifiedBrowserKey();mock.failYear='2026';
+  await assert.rejects(a.saveBatch([{id:'pending',statement:statement('2026-10','pending-data')}]),/保存済みの可能性/);
+  assert.equal(a.pendingYearBatchEntries().length,1);
+  let entered,release;
+  const started=new Promise(resolve=>{entered=resolve;});
+  const write=mock.writeYearVault.bind(mock);
+  mock.writeYearVault=async()=>{entered();await new Promise(resolve=>{release=resolve;});throw new Error('retry interrupted');};
+  const retry=a.resumePendingYearBatch();const rejected=assert.rejects(retry,error=>error.name==='CloudWriteUncertainError');
+  await started;a.lock();
+  if(reopen)await a.unlockBrowserKey(remembered);
+  release();await rejected;
+  assert.equal(a.unlocked,reopen);assert.equal(a.hasPendingYearBatch,false);assert.deepEqual(a.pendingYearBatchEntries(),[]);
+  if(reopen)assert.equal(a.records().length,0);else assert.throws(()=>a.records(),/ロック/);
+  mock.writeYearVault=write;mock.failYear=null;
+  if(!reopen)await a.unlock(secret);
+  await a.saveBatch([{id:'fresh',statement:statement('2026-11')}]);assert.equal(a.records()[0].id,'fresh');
+ }
+});
+test('Phase 6B: 同じブラウザ鍵で再解除した後の新しい再開計画を旧処理が上書きしない',async()=>{
+ const [a,,mock]=drivers();await a.create(secret);const remembered=a.verifiedBrowserKey();mock.failYear='2026';
+ await assert.rejects(a.saveBatch([{id:'old',statement:statement('2026-10')}]),/保存済みの可能性/);
+ let entered,release;const started=new Promise(resolve=>{entered=resolve;});
+ const write=mock.writeYearVault.bind(mock);
+ mock.writeYearVault=async()=>{entered();await new Promise(resolve=>{release=resolve;});throw new Error('old retry interrupted');};
+ const retry=a.resumePendingYearBatch();const rejected=assert.rejects(retry,error=>error.name==='CloudWriteUncertainError');
+ await started;a.lock();await a.unlockBrowserKey(remembered);mock.writeYearVault=write;
+ await assert.rejects(a.saveBatch([{id:'new',statement:statement('2026-11')}]),/別の保存処理|操作中/);
+ assert.equal(a.hasPendingYearBatch,false);
+ release();await rejected;assert.equal(a.hasPendingYearBatch,false);
+ await assert.rejects(a.saveBatch([{id:'new',statement:statement('2026-11')}]),/保存済みの可能性/);
+ assert.deepEqual(a.pendingYearBatchEntries().map(x=>x.id),['new']);
+ mock.failYear=null;assert.deepEqual(await a.resumePendingYearBatch(),['new']);assert.equal(a.records()[0].id,'new');
+});
+test('Phase 6B: 同じ解除状態で通信が失敗した場合は再開計画を維持する',async()=>{
+ const [a,,mock]=drivers();await a.create(secret);mock.failYear='2026';
+ await assert.rejects(a.saveBatch([{id:'pending',statement:statement('2026-11')}]),/保存済みの可能性/);
+ await assert.rejects(a.resumePendingYearBatch(),error=>error.name==='CloudWriteUncertainError');
+ assert.deepEqual(a.pendingYearBatchEntries().map(x=>x.id),['pending']);
+ mock.failYear=null;assert.deepEqual(await a.resumePendingYearBatch(),['pending']);assert.equal(a.hasPendingYearBatch,false);
+});
+test('Phase 6B: ロックと同一鍵の再解除をまたぐ旧refreshは読込結果を公開しない',async()=>{
+ const [a,,mock]=drivers();await a.create(secret);const remembered=a.verifiedBrowserKey();
+ let entered,release;const started=new Promise(resolve=>{entered=resolve;});
+ const read=mock.listYearFiles.bind(mock);let once=true;
+ mock.listYearFiles=async()=>{const result=await read();if(once){once=false;entered();await new Promise(resolve=>{release=resolve;});}return result;};
+ const refresh=a.refresh();const rejected=assert.rejects(refresh,/世代|保管庫|変更/);
+ await started;a.lock();await a.unlockBrowserKey(remembered);
+ await a.saveBatch([{id:'new',statement:statement('2026-10')}]);
+ release();await rejected;assert.deepEqual(a.records().map(r=>r.id),['new']);
+});
+
+test('Phase 6C: PDF原本の取得は同じブラウザ鍵で再解除しても旧要求に返さない',async()=>{
+ const [a,,mock]=drivers();await a.create(secret);const bytes=new Uint8Array([37,80,68,70,1,2,3,4]);
+ await a.saveBatch([{id:'pdf',statement:{...statement('2026-11'),sourceKind:'pdf'},source:{bytes,mime:'application/pdf'}}]);
+ const remembered=a.verifiedBrowserKey(),read=mock.downloadDatedOriginal.bind(mock);let entered,release;const started=new Promise(r=>{entered=r;});
+ mock.downloadDatedOriginal=async(...args)=>{const result=await read(...args);entered();await new Promise(r=>{release=r;});return result;};
+ const pending=a.original('pdf'),rejected=assert.rejects(pending,/保管庫|ロック|変更/);await started;a.lock();await a.unlockBrowserKey(remembered);release();await rejected;
+ mock.downloadDatedOriginal=read;assert.deepEqual(await a.original('pdf'),bytes);
 });

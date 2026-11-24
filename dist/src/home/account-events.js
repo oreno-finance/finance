@@ -1,12 +1,13 @@
+import { recurringForCalculation } from '../fixed-costs/payment-history.js';
 /** Read-only account-level cashflow. Bank balances are projections from a manually
  * observed snapshot, never a bank API balance. No assets or statements are mutated. */
 import { ASSET_ACCOUNTS, recurringCoveredByOneTime } from '../cloud/assets.js';
 import { recurringInMonth } from '../cloud/recurring-schedule.js';
-import { estimatedCardFixedBills } from '../cloud/card-fixed-estimates.js';
+import { estimatedCardFixedBills, estimatedMizuhoFunding } from '../cloud/card-fixed-estimates.js';
 import { mizuhoTransferForBill } from '../cloud/mizuho-transfer.js';
+import { payrollRole, payrollRoleLabel, payrollCoversRecurringSalary, recurringSalaryRole } from '../cloud/payroll-income.js';
 import { expectedMainSalaries } from '../cloud/salary-projection.js';
 import { changePeriod, monthlyReport } from '../summary/monthly-summary.js';
-const payrollName = /給与|給料|salary|payroll/i;
 const period = (day) => day.slice(0, 7);
 const isDay = (value) => /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(value) &&
     !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
@@ -24,7 +25,7 @@ function observedDay(snapshot) {
 function addMonths(from, to) {
     const result = [];
     let current = period(from);
-    while (current <= period(to) && result.length < 6) {
+    while (current <= period(to) && result.length < 7) {
         result.push(current);
         current = changePeriod(current, 1);
     }
@@ -57,17 +58,20 @@ export function forecastAccounts(source, today, horizonDays = 45, reportForMonth
             return;
         events.push(event);
     };
-    const addMovement = (id, date, title, amount, kind, from, to) => {
+    const addMovement = (id, date, title, amount, kind, from, to, movementStatus = 'planned') => {
+        const name = (id) => ASSET_ACCOUNTS.find(account => account.id === id)?.name ?? '口座';
+        const route = from && to ? `${name(from)} → ${name(to)}` : undefined;
         if (from && from !== 'nisa')
-            push({ id: `${id}:from`, date, title, amount: -amount, kind, accountId: from });
+            push({ id: `${id}:from`, date, title, amount: -amount, kind, accountId: from, movementStatus, route });
         if (to && to !== 'nisa')
-            push({ id: `${id}:to`, date, title, amount, kind, accountId: to });
+            push({ id: `${id}:to`, date, title, amount, kind, accountId: to, movementStatus, route });
     };
     const missingCardIds = new Set();
     const cardLines = [];
     const overlapMonths = [];
     const invalidMonths = [];
     let unverified = false;
+    const recurring = recurringForCalculation(source.assets);
     for (const month of addMonths(cutoff, until)) {
         const report = reportForMonth(month);
         if (report.recurringCardOverlap > 0)
@@ -91,15 +95,25 @@ export function forecastAccounts(source, today, horizonDays = 45, reportForMonth
                 oneTime: source.assets.oneTime,
             });
             if (funding)
-                addMovement(`fund:${card.id}`, funding.date, 'みずほ銀行へ送金（見込み）', funding.amount, 'transfer', 'rakuten-bank', 'mizuho-bank');
+                addMovement(`fund:${card.id}`, funding.date, 'みずほ銀行へ送金（見込み）', funding.amount, 'transfer', 'rakuten-bank', 'mizuho-bank', 'estimated');
         }
-        for (const occurrence of recurringInMonth(month, source.assets.recurring)) {
+        for (const occurrence of recurringInMonth(month, recurring)) {
             const entry = occurrence.entry;
-            if (recurringCoveredByOneTime(entry, occurrence.date, source.assets.oneTime))
+            if (recurringCoveredByOneTime(entry, occurrence.date, source.assets.oneTime, undefined, recurring))
                 continue;
-            if (source.payroll.ready && entry.kind === 'income' && entry.toAccountId === source.assets.payrollDepositAccount && payrollName.test(entry.name))
+            if (source.payroll.ready && payrollCoversRecurringSalary(entry, occurrence.date, source.payroll.entries, source.assets.payrollDepositAccount))
                 continue;
             addMovement(`recurring:${occurrence.id}`, occurrence.date, entry.name, entry.amount, 'recurring', entry.fromAccountId, entry.toAccountId);
+        }
+    }
+    // A confirmed bill in the following month may require funding before the
+    // current horizon ends. Do not include its card debit or unrelated warnings.
+    if (source.assets.mizuhoTransferPlan?.enabled) {
+        const nextReport = reportForMonth(changePeriod(period(until), 1));
+        for (const card of nextReport.cardLines) {
+            const funding = mizuhoTransferForBill(card, source.assets);
+            if (funding && funding.date <= until)
+                addMovement(`fund:${card.id}`, funding.date, 'みずほ銀行へ送金（見込み）', funding.amount, 'transfer', 'rakuten-bank', 'mizuho-bank', 'estimated');
         }
     }
     const estimates = estimatedCardFixedBills(source.assets, source.records, today, until);
@@ -112,17 +126,22 @@ export function forecastAccounts(source, today, horizonDays = 45, reportForMonth
         push({ id: item.id, date: item.paymentDate, accountId: assigned, amount: -item.amount,
             title: item.name, kind: 'card-estimate', cardId: item.cardId, confirmation: 'unknown', estimated: true });
     }
+    for (const funding of estimatedMizuhoFunding(source.assets, source.records, today, until)) {
+        for (const [accountId, sign] of [['rakuten-bank', -1], ['mizuho-bank', 1]])
+            push({ id: `${funding.id}:${accountId}`, date: funding.date, title: 'みずほ銀行へ送金（固定費から推定・未確定）', amount: sign * funding.amount,
+                kind: 'transfer', accountId, estimated: true, movementStatus: 'estimated', route: '楽天銀行 → みずほ銀行' });
+    }
     for (const entry of source.assets.oneTime ?? [])
-        addMovement(`once:${entry.id}`, entry.date, entry.name, entry.amount, 'one-time', entry.fromAccountId, entry.toAccountId);
+        addMovement(`once:${entry.id}`, entry.date, entry.name, entry.amount, 'one-time', entry.fromAccountId, entry.toAccountId, entry.status);
     const payrollAccount = source.assets.payrollDepositAccount;
     if (source.payroll.ready && payrollAccount && payrollAccount !== 'nisa') {
         for (const entry of source.payroll.entries) {
             push({ id: `salary:${entry.id}`, date: entry.paidOn, accountId: payrollAccount,
-                title: entry.employerId === 'main' ? '本業給与' : '副業給与', amount: entry.netPay, kind: 'salary' });
+                title: `${payrollRoleLabel(payrollRole(entry))} · ${entry.kind === 'bonus' ? '賞与' : entry.kind === 'adjustment' ? '調整' : '給与'}`, amount: entry.netPay, kind: 'salary' });
         }
         for (const estimate of expectedMainSalaries(source.payroll.entries, today, until)) {
-            const scheduled = source.assets.recurring.some(r => r.enabled && r.kind === 'income' && r.toAccountId === payrollAccount && payrollName.test(r.name) &&
-                recurringInMonth(period(estimate.date), [r]).some(o => o.date === estimate.date));
+            const scheduled = source.assets.recurring.some(r => r.toAccountId === payrollAccount && recurringSalaryRole(r) === 'main' &&
+                recurringInMonth(period(estimate.date), [r]).length > 0);
             if (!scheduled)
                 push({ id: `estimated-salary:${estimate.date}`, date: estimate.date, accountId: payrollAccount,
                     title: '本業給与（見込み）', amount: estimate.amount, kind: 'salary-estimate' });
@@ -139,7 +158,8 @@ export function forecastAccounts(source, today, horizonDays = 45, reportForMonth
         const affectedInvalid = start && invalidMonths.some(month => month >= period(start));
         const reason = !start ? 'no-snapshot' : start < cutoff ? 'stale-snapshot' : unknownAfterBaseline ? 'missing-card-account' :
             affectedOverlap ? 'possible-duplicate' : affectedInvalid ? 'invalid-statement' : unverified ? 'unverified-debit' :
-                events.some(e => e.accountId === accountId && e.kind === 'card-estimate') ? 'estimated-card-debit' :
+                (events.some(e => e.accountId === accountId && (e.kind === 'card-estimate' || e.estimated === true)) ||
+                    (accountId === 'rakuten-bank' && estimates.some(e => { const funding = mizuhoTransferForBill(e, source.assets); return !!funding && funding.date < today; }))) ? 'estimated-card-debit' :
                     ((!source.payroll.ready || payrollStale) && (!source.assets.payrollDepositAccount || source.assets.payrollDepositAccount === accountId)) ||
                         (source.payroll.entries.length > 0 && !source.assets.payrollDepositAccount) ? 'payroll-unavailable' : null;
         if (!snapshot || !start || start < cutoff)
@@ -175,5 +195,6 @@ export function forecastAccounts(source, today, horizonDays = 45, reportForMonth
             balanceReliable: !!forecast?.reliable && !!day };
     })
         .sort((a, b) => a.date.localeCompare(b.date) || a.cardId.localeCompare(b.cardId) || a.id.localeCompare(b.id));
-    return { accounts: forecasts, debits, missingCardIds: [...missingCardIds], overlap: overlapMonths.length > 0 };
+    const upcomingMovements = events.filter(event => event.date >= today && event.kind !== 'card' && event.kind !== 'card-estimate');
+    return { accounts: forecasts, debits, upcomingMovements, missingCardIds: [...missingCardIds], overlap: overlapMonths.length > 0 };
 }

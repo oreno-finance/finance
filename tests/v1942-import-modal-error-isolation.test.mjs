@@ -59,7 +59,7 @@ test('closing and reopening the add dialog does not reintroduce the earlier fail
 
 function fileHarness(oldFailures=[]) {
   const env={
-    filesBusy:false,batchBusy:false,revisionBusy:false,
+    filesBusy:false,batchBusy:false,revisionBusy:false,lockSequence:0,importAbort:null,AbortController,
     importUploadFeedback:'',failedImports:[...oldFailures],currentUploadFailures:[],
     updateImportUploadFeedback(){},updateBatchStatus(){},showActivity(){},finishActivity(){},render(){},
     closeImportAddDialog(){env.closed++},toast(){},closed:0,

@@ -1,3 +1,5 @@
+import {estimateRegularNet,regularSalarySample} from '../cloud/salary-estimate.js';
+import {recurringForCalculation,fixedCostsForCalculation} from '../fixed-costs/payment-history.js';
 /** Finance monthly report. All periods are assigned from the statement's paymentDate,
  * never from a statement's billingMonth or a transaction's usedOn.
  * This module is pure and has no persistence or bank-balance side effects. */
@@ -5,13 +7,13 @@ import { getCard, type ImportRow, type ParsedStatement } from '../models/types.j
 import type { CloudRecord } from '../cloud/merge.js';
 import { importErrors } from '../importers/batch-policy.js';
 import { displayMerchant, matchingRule, type CategoryDefinition, type MerchantRule } from '../cloud/merchant-rules.js';
-import { recurringCoveredByOneTime, nisaRuleOnDay, type AssetAccountId, type AssetsDocument, type OneTimeEntry } from '../cloud/assets.js';
+import { recurringOneTimeMatch, nisaRuleOnDay, type AssetAccountId, type AssetsDocument, type OneTimeEntry } from '../cloud/assets.js';
 import { recurringInMonth } from '../cloud/recurring-schedule.js';
 import { fixedCostOccurrences } from '../fixed-costs/contracts.js';
-import type { PayrollIncomeEntry } from '../cloud/payroll-income.js';
+import { payrollRole, payrollCoversRecurringSalary, recurringSalaryRole, type PayrollJob, type PayrollIncomeEntry } from '../cloud/payroll-income.js';
 
-export interface SummaryIncome { id: string; employer: string; kind: string; date: string; amount: number }
-export interface SummaryIncomeEstimate { employer: 'main'; kind: 'salary'; sourcePeriod: string; amount: number; method: 'previous-regular-net-excluding-nontaxable' | 'previous-regular-net-fallback' }
+export interface SummaryIncome { id: string; employerId: string; job: PayrollJob|null; kind: string; date: string; amount: number }
+export interface SummaryIncomeEstimate { employerId: string; job: 'main'; kind: 'salary'; sourcePeriod: string; amount: number; method: 'previous-regular-net-excluding-nontaxable' | 'previous-regular-net-fallback' }
 export interface SummaryCard { id: string; cardId: string; name: string; billingMonth: string | null; paymentDate: string; amount: number; confirmation: ParsedStatement['confirmation'] }
 export interface SummaryCategory { id: string; name: string; color: string | null; amount: number; count: number }
 export interface SummaryMerchant { name: string; amount: number; count: number }
@@ -44,6 +46,7 @@ export interface MonthlyReport {
   recurringLines: SummaryRecurring[];
   recurringSalaryExcluded: number;
   recurringCardOverlap: number;
+  recurringOneTimeOverlap:number;
   categories: SummaryCategory[];
   merchants: SummaryMerchant[];
   issues: SummaryIssue[];
@@ -53,6 +56,10 @@ export interface MonthlyReport {
   unknownConfirmationCount: number;
   payrollReady: boolean;
   payrollSyncedAt: number | null;
+}
+/** A manual salary schedule is a plan, never confirmed Payroll income. */
+export function hasScheduledSalary(report:MonthlyReport):boolean {
+  return report.recurringLines.some(line=>recurringSalaryRole(line)!==null);
 }
 export interface PayrollSnapshot { ready: boolean; syncedAt: number | null; entries: readonly PayrollIncomeEntry[] }
 export interface MonthlySource { records: readonly CloudRecord[]; rules: readonly MerchantRule[]; categories: readonly CategoryDefinition[]; assets: Pick<AssetsDocument,'nisaCardRule'|'recurring'> & Partial<Pick<AssetsDocument,'nisaCardRuleHistory'>> & Partial<Pick<AssetsDocument,'snapshots'|'payrollDepositAccount'|'cardDebitAccounts'|'cardPreferences'|'cardRecurringDecisions'|'mizuhoTransferPlan'|'oneTime'|'fixedCosts'|'mizuhoFundingChecks'|'cardNoUseMonths'>>; payroll: PayrollSnapshot; /** Optional injected local month for deterministic tests. */ currentPeriod?:string }
@@ -70,20 +77,7 @@ function add(a: number, b: number): number {
 }
 function normalized(value: string): string { return value.normalize('NFKC').toLocaleLowerCase(); }
 function localPeriod():string {const now=new Date();return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;}
-/** The producer's verified taxable amount can represent basic salary + fixed overtime.
- * Using last month's deductions and excluding non-taxable benefits is an estimate,
- * not a verified future deposit. Never fall back to unqualified total net pay. */
-export function estimateRegularNet(previous:PayrollIncomeEntry):number|null {
-  if(previous.employerId!=='main'||previous.kind!=='salary'||
-    !Number.isSafeInteger(previous.netPay)||previous.netPay<0||
-    (previous.grossPay!==null&&(!Number.isSafeInteger(previous.grossPay)||previous.grossPay<0))||
-    (previous.taxablePay!==null&&(!Number.isSafeInteger(previous.taxablePay)||previous.taxablePay<0)))return null;
-  if(previous.grossPay===null||previous.taxablePay===null)return previous.netPay;
-  if(previous.taxablePay>previous.grossPay)return null;
-  const nonTaxable=previous.grossPay-previous.taxablePay;
-  if(nonTaxable>previous.netPay)return null;
-  return previous.netPay-nonTaxable;
-}
+export {estimateRegularNet} from '../cloud/salary-estimate.js';
 export function isNisaCardRow(row: ImportRow, stmt: ParsedStatement, assets: MonthlySource['assets']):boolean {
   const config=validDay(row.usedOn)?nisaRuleOnDay(assets,row.usedOn):null;
   return !!config?.enabled && stmt.cardId===config.cardId &&
@@ -204,43 +198,48 @@ export function monthlyReport(period: string, source: MonthlySource, prepared?:P
       seen.add(entry.id);
       if(!validDay(entry.paidOn) || !Number.isSafeInteger(entry.netPay) || entry.netPay<0)
         throw new Error('Payrollの収入データに不正な日付または金額があります。');
-      if(entry.paidOn.slice(0,7)===period)incomeLines.push({id:entry.id,employer:entry.employerId,kind:entry.kind,date:entry.paidOn,amount:entry.netPay});
+      if(entry.paidOn.slice(0,7)===period)incomeLines.push({id:entry.id,employerId:entry.employerId,job:payrollRole(entry),kind:entry.kind,date:entry.paidOn,amount:entry.netPay});
     }
   }
   const actualIncome=source.payroll.ready&&incomeLines.length>0
     ?incomeLines.reduce((acc,line)=>add(acc,line.amount),0):null;
+  const scheduled=recurringForCalculation(source.assets);
+  const occurrences=recurringInMonth(period,scheduled);
+  // Household income does not require a configured bank account. When there is
+  // one, use the same account/role/month match as the bank forecasts. Otherwise
+  // keep the legacy household-only role match without inventing a bank route.
+  const salaryAccount=source.assets.payrollDepositAccount;
+  const manualMain=source.payroll.ready&&occurrences.some(({entry})=>
+    recurringSalaryRole(entry)==='main'&&(!salaryAccount||entry.toAccountId===salaryAccount));
   const incomeEstimates:SummaryIncomeEstimate[]=[];
   const currentPeriod=source.currentPeriod??localPeriod();
   // Forecast only for the actual current month. The prior regular salary must be published.
   // Prefer prior payment month; allow one older payment month when salaries arrive late.
-  if(source.payroll.ready && period===currentPeriod &&
-    !incomeLines.some(line=>line.employer==='main'&&line.kind==='salary')) {
-    const previous=changePeriod(period,-1),older=changePeriod(period,-2);
-    const recent=source.payroll.entries.filter(entry=>entry.employerId==='main'&&entry.kind==='salary'&&
-      validDay(entry.paidOn)&&[previous,older].includes(entry.paidOn.slice(0,7)))
-      .sort((a,b)=>b.paidOn.localeCompare(a.paidOn));
-    // If there are multiple regular salaries in a payment month, selecting one is unsafe.
-    if(recent.length && recent.filter(entry=>entry.paidOn.slice(0,7)===recent[0]!.paidOn.slice(0,7)).length===1){
-      const sample=recent[0]!;
+  if(source.payroll.ready && period===currentPeriod && !manualMain &&
+    !incomeLines.some(line=>line.job==='main'&&line.kind==='salary')) {
+    const sample=regularSalarySample(source.payroll.entries,period);
+    if(sample){
       const estimated=estimateRegularNet(sample);
-      if(estimated!==null)incomeEstimates.push({employer:'main',kind:'salary',sourcePeriod:sample.paidOn.slice(0,7),
+      if(estimated!==null)incomeEstimates.push({employerId:sample.employerId,job:'main',kind:'salary',sourcePeriod:sample.paidOn.slice(0,7),
         amount:estimated,method:sample.grossPay===null||sample.taxablePay===null?'previous-regular-net-fallback':'previous-regular-net-excluding-nontaxable'});
     }
   }
   const estimatedIncome=incomeEstimates.length?incomeEstimates.reduce((acc,e)=>add(acc,e.amount),0):null;
-  const incomeMissingRegular=source.payroll.ready && period===currentPeriod &&
-    !incomeLines.some(line=>line.employer==='main'&&line.kind==='salary') && estimatedIncome===null &&
-    source.payroll.entries.some(entry=>entry.employerId==='main'&&entry.kind==='salary'&&validDay(entry.paidOn)&&entry.paidOn.slice(0,7)<period);
+  const incomeMissingRegular=source.payroll.ready && period===currentPeriod && !manualMain &&
+    !incomeLines.some(line=>line.job==='main'&&line.kind==='salary') && estimatedIncome===null &&
+    source.payroll.entries.some(entry=>payrollRole(entry)==='main'&&entry.kind==='salary'&&validDay(entry.paidOn)&&entry.paidOn.slice(0,7)<period);
   const payrollIncome=incomeMissingRegular?null:actualIncome===null?estimatedIncome:estimatedIncome===null?actualIncome:add(actualIncome,estimatedIncome);
 
   // Recurrences are scheduled entries, *including future dates*. They are not verified bank debits.
   const recurringLines:SummaryRecurring[]=[];
-  let recurringIncome=0,recurringExpense=0,recurringTransfers=0,recurringSalaryExcluded=0,recurringCardOverlap=0;
-  const payrollName=/給与|給料|salary|payroll/i;
-  for(const occurrence of recurringInMonth(period,source.assets.recurring??[])){
+  let recurringIncome=0,recurringExpense=0,recurringTransfers=0,recurringSalaryExcluded=0,recurringCardOverlap=0,recurringOneTimeOverlap=0;
+  for(const occurrence of occurrences){
     const e=occurrence.entry;
-    if(recurringCoveredByOneTime(e,occurrence.date,source.assets.oneTime))continue;
-    const payrollOverlap=e.kind==='income'&&payrollName.test(e.name) && source.payroll.ready;
+    const oneTimeMatch=recurringOneTimeMatch(e,occurrence.date,source.assets.oneTime,'done',scheduled);
+    if(oneTimeMatch==='unique')continue;
+    if(oneTimeMatch==='ambiguous')recurringOneTimeOverlap++;
+    const payrollOverlap=source.payroll.ready&&payrollCoversRecurringSalary(e,occurrence.date,source.payroll.entries,
+      salaryAccount??e.toAccountId);
     if(payrollOverlap){recurringSalaryExcluded++;continue;}
     const line:SummaryRecurring={id:occurrence.id,entryId:e.id,name:e.name,date:occurrence.date,kind:e.kind,
       amount:e.amount,fromAccountId:e.fromAccountId,toAccountId:e.toAccountId,categoryId:e.categoryId,payrollOverlap:false,
@@ -262,9 +261,9 @@ export function monthlyReport(period: string, source: MonthlySource, prepared?:P
   }
   // Cash standing commitments affect household planned expenses but never a bank balance.
   // Card contracts are already included in their issuer statements and never enter this loop.
-  for(const occurrence of fixedCostOccurrences(period,(source.assets.fixedCosts??[]).filter(x=>x.payment==='cash'))){
+  for(const occurrence of fixedCostOccurrences(period,fixedCostsForCalculation(source.assets).filter(x=>x.payment==='cash'))){
     const {item,date,amount}=occurrence;
-    if(source.assets.oneTime?.some(one=>one.kind==='expense'&&one.date===date&&one.name===item.name&&one.amount===amount))continue;
+    // One-time expenses always have a bank source. Never erase a cash contract based on one.
     const duplicate=cardRowsForOverlap.some(row=>row.name===normalized(item.name).trim()&&row.amount===amount);
     recurringLines.push({id:`cash:${item.id}:${date}`,entryId:`cash:${item.id}`,name:item.name,date,kind:'expense',amount,
       fromAccountId:null,toAccountId:null,categoryId:item.categoryId,payrollOverlap:false,cardOverlap:duplicate});
@@ -297,19 +296,32 @@ export function monthlyReport(period: string, source: MonthlySource, prepared?:P
       if(!category)unclassifiedCount++;
     }
   }
-  const income=payrollIncome===null?null:add(add(payrollIncome,recurringIncome),oneTimeIncome);
+  // An explicit main salary schedule supplies a planned amount, not an actual
+  // Payroll observation. Without any main evidence, preserve the unknown total.
+  const incomeBase=payrollIncome===null&&manualMain?0:payrollIncome;
+  const income=incomeBase===null?null:add(add(incomeBase,recurringIncome),oneTimeIncome);
   const cardNoUseConfirmed=included===0&&source.assets.cardNoUseMonths?.includes(period)===true&&excludedCount===0;
   const cardOutflow=included>0?sum:cardNoUseConfirmed?0:null;
   const livingOutflow=cardOutflow===null?null:add(cardOutflow,-nisa);
-  // No card statement is *observed* as 0 in cashflow; the UI warns when none is registered.
-  // Internal transfers are never household revenue or expenses.
-  const monthlyBalance=income===null||(excludedCount>0&&included===0)?null:add(add(add(income,-(cardOutflow??0)),-recurringExpense),-oneTimeExpense);
+  // Unknown card spending is not zero. Only explicit no-use or a registered
+  // statement supplies a card total; internal transfers remain neutral.
+  const monthlyBalance=income===null||cardOutflow===null?null:add(add(add(income,-cardOutflow),-recurringExpense),-oneTimeExpense);
   const referenceBalance=monthlyBalance;
   return {period,income,actualIncome,estimatedIncome,incomeEstimates,incomeMissingRegular,incomeLines,cardOutflow,cardLines,livingOutflow,nisaOutflow:nisa,
-    referenceBalance,monthlyBalance,recurringIncome,recurringExpense,recurringTransfers,recurringLines,oneTimeIncome,oneTimeExpense,oneTimePlannedExpense,oneTimePlannedIncome,pastUnconfirmedOneTime,cardNoUseConfirmed,oneTimeLines,recurringSalaryExcluded,recurringCardOverlap,categories:[...categoryTotals.values()].sort((a,b)=>b.amount-a.amount||a.name.localeCompare(b.name,'ja')),
+    referenceBalance,monthlyBalance,recurringIncome,recurringExpense,recurringTransfers,recurringLines,oneTimeIncome,oneTimeExpense,oneTimePlannedExpense,oneTimePlannedIncome,pastUnconfirmedOneTime,cardNoUseConfirmed,oneTimeLines,recurringSalaryExcluded,recurringCardOverlap,recurringOneTimeOverlap,categories:[...categoryTotals.values()].sort((a,b)=>b.amount-a.amount||a.name.localeCompare(b.name,'ja')),
     merchants:[...merchantTotals.values()].sort((a,b)=>b.amount-a.amount||a.name.localeCompare(b.name,'ja')),
     issues,provisional,unclassifiedCount,excludedCount,unknownConfirmationCount,
     payrollReady:source.payroll.ready,payrollSyncedAt:source.payroll.ready?source.payroll.syncedAt:null};
+}
+/** Shared read-only coverage and known subtotals for every cashflow consumer.
+ * Partial spending remains visible, without claiming a complete monthly balance. */
+export type CashflowCoverage='missing'|'partial'|'review'|'provisional'|'registered';
+export function monthlyCashflow(report:MonthlyReport):{coverage:CashflowCoverage;expense:number|null;livingExpense:number|null;balance:number|null} {
+  const nonCard=add(report.recurringExpense,report.oneTimeExpense);
+  const coverage:CashflowCoverage=report.cardOutflow===null?(nonCard>0?'partial':'missing'):
+    report.issues.length||report.unknownConfirmationCount||report.recurringCardOverlap?'review':report.provisional.length?'provisional':'registered';
+  return {coverage,expense:report.cardOutflow===null?(nonCard||null):add(report.cardOutflow,nonCard),
+    livingExpense:report.livingOutflow===null?(nonCard||null):add(report.livingOutflow,nonCard),balance:report.monthlyBalance};
 }
 export function changePeriod(period:string,delta:number):string {
   if(!validPeriod(period)||!Number.isSafeInteger(delta))throw new Error('年月が不正です。');

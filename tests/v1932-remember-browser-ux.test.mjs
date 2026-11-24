@@ -22,7 +22,7 @@ test('settings displays only the relevant action, never two confusing disabled b
   assert.match(main,/register\.classList\.add\('hidden'\);register\.disabled=true/);
   assert.match(main,/forget\.classList\.add\('hidden'\);forget\.disabled=true/);
   assert.match(main,/if\(remembered\)\{/);
-  assert.match(main,/保管庫の解除時に「このブラウザを記憶する」を選べます/);
+  assert.match(main,/毎回入力（解除時に変更可能）/);
   assert.match(main,/forget\.classList\.remove\('hidden'\);forget\.disabled=false/);
   assert.match(css,/\.vault-retention-options \.vault-tab-option:has\(input:checked\)/);
 });

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
 import {OneDriveTestClient} from '../dist/src/cloud/onedrive-api.js';
-import {LiveVault} from '../dist/src/cloud/live-vault.js';
+import {LiveVault} from './helpers/coordinated-vault.mjs';
 import {emptyIndex} from '../dist/src/cloud/layout.js';
 import {deriveCloudKey,freshSalt,encryptIndex} from '../dist/src/cloud/cloud-crypto.js';
 import {clearFinancePerformance,financePerformanceReport} from '../dist/src/cloud/performance-diagnostics.js';

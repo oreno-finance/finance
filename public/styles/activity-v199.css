@@ -2,7 +2,7 @@
 #cloud-live-bar,#operation-result {display:none!important}
 .toast.activity-toast {
   display:flex!important;position:fixed!important;z-index:300!important;
-  right:22px!important;bottom:86px!important;top:auto!important;left:auto!important;
+  right:22px!important;bottom:calc(16px + env(safe-area-inset-bottom,0px))!important;top:auto!important;left:auto!important;
   align-items:center;gap:11px;width:max-content;max-width:min(430px,calc(100vw - 28px));
   padding:13px 16px!important;margin:0!important;border:1px solid #405267!important;
   border-radius:13px!important;background:#18263c!important;color:#f4f8fc!important;
@@ -34,5 +34,5 @@
   cursor:pointer;line-height:1;display:grid;place-items:center}
 .activity-toast .activity-dismiss:hover{background:#ffffff2b}
 .activity-toast .activity-dismiss:focus-visible{outline:2px solid #b7e5fc;outline-offset:1px}
-@media(max-width:800px){.toast.activity-toast{bottom:76px!important;right:12px!important;max-width:calc(100vw - 24px)}}
+@media(max-width:800px){.toast.activity-toast{bottom:calc(12px + env(safe-area-inset-bottom,0px))!important;right:12px!important;max-width:calc(100vw - 24px)}}
 @media(prefers-reduced-motion:reduce){.toast.activity-toast{transition:none!important}.activity-toast[data-kind="working"] .activity-icon{animation-duration:1.8s}}

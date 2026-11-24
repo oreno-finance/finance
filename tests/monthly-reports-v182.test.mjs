@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
 import {readFileSync} from 'node:fs';
-import {LiveVault,CloudWriteUncertainError,CloudEditCancelledError} from '../dist/src/cloud/live-vault.js';
+import {LiveVault,CloudWriteUncertainError,CloudEditCancelledError} from './helpers/coordinated-vault.mjs';
 import {GraphError} from '../dist/src/cloud/onedrive-api.js';
 import {reportSnapshot,snapshotHash,reportRevision,revisedDocument,validateReportDocument} from '../dist/src/reports/monthly-report.js';
 import {deriveCloudKey,freshSalt,encryptMonthlyReport,decryptMonthlyReport} from '../dist/src/cloud/cloud-crypto.js';
@@ -149,4 +149,33 @@ test('read-only diagnostics also verify archived report encryption and detect co
   graph.store.files.set('legacy:report:2026-11',{...file,text:JSON.stringify(cipher)});
   const damaged=await diagnoseVaultFiles(graph,pass);
   assert.equal(damaged.ok,false);assert.match(damaged.report,/2026-11：失敗/);
+});
+
+test('Phase 6C: JSTの月初残高を前月のレポートへ混ぜない',()=>{
+ const previous=process.env.TZ;process.env.TZ='Asia/Tokyo';
+ try{const s=base();s.assets.snapshots.push({id:'boundary',accountId:'nisa',balance:999000,observedAt:'2026-10-31T16:00:00Z'});
+ assert.equal(reportSnapshot('2026-10',s).balances.find(x=>x.name==='NISA口座').balance,500000);
+ assert.equal(reportSnapshot('2026-11',s).balances.find(x=>x.name==='NISA口座').balance,999000);
+ }finally{if(previous===undefined)delete process.env.TZ;else process.env.TZ=previous;}
+});
+test('Phase 6C: レポートの旧保存・旧読込は同じ鍵で再解除しても無効',async()=>{
+ const {graph,vault}=await make(),snapshot=reportSnapshot('2026-11',base());const remembered=vault.verifiedBrowserKey();
+ const original=graph.readMonthlyReport.bind(graph);
+ async function interrupt(run){let entered,release;const started=new Promise(r=>{entered=r;});
+ graph.readMonthlyReport=async p=>{const result=await original(p);graph.readMonthlyReport=original;entered();await new Promise(r=>{release=r;});return result;};
+ const pending=run(),rejected=assert.rejects(pending,e=>e instanceof CloudEditCancelledError);await started;vault.lock();await vault.unlockBrowserKey(remembered);release();await rejected;}
+ const writes=graph.store.writes;await interrupt(()=>vault.saveArchivedReport(snapshot,'旧メモ',null));assert.equal(graph.store.writes,writes);assert.equal(await vault.loadArchivedReport('2026-11'),null);
+ await vault.saveArchivedReport(snapshot,'新メモ',null);await interrupt(()=>vault.loadArchivedReport('2026-11'));assert.equal((await vault.loadArchivedReport('2026-11')).current.note,'新メモ');
+});
+
+test('Phase 6E: 再暗号化の切替中は他端末の月次レポート書込みを停止する',async()=>{
+ const {graph,vault}=await make();const peer=new LiveVault(new FakeGraph(graph.store));await peer.unlock(pass);
+ const snapshot=reportSnapshot('2026-11',base());await vault.saveArchivedReport(snapshot,'old',null);
+ const before=await peer.loadArchivedReport('2026-11');
+ let entered,release;const started=new Promise(r=>{entered=r;}),done=new Promise(r=>{release=r;});
+ const write=graph.writeFinanceIndex.bind(graph);graph.writeFinanceIndex=async(...args)=>{entered();await done;return write(...args);};
+ const rotation=vault.changePassphrase(pass,nextPass);await started;
+ try{await assert.rejects(peer.saveArchivedReport(snapshot,'new',before.current.id),/別の端末/);}
+ finally{release();await rotation;}
+ assert.equal((await vault.loadArchivedReport('2026-11')).current.note,'old');
 });

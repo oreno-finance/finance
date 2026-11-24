@@ -2,7 +2,7 @@
 /* Quiet secondary documentation. Overrides inherited subscriptions large-note styles. */
 #subscriptions-view .fixed-cost-guidance{font-size:12px!important;line-height:1.55!important;font-weight:400!important;color:var(--muted,#687387);margin:13px 0 0}
 #summary-view > .monthly-heading.finance-page-heading{display:block!important;align-items:initial!important;justify-content:initial!important;margin-bottom:12px}
-#summary-view > .monthly-controls.finance-period-nav{display:flex;justify-content:flex-start;align-items:center;flex-wrap:wrap;gap:8px;width:fit-content;max-width:100%;margin:0 0 20px}
+#summary-view > .monthly-controls.finance-period-nav{display:flex;justify-content:flex-start;align-items:center;flex-wrap:wrap;width:fit-content;max-width:100%;margin:0 0 20px}
 #summary-view > .monthly-controls #monthly-report-open{width:auto;flex:0 0 auto}
 .fixed-cost-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .fixed-cost-metric{display:grid;gap:6px;min-width:0;padding:16px;border:1px solid var(--line,#dde2e8);border-radius:12px;background:var(--panel,#fff)}
@@ -22,9 +22,9 @@
 .fixed-cost-form{padding:20px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px;overflow-y:auto;max-height:min(90dvh,820px)}
 .fixed-cost-form h2,.fixed-cost-form .fixed-cost-form-actions,.fixed-cost-form .fixed-cost-form-error{grid-column:1/-1;margin:0}
 .fixed-cost-form h2{font-size:1.4rem;margin-bottom:4px}
-.fixed-cost-field{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:12px;font-weight:650}
+.fixed-cost-field{display:flex;flex-direction:column;gap:7px;min-width:0;font-size:12px;font-weight:650;color:var(--muted)}
 .fixed-cost-field[hidden]{display:none!important}
-.fixed-cost-field input,.fixed-cost-field select,.fixed-cost-field textarea{box-sizing:border-box;max-width:100%;width:100%;min-height:39px;border:1px solid var(--line,#bdc7d2);border-radius:9px;background:var(--panel,#fff);color:inherit;padding:8px;font:inherit;font-size:14px}
+.fixed-cost-field input,.fixed-cost-field select,.fixed-cost-field textarea{box-sizing:border-box;max-width:100%;width:100%;min-height:42px;border:1px solid var(--line);border-radius:9px;background-color:var(--panel);color:var(--ink);padding:9px 12px;font:inherit;font-size:13px}
 .fixed-cost-field textarea{min-height:70px;resize:vertical}
 .fixed-cost-field:has([name="name"]),.fixed-cost-field:has([name="note"]){grid-column:1/-1}
 .fixed-cost-form-error{color:var(--danger,#bd3e43);font-size:12px;min-height:0}
@@ -32,13 +32,50 @@
 .fixed-cost-form-actions button{min-height:40px;padding:8px 18px}
 @media(max-width:620px){.fixed-cost-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.fixed-cost-metric:last-child{grid-column:1/-1}.fixed-cost-toolbar .subscriptions-tabs{width:100%;flex-wrap:nowrap;overflow-x:auto}.fixed-cost-toolbar .subscriptions-tab{flex:0 0 auto;white-space:nowrap}.fixed-cost-form{padding:15px;gap:10px}.fixed-cost-item{align-items:flex-start}.fixed-cost-item-price{text-align:right}}
 @media(max-width:360px){.fixed-cost-form{grid-template-columns:1fr}.fixed-cost-field{grid-column:1/-1}.fixed-cost-metrics{grid-template-columns:1fr}.fixed-cost-metric:last-child{grid-column:auto}}
-.fixed-cost-detail{padding:20px;display:grid;gap:14px;max-height:min(90dvh,820px);overflow:auto}
-.fixed-cost-detail h2{font-size:1.3rem;overflow-wrap:anywhere}
-.fixed-cost-detail h3{font-size:.95rem;margin-top:8px}
-.fixed-cost-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.fixed-cost-detail-pair{display:grid;gap:4px;min-width:0}
-.fixed-cost-detail-pair span{font-size:12px;color:var(--muted,#687387)}
-.fixed-cost-detail-pair strong{font-size:15px;overflow-wrap:anywhere}
 .fixed-cost-detail-line{display:flex;gap:12px;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--line,#dde2e8);font-size:13px}
 .fixed-cost-detail-line strong{white-space:nowrap}
-@media(max-width:360px){.fixed-cost-detail-grid{grid-template-columns:1fr}}
+
+/* Purpose-specific contract forms and read-only bank cost references. */
+.fixed-cost-form .fixed-cost-equivalent{grid-column:1/-1;font-size:12px;color:var(--muted);margin:0;overflow-wrap:anywhere}
+.fixed-cost-form-actions{flex-wrap:wrap}
+.assets-fixed-cost-reference{margin-top:18px}
+.assets-fixed-cost-reference .panel-heading{flex-wrap:wrap;gap:10px}
+.assets-fixed-cost-reference .assets-recurring-item>.assets-item-button{align-self:flex-start;margin-top:6px}
+
+/* Dated payment terms and read-only point rate history. */
+.card-setting-rate-history-line>div{display:grid;gap:4px;min-width:0;overflow-wrap:anywhere}
+.card-setting-rate-history-list{font-size:12px;min-width:0;overflow-wrap:anywhere}
+.card-setting-rate-history-list small{color:var(--muted);font-size:11px}
+.card-setting-rate-history-line{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)}
+.card-setting-rate-history-line b{white-space:nowrap}
+.card-setting-rate-edit{min-width:0}
+.card-setting-rate-edit>summary{cursor:pointer;font-weight:600;min-height:32px}
+.card-setting-rate-edit[open]>.card-setting-field{margin-top:8px}
+
+/* Shared registration and editing: three peer fields per row. */
+.fixed-cost-dialog:has(>.fixed-cost-create-mode){width:min(calc(100vw - 24px),840px);max-width:840px}
+/* Native select text alignment varies by browser. Keep the shared arrow and
+   explicitly align the selected value to the same leading edge as text inputs. */
+.fixed-cost-form .fixed-cost-field select{text-align:left;text-align-last:left}
+.fixed-cost-form .fixed-cost-field :is(input,select,textarea):focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+@media(min-width:801px){
+  .fixed-cost-create-mode{grid-template-columns:repeat(12,minmax(0,1fr));align-items:start}
+  .fixed-cost-create-mode>.fixed-cost-field,.fixed-cost-create-mode>.fixed-cost-price-choices{grid-column:span 4}
+  .fixed-cost-create-mode>.fixed-cost-field:has(:is([name="name"],[name="note"])){grid-column:1/-1}
+  .fixed-cost-create-mode[data-method="cash"]>.fixed-cost-field:has([name="method"]),
+  .fixed-cost-create-mode:not([data-method="card"])>.fixed-cost-field:has([name="category"]){grid-column:span 8}
+  .fixed-cost-create-mode[data-frequency="yearly"]>.fixed-cost-field:has(:is([name="frequency"],[name="startOn"],[name="month"],[name="day"])){grid-column:span 3}
+}
+@media(max-width:800px){.fixed-cost-create-mode{grid-template-columns:minmax(0,1fr)}.fixed-cost-create-mode>.fixed-cost-field,.fixed-cost-create-mode>.fixed-cost-price-choices{grid-column:1/-1}.fixed-cost-create-mode .fixed-cost-field :is(input,select){min-height:44px}}
+
+.fixed-cost-form .fixed-cost-equivalent{white-space:pre-line}
+.fixed-cost-form .fixed-cost-histories{grid-column:1/-1;min-width:0}
+.fixed-cost-history{border-top:1px solid var(--line);padding:10px 0}
+.fixed-cost-status-history,.fixed-cost-status-history+.fixed-cost-history{border-top:0}
+.fixed-cost-history.fixed-cost-status-history .fixed-cost-detail-line{border-bottom:0}
+.fixed-cost-history>summary{font-size:13px;font-weight:650;cursor:pointer}
+.fixed-cost-history .fixed-cost-detail-line{align-items:start;overflow-wrap:anywhere}
+.fixed-cost-history .fixed-cost-detail-line strong{white-space:normal;text-align:right;min-width:0}
+.fixed-cost-form-actions>.danger-action{margin-right:auto}
+.fixed-cost-form-actions>[hidden],.fixed-cost-histories[hidden]{display:none!important}
+@media(min-width:801px){.fixed-cost-create-mode>.fixed-cost-field:has(:is([name="priceAction"],[name="paymentAction"],[name="paymentDate"],[name="status"],[name="statusDate"])){grid-column:span 6}}

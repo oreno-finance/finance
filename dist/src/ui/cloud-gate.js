@@ -11,7 +11,7 @@ export const FINANCE_CLOUD_GATE_PAGES = [
     { id: 'summary-view', eyebrow: 'MONTHLY SUMMARY', title: '月別サマリー', subtitle: '口座引落月を基準とした毎月の収支' },
     { id: 'analysis-view', eyebrow: 'ANALYTICS', title: '収支分析', subtitle: '月次・年間の推移' },
     { id: 'reports-view', eyebrow: 'MONTHLY REPORTS', title: '月次レポート', subtitle: '保存した時点の収支を振り返る記録' },
-    { id: 'subscriptions-view', eyebrow: 'SUBSCRIPTIONS', title: '固定費・サブスク管理', subtitle: 'カード・銀行・現金の継続支出を管理' },
+    { id: 'subscriptions-view', eyebrow: 'SUBSCRIPTIONS', title: '固定費管理', subtitle: 'カード・銀行・現金の継続支出を管理' },
 ];
 function appendAction(target, label, callback, primary = false) {
     const button = document.createElement('button');

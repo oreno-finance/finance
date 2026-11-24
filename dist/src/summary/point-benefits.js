@@ -21,6 +21,51 @@ export function pointRate(cardId, preferences, day) {
     }
     return rate;
 }
+/** Only the latest not-yet-effective entry may be revised or removed. */
+export function editPointRate(cardId, old, mode, rate, effectiveOn, today, expectedFuture) {
+    const oldRate = old?.pointRatePercent ?? DEFAULT_POINT_RATES[cardId] ?? 0;
+    const history = structuredClone(old?.pointRateHistory ?? [{ effectiveOn: '1900-01-01', ratePercent: oldRate }]);
+    const latest = history.at(-1);
+    if (!validDay(today))
+        throw new Error('現在日が不正です。');
+    if (mode === 'replace' || mode === 'cancel' || mode === 'append') {
+        if (history.length < 2 || latest.effectiveOn !== expectedFuture || latest.effectiveOn <= today)
+            throw new Error('還元率の変更予定が更新されたか、適用が開始されました。最新情報を確認してください。');
+    }
+    if (mode === 'cancel') {
+        history.pop();
+        return { pointRatePercent: history.at(-1).ratePercent, pointRateHistory: history };
+    }
+    if (!Number.isFinite(rate) || rate < 0 || rate > 100 || Math.abs(rate * 100 - Math.round(rate * 100)) > 1e-8)
+        throw new Error('還元率は0〜100%、小数第2位までで入力してください。');
+    if (!validDay(effectiveOn) || effectiveOn < today)
+        throw new Error('還元率の適用日は今日以降にしてください。');
+    if (mode === 'replace') {
+        if (effectiveOn <= history.at(-2).effectiveOn)
+            throw new Error('適用日は一つ前の変更日より後にしてください。');
+        history[history.length - 1] = { effectiveOn, ratePercent: rate };
+    }
+    else if (mode === 'append') {
+        if (effectiveOn <= latest.effectiveOn)
+            throw new Error('追加する適用日は直近の変更日より後にしてください。');
+        if (rate === latest.ratePercent)
+            throw new Error('追加する還元率が直近の還元率と同じです。');
+        history.push({ effectiveOn, ratePercent: rate });
+    }
+    else {
+        if (effectiveOn < latest.effectiveOn)
+            throw new Error('適用日は直近の変更日以降にしてください。');
+        if (rate === oldRate)
+            return { ...(old?.pointRatePercent !== undefined ? { pointRatePercent: old.pointRatePercent } : {}), ...(old?.pointRateHistory ? { pointRateHistory: history } : {}) };
+        if (effectiveOn === latest.effectiveOn)
+            history[history.length - 1] = { effectiveOn, ratePercent: rate };
+        else
+            history.push({ effectiveOn, ratePercent: rate });
+    }
+    if (history.length > 256)
+        throw new Error('還元率の履歴が上限に達しています。');
+    return { pointRatePercent: history.at(-1).ratePercent, pointRateHistory: history };
+}
 export function pointsForAmount(amount, ratePercent) {
     if (!Number.isSafeInteger(amount) || !Number.isFinite(ratePercent) || ratePercent < 0 || ratePercent > 100)
         throw new Error('ポイント計算に不正な数値があります。');

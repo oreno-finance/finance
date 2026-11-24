@@ -9,13 +9,14 @@ const script = await readFile(new URL('src/ui/assets-settings.ts', root), 'utf8'
 
 const settings = html.slice(html.indexOf('id="settings-view"'));
 
-test('Payroll is a compact metrics-only card alongside connect and deposit forms',async()=>{
-  assert.match(settings,/<section id="assets-payroll-summary" class="assets-payroll-history-card" aria-label="Payroll同期状況">/);
-  assert.match(settings,/<div class="assets-payroll-layout">[\s\S]*?id="assets-payroll-connect"[\s\S]*?id="assets-payroll-deposit-form"[\s\S]*?id="assets-payroll-summary"/);
+test('Payroll uses one panel with independent connect and deposit forms and flat sync metrics',async()=>{
+  assert.match(settings,/<section id="assets-payroll-summary" class="settings-payroll-section" aria-labelledby="assets-payroll-summary-heading">/);
+  assert.match(settings,/<div class="settings-payroll-content">[\s\S]*?id="assets-payroll-connect"[\s\S]*?id="assets-payroll-deposit-form"[\s\S]*?id="assets-payroll-summary"/);
   assert.match(script,/const haveLast=payrollOwner===vault&&payrollSyncedAt>0/);
   assert.doesNotMatch(script,/months\.replaceChildren\(\)|incomeByMonth\(/);
-  const layout=await readFile(new URL('public/styles/navigation-payroll-v1915.css',root),'utf8');
-  assert.match(layout,/overflow:visible!important/);
+  const layout=await readFile(new URL('public/styles/settings-v194.css',root),'utf8');
+  assert.match(layout,/\.settings-payroll-section\{padding-top:18px;border-top:1px solid var\(--line\)/);
+  assert.doesNotMatch(settings,/class="assets-payroll-layout"|class="assets-payroll-history-card"/);
 });
 
 test('Settings exposes only sync diagnostics rather than salary amounts', () => {

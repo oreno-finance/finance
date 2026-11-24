@@ -1,3 +1,4 @@
+import {recurringForCalculation} from '../fixed-costs/payment-history.js';
 /** Compare two manually confirmed balances against the forecast reconstructed
  * from the earlier snapshot. Never mutate the assets document or infer a bank
  * transaction from a discrepancy. */
@@ -56,7 +57,7 @@ export function reconcileBalance(
   const touches=(from:AssetAccountId|null,to:AssetAccountId|null)=>from===accountId||to===accountId;
   const provisionalEntries=(doc.oneTime??[]).filter(e=>e.status==='planned'&&inInterval(e.date)&&oneTimeAccountDelta(e,accountId)!==0).length;
   const sameDayEntries=(doc.oneTime??[]).some(e=>e.date===latestDay&&oneTimeAccountDelta(e,accountId)!==0)||
-    doc.recurring.some(e=>e.enabled&&touches(e.fromAccountId,e.toAccountId)&&recurringOccursOn(e,latestDay))||
+    recurringForCalculation(doc).some(e=>e.enabled&&touches(e.fromAccountId,e.toAccountId)&&recurringOccursOn(e,latestDay))||
     records.some(r=>r.statement.paymentDate===latestDay&&(r.statement.cardId!==null&&doc.cardDebitAccounts?.[r.statement.cardId]===accountId));
   const unmappedCard=(accountId==='rakuten-bank'||accountId==='mizuho-bank')&&
     records.some(r=>inInterval(r.statement.paymentDate??'')&&(r.statement.cardId===null||!doc.cardDebitAccounts?.[r.statement.cardId]));

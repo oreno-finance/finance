@@ -1,6 +1,6 @@
 /** Synthetic-only microbenchmark. No OneDrive access or personal finance data. */
 import {performance} from 'node:perf_hooks';
-import {LiveVault} from '../dist/src/cloud/live-vault.js';
+import {LiveVault} from './helpers/coordinated-vault.mjs';
 
 const rows=20,records=1800;
 const fake=Array.from({length:records},(_,n)=>({

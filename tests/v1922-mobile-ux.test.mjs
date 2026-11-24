@@ -14,7 +14,7 @@ test('startup always opens Home, including when OneDrive is unavailable',()=>{
   assert.doesNotMatch(main,/showView\(lastView/);
 });
 test('unlock hides modal while loading and returns it on failure without replacing promise',()=>{
-  assert.match(main,/if\(currentModal!==null\|\|\$<HTMLDialogElement>\('vault-dialog'\)\.open\)return Promise\.resolve\(false\)/);
+  assert.match(main,/if\(confirmationPending\(\)\|\|currentModal!==null\|\|\$<HTMLDialogElement>\('vault-dialog'\)\.open\)return Promise\.resolve\(false\)/);
   assert.match(main,/if\(vaultDialog\.open\)vaultDialog\.close\(\);\s*try \{/);
   assert.match(main,/if\(currentModal===mode&&!vaultDialog\.open\)\{vaultDialog\.showModal\(\);/);
   assert.match(main,/modalClose\(true\);/);

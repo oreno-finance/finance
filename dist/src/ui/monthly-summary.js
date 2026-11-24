@@ -1,8 +1,12 @@
+import { requestConfirmation, confirmationPending, cancelConfirmation } from './modal.js';
+import { formatYen as sharedYen, formatSignedYen, formatMonth, formatDate, formatShortDate, formatDateTime } from './formatters.js';
+import { bindMonthNavigator, localMonth, monthInRange } from './period-navigator.js';
 /** Monthly summary view. DOM updates only; all financial figures are computed from vault snapshots. */
 import { monthlyReport, prepareMonthlyReports, changePeriod } from '../summary/monthly-summary.js';
+import { payrollRoleLabel } from '../cloud/payroll-income.js';
 import { PALETTE } from '../cloud/merchant-rules.js';
 import { pointBenefitsFromMonthlyReport } from '../summary/point-benefits.js';
-import { pointBenefitsSection } from './point-benefits.js';
+import { pointBenefitsSection, pointCoverage } from './point-benefits.js';
 import { bankTimeline } from '../summary/bank-timeline.js';
 import { bankChartData } from './bank-chart-data.js';
 import { ASSET_ACCOUNTS } from '../cloud/assets.js';
@@ -14,10 +18,9 @@ function element(tag, cls = '', text) {
         node.textContent = text;
     return node;
 }
-function yen(value) { return value === null ? '未取得' : `${value.toLocaleString('ja-JP')}円`; }
-function localPeriod() { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`; }
-function periodDisplay(value) { return `${value.slice(0, 4)}年${Number(value.slice(5))}月`; }
-const employerName = (name) => name === 'main' ? '本業' : name === 'side' ? '副業' : name;
+const yen = (value) => sharedYen(value, 0, '未取得');
+const localPeriod = localMonth;
+const periodDisplay = formatMonth;
 const kindName = (kind) => kind === 'bonus' ? '賞与' : kind === 'salary' ? '給与' : kind === 'adjustment' ? '調整' : kind;
 const accountName = (id) => ASSET_ACCOUNTS.find(a => a.id === id)?.name ?? '口座未設定';
 function line(parent, name, value, action) {
@@ -36,7 +39,7 @@ function line(parent, name, value, action) {
 }
 function scheduledLine(parent, date, name, route, amount) {
     const row = element('div', 'monthly-schedule-row');
-    row.append(element('time', 'monthly-schedule-date', date.slice(5).replace('-', '/')));
+    row.append(element('time', 'monthly-schedule-date', formatShortDate(date)));
     const description = element('div', 'monthly-schedule-description');
     description.append(element('strong', '', name), element('small', 'monthly-muted', route));
     row.append(description, element('b', 'monthly-schedule-amount', yen(amount)));
@@ -49,7 +52,7 @@ function cardRows(root, items, open) {
         return;
     }
     for (const item of items) {
-        const title = `${item.name} · ${item.paymentDate.replace(/-/g, '/')}（請求月 ${item.billingMonth ?? '不明'}）${item.confirmation === 'provisional' ? ' · 暫定' : ''}`;
+        const title = `${item.name} · ${formatDate(item.paymentDate)}（請求月 ${item.billingMonth ?? '不明'}）${item.confirmation === 'provisional' ? ' · 暫定' : ''}`;
         line(root, title, yen(item.amount), () => open(item.id));
     }
 }
@@ -60,11 +63,7 @@ function statusText(report) {
         return '本業給与の実績がなく、直近の通常給与からも見込みを算出できません。';
     if (report.income === null)
         return '給与実績・給与見込みがありません。収支額は算出できません。';
-    if (report.incomeEstimates.length)
-        return '給与の見込みと、登録済みの定期入出金予定を含めた月間収支です。';
-    if (report.provisional.length)
-        return '暫定カード請求・定期入出金予定を含む月間収支です。';
-    return '給与実績・カード請求・定期入出金を集計した月間収支です。';
+    return '';
 }
 /** Interactive, read-only projection. No bank event or snapshot is modified here. */
 function bankEventType(item) {
@@ -96,7 +95,7 @@ function bankChart(timeline, period) {
     const ns = 'http://www.w3.org/2000/svg';
     const node = (tag, attrs) => { const e = document.createElementNS(ns, tag); for (const [k, v] of Object.entries(attrs))
         e.setAttribute(k, v); return e; };
-    const svg = node('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': '楽天銀行の月内予測残高。点をタップ、または下の日付ボタンで詳細を選べます。', class: 'monthly-balance-svg' });
+    const svg = node('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': '楽天銀行の月内予測残高。点をタップ、または日付選択を開いて詳細を選べます。', class: 'monthly-balance-svg' });
     for (let i = 0; i <= 2; i++) {
         const val = low + range * i / 2, yy = y(val);
         svg.append(node('line', { x1: String(L), x2: String(W - R), y1: String(yy), y2: String(yy), class: Math.abs(val) < range / 8 ? 'monthly-chart-zero' : 'monthly-chart-grid' }));
@@ -115,12 +114,12 @@ function bankChart(timeline, period) {
     const plot = element('div', 'monthly-chart-plot');
     plot.append(svg);
     section.append(plot);
-    const hint = element('p', 'monthly-chart-hint', 'グラフの点か日付を選択すると、入出金の内訳を確認できます。');
-    section.append(hint);
     const dateList = element('div', 'monthly-chart-dates');
     dateList.setAttribute('role', 'group');
     dateList.setAttribute('aria-label', 'グラフの日付を選択');
-    section.append(dateList);
+    const dateControls = element('details', 'monthly-bank-all monthly-chart-date-controls');
+    dateControls.append(element('summary', '', '日付を選択'), dateList);
+    section.append(dateControls);
     const detail = element('section', 'monthly-chart-detail');
     detail.setAttribute('aria-label', '選択日の残高と入出金内訳');
     section.append(detail);
@@ -138,7 +137,7 @@ function bankChart(timeline, period) {
             item.append(element('span', 'monthly-muted', title), element('strong', tone, value));
             totals.append(item);
         };
-        total('この日の増減', `${point.delta > 0 ? '+' : ''}${yen(point.delta)}`);
+        total('この日の増減', formatSignedYen(point.delta));
         total(isConfirmedBaseline ? '登録した基準残高' : '日末の予測残高', yen(point.balance), point.balance < 0 ? 'monthly-negative' : '');
         detail.append(totals);
         if (point.items.length) {
@@ -147,7 +146,7 @@ function bankChart(timeline, period) {
                 const row = element('div', 'monthly-chart-detail-event');
                 const description = element('div', 'monthly-chart-detail-event-name');
                 description.append(element('strong', '', item.title), element('small', 'monthly-muted', bankEventType(item)));
-                row.append(description, element('b', '', `${item.amount > 0 ? '+' : ''}${yen(item.amount)}`));
+                row.append(description, element('b', '', formatSignedYen(item.amount)));
                 list.append(row);
             }
             detail.append(list);
@@ -155,13 +154,10 @@ function bankChart(timeline, period) {
         else {
             detail.append(element('p', 'monthly-muted', isConfirmedBaseline ? 'この日は登録済みの残高を基準にしています。' : 'この日付に登録された入出金はありません。'));
         }
-        detail.append(element('p', 'monthly-chart-caveat', '予測残高は登録情報による計算値です。銀行の実際の残高を取得しているわけではありません。'));
     }
-    let selected = -1;
     function choose(index, focus = false) {
         if (index < 0 || index >= selectable.length)
             return;
-        selected = index;
         for (let i = 0; i < markers.length; i++) {
             markers[i].classList.toggle('is-selected', i === index);
         }
@@ -212,22 +208,21 @@ export function initMonthlySummary(deps) {
     const reportOpen = document.getElementById('monthly-report-open');
     reportOpen?.addEventListener('click', () => deps.openReport?.(period));
     let period = localPeriod();
+    const confirmationOwner = {};
+    let epoch = 0, cardCheckBusy = false, cardCheckError = null, cardCheckErrorPeriod = null;
     const picker = document.getElementById('monthly-period');
     const main = document.getElementById('monthly-content');
     const label = document.getElementById('monthly-heading-period');
     const $ = (id) => document.getElementById(id);
-    picker.value = period;
-    const go = (next) => { period = next; picker.value = next; render(); };
-    $('monthly-prev').addEventListener('click', () => go(changePeriod(period, -1)));
-    $('monthly-next').addEventListener('click', () => go(changePeriod(period, 1)));
-    $('monthly-today').addEventListener('click', () => go(localPeriod()));
-    picker.addEventListener('change', () => { if (/^\d{4}-(0[1-9]|1[0-2])$/.test(picker.value))
-        go(picker.value);
-    else
-        picker.value = period; });
+    const options = () => ({ label: '集計年月', min: '1900-02', today: localPeriod() });
+    const go = (next) => { if (!monthInRange(next, options()))
+        throw new Error('年月が不正です。'); period = next; syncPeriod(); render(); };
+    const syncPeriod = bindMonthNavigator($('monthly-period-controls'), { picker, previous: $('monthly-prev'), next: $('monthly-next'), current: $('monthly-today') }, () => period, go, options);
     function metric(grid, title, value, detail, tone = '') {
         const box = element('section', `monthly-metric ${tone}`);
-        box.append(element('span', 'monthly-metric-label', title), element('strong', 'monthly-metric-value', value), element('small', 'monthly-muted', detail));
+        box.append(element('span', 'monthly-metric-label', title), element('strong', 'monthly-metric-value', value));
+        if (detail)
+            box.append(element('small', 'monthly-muted', detail));
         grid.append(box);
     }
     function section(title) {
@@ -239,6 +234,7 @@ export function initMonthlySummary(deps) {
         return { box, body };
     }
     function render() {
+        syncPeriod();
         label.textContent = periodDisplay(period);
         main.replaceChildren();
         const source = deps.source();
@@ -258,43 +254,89 @@ export function initMonthlySummary(deps) {
         }
         const grid = element('div', 'monthly-metrics');
         main.append(grid);
-        metric(grid, report.incomeEstimates.length ? '月間収入（給与見込み含む）' : '月間収入', yen(report.income), `定期入金 ${yen(report.recurringIncome)} · 単発入金 ${yen(report.oneTimeIncome)}`);
-        metric(grid, 'カード引落予定額', yen(report.cardOutflow), report.provisional.length ? '暫定明細を含む · 支払日基準' : '登録済み明細 · 支払日基準');
-        metric(grid, '定期・単発支出', yen(report.recurringExpense + report.oneTimeExpense), `定期予定 ${yen(report.recurringExpense)} · 単発実行済み ${yen(report.oneTimeExpense)}`);
-        metric(grid, '月間収支', report.monthlyBalance === null ? '算出不可' : yen(report.monthlyBalance), '収入 − カード − 定期・単発支出', report.monthlyBalance !== null ? (report.monthlyBalance >= 0 ? 'monthly-positive' : 'monthly-negative') : '');
+        metric(grid, (report.incomeEstimates.length || report.recurringIncome > 0) ? '月間収入（入金予定含む）' : '月間収入', yen(report.income), [report.recurringIncome ? `定期入金 ${yen(report.recurringIncome)}` : '', report.oneTimeIncome ? `単発入金 ${yen(report.oneTimeIncome)}` : ''].filter(Boolean).join(' · '));
+        metric(grid, 'カード引落予定額', yen(report.cardOutflow), report.cardNoUseConfirmed ? '利用なし確認済み' : report.provisional.length ? '暫定明細を含む' : report.cardOutflow === null ? '明細未取得' : '');
+        metric(grid, '定期・単発支出', yen(report.recurringExpense + report.oneTimeExpense), [report.recurringExpense ? `定期予定 ${yen(report.recurringExpense)}` : '', report.oneTimeExpense ? `単発実行済み ${yen(report.oneTimeExpense)}` : ''].filter(Boolean).join(' · '));
         const delta = report.monthlyBalance === null || prev.monthlyBalance === null ? null : report.monthlyBalance - prev.monthlyBalance;
+        metric(grid, '月間収支', report.monthlyBalance === null ? '算出不可' : yen(report.monthlyBalance), `前月比：${delta === null ? '比較不可' : formatSignedYen(delta)}`, report.monthlyBalance !== null ? (report.monthlyBalance >= 0 ? 'monthly-positive' : 'monthly-negative') : '');
         const alert = element('div', 'monthly-alert');
-        alert.append(element('strong', '', statusText(report)));
-        alert.append(element('p', '', `前月比：${delta === null ? '比較不可' : yen(delta)} · 内部振替は月間収支に含めません。`));
+        const status = statusText(report);
+        if (status)
+            alert.append(element('p', '', status));
         if (report.cardOutflow === null)
             alert.append(element('p', '', 'カード明細が未取得です。登録済みの銀行定期支出・単発支出は別に確認できますが、月の支出総額は確定していません。'));
-        if (report.cardNoUseConfirmed)
-            alert.append(element('p', '', 'カード利用なしを手動確認済み。この月のカード支出は0円として扱っています。'));
         if (report.pastUnconfirmedOneTime) {
             const warning = element('p', 'monthly-overlap-warning', `過去の未実行予定が${report.pastUnconfirmedOneTime}件あります。実績には含めていません。単発入出金の記録を確認してください。`);
             warning.setAttribute('role', 'alert');
             alert.append(warning);
         }
-        if (report.oneTimePlannedExpense || report.oneTimePlannedIncome)
-            alert.append(element('p', '', `実績と別の予定：支出 ${yen(report.oneTimePlannedExpense)} ／ 入金 ${yen(report.oneTimePlannedIncome)}。予定を含む月間収支見込み：${report.monthlyBalance === null ? '算出不可' : yen(report.monthlyBalance + report.oneTimePlannedIncome - report.oneTimePlannedExpense)}`));
         if (deps.saveCardNoUseMonth && period <= localPeriod() && (report.cardOutflow === null || report.cardNoUseConfirmed) && report.issues.every(issue => issue.month !== period)) {
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'secondary-action';
             button.textContent = report.cardNoUseConfirmed ? '「カード利用なし」を取り消す' : 'この月はカード利用なしと確認';
-            button.addEventListener('click', () => {
-                if (!window.confirm(report.cardNoUseConfirmed ? 'カード利用なし確認を取り消しますか？' : 'この月の全カードについて、利用・引落がなかったことを確認しましたか？'))
+            button.disabled = cardCheckBusy;
+            button.addEventListener('click', async () => {
+                if (cardCheckBusy || confirmationPending())
                     return;
-                button.disabled = true;
-                void deps.saveCardNoUseMonth(period, !report.cardNoUseConfirmed).then(() => render()).catch(error => {
-                    button.disabled = false;
-                    const warning = element('p', 'monthly-overlap-warning', error instanceof Error ? error.message : '確認を保存できませんでした。');
-                    warning.setAttribute('role', 'alert');
-                    alert.append(warning);
-                });
+                const target = report.period, started = epoch, confirmed = report.cardNoUseConfirmed;
+                // The selected month is pinned, and fresh data must still permit the action.
+                const eligible = () => {
+                    const latest = deps.source();
+                    if (!latest || period !== target || target > localPeriod())
+                        return false;
+                    try {
+                        const current = monthlyReport(target, latest);
+                        return current.cardNoUseConfirmed === confirmed && (current.cardOutflow === null || current.cardNoUseConfirmed) &&
+                            current.issues.every(issue => issue.month !== target) &&
+                            (!confirmed ? !latest.records.some(record => record.statement.paymentDate?.slice(0, 7) === target) : true);
+                    }
+                    catch {
+                        return false;
+                    }
+                };
+                if (!eligible())
+                    return;
+                if (!await requestConfirmation({ owner: confirmationOwner, title: confirmed ? 'カード利用なし確認を取り消しますか？' : 'カード利用なしと確認しますか？',
+                    message: confirmed ? `${formatMonth(target)}の利用なし確認を取り消します。` : `${formatMonth(target)}の全カードについて、利用・引落がなかったことを確認しましたか？`,
+                    acceptLabel: confirmed ? '取り消す' : '確認を記録', destructive: confirmed }))
+                    return;
+                if (started !== epoch || cardCheckBusy || !deps.source())
+                    return;
+                if (!eligible()) {
+                    cardCheckError = '明細または表示年月が変更されました。再確認してください。';
+                    cardCheckErrorPeriod = period;
+                    render();
+                    return;
+                }
+                cardCheckBusy = true;
+                cardCheckError = null;
+                cardCheckErrorPeriod = null;
+                render();
+                try {
+                    await deps.saveCardNoUseMonth(target, !confirmed);
+                }
+                catch (error) {
+                    if (started === epoch) {
+                        cardCheckError = error instanceof Error ? error.message : '確認を保存できませんでした。';
+                        cardCheckErrorPeriod = target;
+                    }
+                }
+                finally {
+                    cardCheckBusy = false;
+                    if (started === epoch)
+                        render();
+                }
             });
             alert.append(button);
         }
+        if (cardCheckError && cardCheckErrorPeriod === period) {
+            const warning = element('p', 'monthly-overlap-warning', cardCheckError);
+            warning.setAttribute('role', 'alert');
+            alert.append(warning);
+        }
+        if (report.recurringOneTimeOverlap)
+            alert.append(element('p', '', `単発入出金と定期予定の対応が曖昧な項目が${report.recurringOneTimeOverlap}件あります。自動除外せず表示しています。`));
         if (report.recurringCardOverlap) {
             alert.prepend(element('strong', 'monthly-overlap-warning', '要確認：カードと定期支出が重複している可能性があります。収支は両方を含む暫定的な登録額です。'));
             alert.append(element('p', '', `名称・金額が一致する定期支出が${report.recurringCardOverlap}件あります。実際の支払いを照合し、二重登録なら支出の登録内容を修正してください。`));
@@ -305,10 +347,17 @@ export function initMonthlySummary(deps) {
                 line(alert, `確認・修正：${entry.name}（${entry.date}）`, yen(entry.amount), open);
             }
         }
-        if (report.recurringSalaryExcluded)
-            alert.append(element('p', '', `給与に見える定期収入${report.recurringSalaryExcluded}件は、Payrollとの二重計上を防ぐため除外しました。`));
-        main.append(alert);
-        main.append(pointBenefitsSection('獲得ポイント', pointBenefitsFromMonthlyReport(report, source)));
+        if (alert.childElementCount)
+            main.append(alert);
+        if (report.oneTimePlannedExpense || report.oneTimePlannedIncome) {
+            const planned = section('単発入出金予定');
+            if (report.oneTimePlannedIncome)
+                line(planned.body, '入金予定', yen(report.oneTimePlannedIncome));
+            if (report.oneTimePlannedExpense)
+                line(planned.body, '支出予定', yen(report.oneTimePlannedExpense));
+            line(planned.body, '予定反映後の収支', report.monthlyBalance === null ? '算出不可' : yen(report.monthlyBalance + report.oneTimePlannedIncome - report.oneTimePlannedExpense));
+        }
+        main.append(pointBenefitsSection('推定ポイント', pointBenefitsFromMonthlyReport(report, source), pointCoverage([report])));
         // Bank cash flow is separate from whole-household monthly income/expense.
         // It starts from a manually confirmed bank balance, never a fabricated zero.
         const bank = section('楽天銀行の残高推移');
@@ -329,8 +378,18 @@ export function initMonthlySummary(deps) {
             bank.body.append(chart);
         if (timeline.warning)
             bank.body.append(element('p', 'monthly-bank-notice', timeline.warning));
-        if (timeline.missingCardAccounts.length)
-            bank.body.append(element('p', 'monthly-bank-notice', `引落口座未設定：${timeline.missingCardAccounts.join('、')}。口座管理で設定できます。`));
+        if (timeline.missingCardAccounts.length) {
+            const notice = element('p', 'monthly-bank-notice', `引落口座未設定：${timeline.missingCardAccounts.join('、')}。`);
+            if (deps.openCardSettings) {
+                const button = element('button', 'monthly-link', 'カード設定を開く');
+                button.type = 'button';
+                button.addEventListener('click', deps.openCardSettings);
+                notice.append(button);
+            }
+            else
+                notice.append('カード設定で設定できます。');
+            bank.body.append(notice);
+        }
         if (timeline.minimum !== null && timeline.minimum < 0)
             bank.body.append(element('p', 'monthly-bank-danger', '引落予定に対して残高不足となる日があります。'));
         if (timeline.days.length) {
@@ -341,11 +400,11 @@ export function initMonthlySummary(deps) {
             bank.body.append(allDays);
             for (const day of timeline.days) {
                 const item = element('div', 'monthly-bank-day');
-                const date = element('div', 'monthly-bank-day-date', day.date.slice(5).replace('-', '/'));
+                const date = element('div', 'monthly-bank-day-date', formatShortDate(day.date));
                 const descriptions = element('div', 'monthly-bank-events');
                 for (const event of day.items) {
                     const line = element('div', 'monthly-bank-event');
-                    line.append(element('span', '', event.title + (event.provisional ? '（暫定）' : '')), element('b', event.amount < 0 ? 'monthly-bank-minus' : '', `${event.amount > 0 ? '+' : ''}${yen(event.amount)}`));
+                    line.append(element('span', '', event.title + (event.provisional ? '（暫定）' : '')), element('b', event.amount < 0 ? 'monthly-bank-minus' : '', formatSignedYen(event.amount)));
                     descriptions.append(line);
                 }
                 const balance = element('strong', day.balance < 0 ? 'monthly-bank-balance monthly-negative' : 'monthly-bank-balance', yen(day.balance));
@@ -365,35 +424,40 @@ export function initMonthlySummary(deps) {
             grid2.append(box);
             return body;
         };
-        const incomes = addPair('収入の内訳（給与・定期入金）');
+        const incomes = addPair('収入内訳');
         if (!report.payrollReady)
             empty(incomes, 'Payroll未同期。設定から連携状態を確認してください。');
         else if (!report.incomeLines.length && !report.incomeEstimates.length)
             empty(incomes, 'この月の公開済み給与実績はありません。');
         else
             for (const row of [...report.incomeLines].sort((a, b) => a.date.localeCompare(b.date))) {
-                line(incomes, `${employerName(row.employer)} · ${kindName(row.kind)} · ${row.date.replace(/-/g, '/')}`, yen(row.amount));
+                line(incomes, `${payrollRoleLabel(row.job)} · ${kindName(row.kind)} · ${formatDate(row.date)}`, yen(row.amount));
             }
         for (const estimate of report.incomeEstimates) { /* finance-v149 */
             line(incomes, `本業 · 給与見込み（${estimate.sourcePeriod.slice(5)}月実績）`, yen(estimate.amount));
         }
         for (const item of report.oneTimeLines.filter(e => e.kind === 'income'))
-            line(incomes, `${item.name} · ${item.date.replace(/-/g, '/')} · ${item.status === 'planned' ? '予定' : '実行済み'}`, yen(item.amount));
+            line(incomes, `${item.name} · ${formatDate(item.date)} · ${item.status === 'planned' ? '予定' : '実行済み'}`, yen(item.amount));
         for (const item of report.recurringLines.filter(e => e.kind === 'income'))
-            line(incomes, `${item.name} · ${accountName(item.toAccountId)}入金予定 · ${item.date.replace(/-/g, '/')}`, yen(item.amount));
+            line(incomes, `${item.name} · ${accountName(item.toAccountId)}入金予定 · ${formatDate(item.date)}`, yen(item.amount));
         if (report.payrollReady && report.payrollSyncedAt)
-            incomes.append(element('p', 'monthly-muted', `Payroll最終同期：${new Date(report.payrollSyncedAt).toLocaleString('ja-JP')}`));
-        const cards = addPair('カード別引落予定額');
-        cardRows(cards, [...report.cardLines].sort((a, b) => a.paymentDate.localeCompare(b.paymentDate) || a.name.localeCompare(b.name, 'ja')), deps.openRecord);
+            incomes.append(element('p', 'monthly-muted', `Payroll最終同期：${formatDateTime(report.payrollSyncedAt, true)}`));
+        const cards = addPair('カード別引落額');
+        if (report.cardNoUseConfirmed)
+            empty(cards, '利用なし確認済み');
+        else if (report.cardOutflow === null)
+            empty(cards, '明細未取得');
+        else
+            cardRows(cards, [...report.cardLines].sort((a, b) => a.paymentDate.localeCompare(b.paymentDate) || a.name.localeCompare(b.name, 'ja')), deps.openRecord);
         if (report.cardOutflow !== null) {
             line(cards, 'カード合計', yen(report.cardOutflow));
             line(cards, 'うちNISA積立（資産移動）', yen(report.nisaOutflow));
             line(cards, 'NISA積立を除いた金額', yen(report.livingOutflow));
         }
-        const debits = { body: addPair('定期入出金の予定') };
+        const debits = { body: addPair('入出金予定') };
         const expenseItems = report.recurringLines.filter(e => e.kind === 'expense');
-        if (!report.recurringLines.length && !report.oneTimeLines.length)
-            empty(debits.body, 'この月の入出金予定はありません。');
+        if (!report.recurringLines.some(e => e.kind !== 'income') && !report.oneTimeLines.some(e => e.kind !== 'income'))
+            empty(debits.body, 'この月の支出・振替予定はありません。');
         for (const item of expenseItems)
             scheduledLine(debits.body, item.date, item.name, item.entryId.startsWith('cash:') ? '現金支出予定' : `${accountName(item.fromAccountId)} → 支出`, item.amount);
         if (expenseItems.length)
@@ -406,8 +470,6 @@ export function initMonthlySummary(deps) {
                 `${accountName(item.fromAccountId)} · ${item.kind === 'withdrawal' ? '現金引出' : '支出'}`;
             scheduledLine(debits.body, item.date, `${item.name}（${item.status === 'planned' ? '予定' : '実行済み'}）`, route, item.amount);
         }
-        if (transfers.length)
-            debits.body.append(element('p', 'monthly-muted', '口座間振替は月間収支に含めません。'));
         // Keep the two insights in one responsive row. /* finance-v147 */
         const insightGrid = element('div', 'monthly-insights');
         main.append(insightGrid);
@@ -416,7 +478,7 @@ export function initMonthlySummary(deps) {
             insightGrid.append(result.box);
             return result;
         };
-        const category = insightSection('カテゴリー別支出（カード＋定期支出＋実行済み単発支出）');
+        const category = insightSection('カテゴリー別支出');
         if (!report.categories.length)
             empty(category.body, '分類できる支出はありません。');
         const largest = Math.max(1, ...report.categories.map(item => Math.max(0, item.amount)));
@@ -437,23 +499,21 @@ export function initMonthlySummary(deps) {
             wrapper.append(head, track);
             category.body.append(wrapper);
         }
-        category.body.append(element('p', 'monthly-muted', '支出総額とこの内訳は同じ計上範囲です。NISA積立は資産移動として独立表示し、生活費からは除外しています。'));
-        const merchants = insightSection('カード利用先ランキング');
+        const merchants = insightSection(report.merchants.length > 10 ? 'カード利用先ランキング（上位10件）' : 'カード利用先ランキング');
         if (!report.merchants.length)
             empty(merchants.body, '対象となる利用先はありません。');
         else
             for (const [index, item] of report.merchants.slice(0, 10).entries()) {
                 line(merchants.body, `${index + 1}. ${item.name}（${item.count}件）`, yen(item.amount), () => deps.openDrilldown({ dimension: 'merchant', value: item.name, label: item.name, periods: [period] }));
             }
-        const quality = section('データの確認');
         const problemCount = report.issues.filter(item => item.month === period).length;
-        line(quality.body, '集計対象外の明細', `${problemCount}件`);
-        line(quality.body, '支払日が不明な明細（全期間）', `${report.issues.filter(item => item.month === null).length}件`);
-        line(quality.body, '暫定明細（集計に含む）', `${report.provisional.length}件`);
-        line(quality.body, '確定状態が不明な明細', `${report.unknownConfirmationCount}件`);
-        line(quality.body, '未分類の取引', `${report.unclassifiedCount}件`);
-        line(quality.body, '定期入出金予定', `${report.recurringLines.length}件`);
-        line(quality.body, 'カードとの重複要確認', `${report.recurringCardOverlap}件`);
+        const counts = [['集計対象外の明細', problemCount], ['支払日が不明な明細（全期間）', report.issues.filter(item => item.month === null).length], ['暫定明細（集計に含む）', report.provisional.length], ['確定状態が不明な明細', report.unknownConfirmationCount], ['未分類の取引', report.unclassifiedCount], ['カードとの重複要確認', report.recurringCardOverlap]];
+        if (!counts.some(([, count]) => count > 0) && !report.issues.length)
+            return;
+        const quality = section('データの確認');
+        for (const [name, count] of counts)
+            if (count > 0)
+                line(quality.body, name, `${count}件`);
         if (report.provisional.length) {
             quality.body.append(element('h3', 'monthly-subheading', '暫定明細（集計済み・後で金額が変動する可能性あり）'));
             cardRows(quality.body, report.provisional, deps.openRecord);
@@ -471,8 +531,7 @@ export function initMonthlySummary(deps) {
                 quality.body.append(row);
             }
         }
-        line(quality.body, '単発入出金', `${report.oneTimeLines.length}件`);
     }
-    return { render, setPeriod: (next) => { if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(next))
-            throw new Error("年月が不正です。"); go(next); }, reset: () => { period = localPeriod(); picker.value = period; main.replaceChildren(); label.textContent = periodDisplay(period); } };
+    return { render, isBusy: () => cardCheckBusy || confirmationPending(confirmationOwner), setPeriod: (next) => { if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(next))
+            throw new Error("年月が不正です。"); go(next); }, reset: () => { epoch++; cancelConfirmation(confirmationOwner); cardCheckError = null; cardCheckErrorPeriod = null; period = localPeriod(); syncPeriod(); main.replaceChildren(); label.textContent = periodDisplay(period); } };
 }

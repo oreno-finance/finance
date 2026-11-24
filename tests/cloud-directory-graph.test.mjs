@@ -266,7 +266,7 @@ test('Payroll new generation income uses listed versions folder and never calls 
   const generation='11111111-2222-4333-8444-555555555555';
   const calls=[];
   const api=new OneDriveTestClient('token',async(url,init={})=>{
-    calls.push({url,method:init.method??'GET'});
+    calls.push({url,method:init.method??'GET',cache:init.cache});
     if(url.endsWith('/me/drive/special/approot'))return Response.json({id:'app'});
     if(url.endsWith('/app:/payroll'))return Response.json({id:'payroll-id',folder:{}});
     if(url.endsWith('/payroll-id/children?$select=id,name,folder&$top=200'))
@@ -281,6 +281,12 @@ test('Payroll new generation income uses listed versions folder and never calls 
   });
   const file=await api.readPayrollPublishedFile(['versions',generation,'income'],'2026.enc',1024);
   assert.equal(file?.text,'test-encrypted-file');
+  const before=calls.length;
+  assert.deepEqual(await api.readPayrollPublishedMetadata(['versions',generation,'income'],'2026.enc'),{id:'income-file',etag:'etag-income'});
+  assert.equal(calls.length,before+1,'metadata check must not download ciphertext');
+  assert.equal(calls.at(-1).cache,'no-store');
+  await assert.rejects(api.readPayrollPublishedMetadata(['statements'],'2026.enc'),/限定/);
+  await assert.rejects(api.readPayrollPublishedMetadata(['income'],'index.enc'),/不正/);
   assert.ok(!calls.some(c=>c.url.endsWith(':/versions')));
   assert.ok(calls.some(c=>c.url.includes('/payroll-id/children?$select=id,name,folder&$top=200')));
   assert.ok(calls.every(c=>c.method==='GET'));

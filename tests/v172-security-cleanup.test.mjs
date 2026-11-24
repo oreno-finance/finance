@@ -29,7 +29,7 @@ test('legacy cleanup is only available from an explicit settings flow',()=>{
   assert.match(html,/id="cloud-legacy-cleanup"/);
   assert.match(html,/id="legacy-cleanup-dialog"/);
   assert.match(main,/await verifyDownloadedBackup\(backup,backupInput.files\[0\]\)/);
-  assert.match(main,/await compare\(\)/);assert.match(main,/if\(!window.confirm/);assert.ok(main.includes("JSON.stringify(exported)!==JSON.stringify(current)"));
+  assert.match(main,/await compare\(\)/);assert.match(main,/if\(!await requestConfirmation\(\{owner:securityConfirmationOwner,parent:dialog,title:'この端末の旧データを削除しますか？'/);assert.ok(main.includes("JSON.stringify(exported)!==JSON.stringify(current)"));
   assert.match(main,/await deleteLegacyVault\(\)/);
   assert.match(main,/if\(!await hasVault\(\)\)/);
   assert.match(readFileSync('src/storage/encrypted-vault.ts','utf8'),/indexedDB.deleteDatabase\(DB_NAME\)/);

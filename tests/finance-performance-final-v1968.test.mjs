@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
-import {LiveVault} from '../dist/src/cloud/live-vault.js';
+import {LiveVault} from './helpers/coordinated-vault.mjs';
 import {emptyDocument} from '../dist/src/cloud/merge.js';
 import {monthlyReport,prepareMonthlyReports} from '../dist/src/summary/monthly-summary.js';
 
@@ -79,8 +79,8 @@ test('the import batch defers full DOM renders but keeps feedback and final rend
 test('PDF parser passes a distinct worker byte copy and file import reads original once',()=>{
   const pdf=readFileSync(new URL('../src/importers/pdf-reader.ts',import.meta.url),'utf8');
   const main=readFileSync(new URL('../src/main.ts',import.meta.url),'utf8');
-  assert.match(pdf,/data:\s*originalBytes \? new Uint8Array\(originalBytes\)/);
-  assert.match(main,/assertPdfLimits\(file\.size\);\s*\/\/ Read the Blob once[\s\S]*?const originalBytes=new Uint8Array\(await file\.arrayBuffer\(\)\);\s*const parsed=await parsePdfFile\(file,originalBytes\);/);
+  assert.match(pdf,/const data=originalBytes \? new Uint8Array\(originalBytes\)[\s\S]*?lib.getDocument\(\{\s*data,/);
+  assert.match(main,/assertPdfLimits\(file\.size\);\s*\/\/ Read the Blob once[\s\S]*?const originalBytes=new Uint8Array\(await file\.arrayBuffer\(\)\);\s*if\(!current\(\)\)return;\s*const parsed=await parsePdfFile\(file,originalBytes,controller\.signal\);if\(!current\(\)\)return;/);
   assert.match(main,/acceptStatement\(parsed,\{bytes:originalBytes,mime:'application\/pdf'\}\)/);
   assert.doesNotMatch(main,/acceptStatement\(parsed,\{bytes:new Uint8Array\(await file\.arrayBuffer\(\)\)/);
 });

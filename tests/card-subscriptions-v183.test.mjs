@@ -108,7 +108,7 @@ test('screen includes separate analysis-only actions, and tracks new navigation'
 
 test('encrypted decisions survive fresh vault unlock and passphrase rotation without plaintext leakage',async()=>{
   const {webcrypto}=await import('node:crypto');if(!globalThis.crypto)globalThis.crypto=webcrypto;
-  const {LiveVault}=await import('../dist/src/cloud/live-vault.js');
+  const {LiveVault}=await import('./helpers/coordinated-vault.mjs');
   const {GraphError}=await import('../dist/src/cloud/onedrive-api.js');
   class MockGraph {
     constructor(store=new Map(),generation=null){this.store=store;this.generation=generation;}

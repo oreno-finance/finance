@@ -1,7 +1,8 @@
+import { recurringForCalculation } from '../fixed-costs/payment-history.js';
 /** Read-only asset forecast: no remote writes, guessed debit accounts, or future salary estimates. */
 import { ASSET_ACCOUNTS, oneTimeAccountDelta, recurringCoveredByOneTime, nisaRuleOnDay } from './assets.js';
 import { recurringOccursOn, recurringEffectiveAmount } from './recurring-schedule.js'; /* finance-monthly-v142 */
-import { depositedIncomeBetween } from './payroll-income.js';
+import { depositedIncomeBetween, payrollCoversRecurringSalary } from './payroll-income.js';
 function dayString(date) {
     const y = date.getFullYear(), m = String(date.getMonth() + 1).padStart(2, '0'), d = String(date.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
@@ -56,6 +57,7 @@ export function forecastAssets(doc, asOf, records = [], payrollIncome = [], payr
         throw new Error('予測対象日が不正です。');
     const cardRows = nisaMatches ?? matchingNisaRows(doc, records);
     const result = {};
+    const recurring = recurringForCalculation(doc);
     for (const account of ASSET_ACCOUNTS) {
         const found = doc.snapshots.filter(s => s.accountId === account.id && snapshotDay(s) <= asOf);
         found.sort((a, b) => b.observedAt.localeCompare(a.observedAt) || b.id.localeCompare(a.id));
@@ -74,14 +76,16 @@ export function forecastAssets(doc, asOf, records = [], payrollIncome = [], payr
         // Iterate at most 3,660 days. Using UTC days keeps DST away from recurrence scheduling.
         for (let t = from + 86400000; t <= to; t += 86400000) {
             const day = new Date(t).toISOString().slice(0, 10);
-            for (const entry of doc.recurring) {
+            for (const entry of recurring) {
                 if (entry.fromAccountId !== account.id && entry.toAccountId !== account.id)
                     continue;
                 if (!recurringOccursOn(entry, day))
                     continue;
                 const historic = { ...entry, amount: recurringEffectiveAmount(entry, day) };
+                if (payrollCoversRecurringSalary(historic, day, payrollIncome, payrollDepositAccount))
+                    continue;
                 const delta = accountDelta(historic, account.id);
-                if (delta !== 0 && !recurringCoveredByOneTime(historic, day, doc.oneTime)) {
+                if (delta !== 0 && !recurringCoveredByOneTime(historic, day, doc.oneTime, undefined, recurring)) {
                     recurringDelta += delta;
                     forecastEvents++;
                 }

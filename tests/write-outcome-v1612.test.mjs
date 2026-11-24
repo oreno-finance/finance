@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
-import { LiveVault, CloudWriteUncertainError } from '../dist/src/cloud/live-vault.js';
+import { LiveVault, CloudWriteUncertainError } from './helpers/coordinated-vault.mjs';
 import { GraphError } from '../dist/src/cloud/onedrive-api.js';
 if (!globalThis.crypto) globalThis.crypto=webcrypto;
 const password='fake words for a test vault only';

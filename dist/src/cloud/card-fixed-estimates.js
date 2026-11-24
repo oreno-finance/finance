@@ -1,3 +1,9 @@
+import { fixedCostsForCalculation } from '../fixed-costs/payment-history.js';
+/** Conservative, read-only card debit estimates built from actual fixed-cost contracts.
+ * Never creates a statement or persists a bill. An imported payment-month statement
+ * takes precedence for the WHOLE card to prevent duplicate bank debits. */
+import { DEFAULT_MIZUHO_PLAN } from './assets.js';
+import { mizuhoTransferForBill } from './mizuho-transfer.js';
 import { fixedCostOccurrences } from '../fixed-costs/contracts.js';
 import { cardPaymentDate } from '../importers/payment-date.js';
 import { CARDS } from '../models/types.js';
@@ -27,8 +33,9 @@ export function estimatedCardFixedBills(doc, records, fromDay, toDay) {
         months.add(fromIndex(i));
     const seen = new Set(records.filter(r => r.statement.cardId && r.statement.paymentDate)
         .map(r => `${r.statement.cardId}|${month(r.statement.paymentDate)}`));
+    const observedMonths = new Set(records.flatMap(r => r.statement.paymentDate ? [month(r.statement.paymentDate)] : []));
     const buckets = new Map();
-    for (const contract of doc.fixedCosts ?? []) {
+    for (const contract of fixedCostsForCalculation(doc)) {
         if (contract.payment !== 'card' || !contract.cardId)
             continue;
         if (!doc.cardDebitAccounts?.[contract.cardId])
@@ -46,7 +53,7 @@ export function estimatedCardFixedBills(doc, records, fromDay, toDay) {
                     continue;
                 }
                 if (due < fromDay || due > toDay || seen.has(`${contract.cardId}|${month(due)}`) ||
-                    doc.cardNoUseMonths?.includes(month(due)))
+                    (doc.cardNoUseMonths?.includes(month(due)) && !observedMonths.has(month(due))))
                     continue;
                 const key = `${contract.cardId}|${due}`;
                 const previous = buckets.get(key);
@@ -60,4 +67,22 @@ export function estimatedCardFixedBills(doc, records, fromDay, toDay) {
         }
     }
     return [...buckets.values()].sort((a, b) => a.paymentDate.localeCompare(b.paymentDate) || a.cardId.localeCompare(b.cardId));
+}
+/** Only future funding of an estimated bill; actual statements and manual transfers
+ * take precedence through the same funding rules as confirmed bills. */
+export function estimatedMizuhoFunding(doc, records, today, until) {
+    const plan = doc.mizuhoTransferPlan ?? DEFAULT_MIZUHO_PLAN;
+    if (!plan.enabled || until < today)
+        return [];
+    const last = new Date(`${until}T00:00:00Z`);
+    if (!Number.isFinite(last.getTime()))
+        return [];
+    last.setUTCDate(last.getUTCDate() + plan.leadDays);
+    const results = [];
+    for (const bill of estimatedCardFixedBills(doc, records, today, last.toISOString().slice(0, 10))) {
+        const transfer = mizuhoTransferForBill(bill, doc);
+        if (transfer && transfer.date >= today && transfer.date <= until)
+            results.push({ ...transfer, id: `fund:${bill.id}`, estimated: true });
+    }
+    return results;
 }

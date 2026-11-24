@@ -1,21 +1,22 @@
+import {formatYen as sharedYen,formatSignedYen,formatMonth} from './formatters.js';
 /** Finance P1-A: in-browser multi-month / annual analysis, no additional persistence. */
-import {annualAnalytics,comparableDelta,priorYearAnalytics,rollingAnalytics,type AnalysisDimension,type AnalysisGroup,type AnalysisMonth,type PeriodAnalytics} from '../analysis/period-analytics.js';
-import {changePeriod,type MonthlySource} from '../summary/monthly-summary.js';
+import {annualAnalytics,comparableDelta,priorYearAnalytics,rollingAnalytics,type AnalysisDimension,type AnalysisMonth,type PeriodAnalytics} from '../analysis/period-analytics.js';
+import type {MonthlySource} from '../summary/monthly-summary.js';
 import type {AnalysisReportContext} from './analysis-drilldown.js';
 import type {AnalysisDrilldown} from './analysis-drilldown.js';
-import {monthNavigator,yearNavigator} from './period-navigator.js';
+import {monthNavigator,yearNavigator,localMonth} from './period-navigator.js';
 import { periodPointBenefitsFromReports } from '../summary/point-benefits.js';
-import { pointBenefitsSection } from './point-benefits.js';
+import { pointBenefitsSection,pointCoverage } from './point-benefits.js';
 import { measureFinanceSync } from '../cloud/performance-diagnostics.js';
 
 export interface AnalysisUi {render():void;reset():void}
 export interface AnalysisDeps {source():MonthlySource|null;openMonth(period:string):void;openDrilldown(request:AnalysisDrilldown,context:AnalysisReportContext|null):void;openSettings():void}
 type Mode='month'|'year';
-const formatYen=(amount:number|null,digits=0):string=>amount===null?'未取得':`${amount.toLocaleString('ja-JP',{maximumFractionDigits:digits})}円`;
-const signedYen=(value:number)=>`${value>0?'+':''}${formatYen(value)}`;
+const formatYen=(amount:number|null,digits=0)=>sharedYen(amount,digits,'未取得');
+const signedYen=formatSignedYen;
 const monthLabel=(period:string)=>`${Number(period.slice(5))}月`;
-const labelYearMonth=(period:string)=>`${period.slice(0,4)}年${monthLabel(period)}`;
-const currentLocal=()=>{const date=new Date();return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`;};
+const labelYearMonth=formatMonth;
+const currentLocal=localMonth;
 function el<K extends keyof HTMLElementTagNameMap>(tag:K,className='',text?:string):HTMLElementTagNameMap[K]{
   const node=document.createElement(tag);if(className)node.className=className;
   if(text!==undefined)node.textContent=text;
@@ -30,9 +31,9 @@ function panel(heading:string):{root:HTMLElement;body:HTMLElement}{
   const body=el('div','analysis-panel-body');root.append(body);return {root,body};
 }
 const quality=(month:AnalysisMonth):string=>month.coverage==='missing'?'未取得':month.coverage==='partial'?'一部未取得':month.coverage==='provisional'?'暫定':month.coverage==='review'?'要確認':'登録済み';
-const amountText=(value:number|null,month:AnalysisMonth)=>value===null?'未取得':formatYen(value);
+const amountText=(value:number|null)=>value===null?'未取得':formatYen(value);
 function metric(label:string,value:string,sub:string):HTMLElement{
-  const root=el('div','analysis-metric');root.append(el('span','analysis-muted',label),el('strong','',value),el('small','analysis-muted',sub));return root;
+  const root=el('div','analysis-metric');root.append(el('span','analysis-muted',label),el('strong','',value));if(sub)root.append(el('small','analysis-muted',sub));return root;
 }
 function note(text:string):HTMLElement{return el('p','analysis-muted analysis-note',text);}
 export function initAnalysis(deps:AnalysisDeps):AnalysisUi{
@@ -73,16 +74,16 @@ export function initAnalysis(deps:AnalysisDeps):AnalysisUi{
     const range=`${data.months[0]!.period}〜${data.months.at(-1)!.period}`;
     result.append(metric('収入（実績・見込み）',formatYen(totals.income),`${totals.knownIncomeMonths}/${data.months.length}か月 · ${range}`),
       metric('支出（明細・予定）',formatYen(totals.expense),`${totals.knownExpenseMonths}/${data.months.length}か月 · NISAを含む`),
-      metric('収支（実績・見込み）',formatYen(totals.balance),totals.comparable?'対象期間の登録済み集計':'欠測・暫定などを含む参考値'),
+      metric('収支（実績・見込み）',formatYen(totals.balance),totals.comparable?'':'欠測・暫定などを含む参考値'),
       metric('平均支出',formatYen(totals.avgExpense,0),`${totals.knownExpenseMonths}か月分の平均`));
     return result;
   }
   function qualitySummary(data:PeriodAnalytics):HTMLElement|null{
-    const {missingMonths,provisionalMonths,reviewMonths}=data.totals;
+    const {provisionalMonths,reviewMonths}=data.totals;const missingMonths=data.months.filter(m=>m.coverage==='missing'||m.coverage==='partial').length;
     if(!missingMonths&&!provisionalMonths&&!reviewMonths)return null;
     const bits=[missingMonths?`未取得 ${missingMonths}か月`:'',provisionalMonths?`暫定 ${provisionalMonths}か月`:'',reviewMonths?`要確認 ${reviewMonths}か月`:''].filter(Boolean);
     const text=el('div','analysis-coverage');
-    text.append(el('strong','',bits.join(' · ')),el('span','','集計は登録済みの情報を使用しています。未取得月を0円としていません。'));
+    text.append(el('strong','',bits.join(' · ')),el('span','','登録済み明細分の集計'));
     return text;
   }
   function chart(data:PeriodAnalytics):HTMLElement{
@@ -95,7 +96,7 @@ export function initAnalysis(deps:AnalysisDeps):AnalysisUi{
     const bars=el('div','analysis-chart-bars');
     for(const month of data.months){
       const cell=action('',()=>go(month.period),'analysis-chart-month');
-      cell.setAttribute('aria-label',`${labelYearMonth(month.period)} · 収入 ${amountText(month.income,month)} · 支出 ${amountText(month.expense,month)} · ${quality(month)}`);
+      cell.setAttribute('aria-label',`${labelYearMonth(month.period)} · 収入 ${amountText(month.income)} · 支出 ${amountText(month.expense)} · ${quality(month)}`);
       const pair=el('span','analysis-bar-pair');
       for(const [value,cls] of [[month.income,'income'],[month.expense,'expense']] as const){
         const slot=el('span','analysis-bar-slot');
@@ -108,11 +109,11 @@ export function initAnalysis(deps:AnalysisDeps):AnalysisUi{
         }
         pair.append(slot);
       }
-      cell.append(pair,el('span','analysis-bar-label',monthLabel(month.period)),el('small','analysis-muted',month.coverage==='missing'?'未取得':month.coverage==='provisional'?'暫定':month.coverage==='review'?'要確認':''));
+      cell.append(pair,el('span','analysis-bar-label',monthLabel(month.period)),el('small','analysis-muted',month.coverage==='registered'?'':quality(month)));
       bars.append(cell);
     }
     scroll.append(bars);block.body.append(scroll);
-    block.body.append(note('月を選択すると月別サマリーへ移動します。登録済みの収入・支出を表示しています。'));
+    block.body.append(note('月を選択して詳細を表示'));
     return block.root;
   }
   function monthTable(data:PeriodAnalytics):HTMLElement{
@@ -167,7 +168,7 @@ export function initAnalysis(deps:AnalysisDeps):AnalysisUi{
       button.setAttribute('aria-pressed',String(dimension===value));switcher.append(button);
     }
     block.body.append(switcher);
-    const groups=data.groups[dimension].slice(0,12);
+    const groups=data.groups[dimension].slice(0,12);if(data.groups[dimension].length>12)block.body.append(note(`上位12件 / 全${data.groups[dimension].length}件`));
     if(!groups.length){block.body.append(note('分析できる取引がありません。'));return block.root;}
     const scroll=el('div','analysis-table-scroll');const table=el('table','analysis-table analysis-detail-table');
     const head=el('thead'),row=el('tr');row.append(el('th','','名称'),el('th','','登録済み合計'));
@@ -189,7 +190,7 @@ export function initAnalysis(deps:AnalysisDeps):AnalysisUi{
     }
     table.append(body);scroll.append(table);block.body.append(scroll);
     const caveat=dimension==='card'?'カードごとの引落月で集計しています。':dimension==='category'?'カード利用・定期支出・実行済み単発支出・NISA積立の分類です。':'カード利用先だけを集計しています。';
-    block.body.append(note(`${caveat} 利用先・金額を選ぶと該当明細へ移動します。未取得月は空白扱いです。`));
+    block.body.append(note(`${caveat} 名称・金額から明細を表示できます。`));
     return block.root;
   }
   function annualCompare(data:PeriodAnalytics,prior:PeriodAnalytics|null):HTMLElement{
@@ -247,12 +248,12 @@ export function initAnalysis(deps:AnalysisDeps):AnalysisUi{
         ?rollingAnalytics(source,end,count,today):annualAnalytics(source,year,today));
       reportContext={source,reports:new Map(data.months.map(m=>[m.period,m.report]))};
       const header=el('div','analysis-range');header.append(el('strong','',mode==='month'?`${labelYearMonth(data.months[0]!.period)}〜${labelYearMonth(data.months.at(-1)!.period)}`:`${year}年の収支`));
-      root!.append(header,summary(data),pointBenefitsSection('獲得ポイント',measureFinanceSync('ui.analysis.points',
-        ()=>periodPointBenefitsFromReports(data.months.map(m=>m.report),source))));
+      root!.append(header,summary(data));
       const warning=qualitySummary(data);if(warning)root!.append(warning);
       root!.append(measureFinanceSync('ui.analysis.chart',()=>chart(data)),monthTable(data));
       if(mode==='year')root!.append(annualCompare(data,priorYearAnalytics(source,year,today)));
-      root!.append(rangeInsights(data),ranking(data));
+      root!.append(ranking(data),rangeInsights(data),pointBenefitsSection('推定ポイント',measureFinanceSync('ui.analysis.points',
+        ()=>periodPointBenefitsFromReports(data.months.map(m=>m.report),source)),pointCoverage(data.months.map(m=>m.report))));
     }catch(error){
       const problem=panel('収支分析を表示できません');
       problem.body.append(note(error instanceof Error?error.message:'データを確認してください。'));

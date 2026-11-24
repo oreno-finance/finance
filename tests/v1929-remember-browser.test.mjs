@@ -1,7 +1,7 @@
 import test, {after} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {LiveVault, BrowserKeyGenerationChangedError} from '../dist/src/cloud/live-vault.js';
+import {LiveVault, BrowserKeyGenerationChangedError} from './helpers/coordinated-vault.mjs';
 import {encryptIndex, freshSalt, deriveCloudKey} from '../dist/src/cloud/cloud-crypto.js';
 import {readBrowserKey, rememberBrowserKey, forgetBrowserKey, applyBrowserRetentionChoice, isBrowserRemembered, InvalidRememberedBrowserKeyError,
   setManualLock, clearManualLock, isManuallyLocked} from '../dist/src/cloud/remembered-browser.js';

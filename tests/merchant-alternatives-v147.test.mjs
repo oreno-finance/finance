@@ -60,7 +60,7 @@ test('UI keeps one rule editor and verifies side-by-side layouts',async()=>{
  assert.match(html,/class="recurring-account-row"/);
  assert.match(html,/class="recurring-schedule-row"/);
  assert.match(html,/class="cloud-settings-left"/);
- assert.match(monthly,/const merchants=insightSection\('カード利用先ランキング'\)/);
+ assert.match(monthly,/const merchants=insightSection\(report\.merchants\.length>10\?'カード利用先ランキング（上位10件）':'カード利用先ランキング'\)/);
  assert.match(css,/grid-template-columns:minmax\(0,7fr\) minmax\(265px,3fr\)/);
  assert.match(css,/background-position:right 13px center/);
 });

@@ -19,5 +19,8 @@ test('all HTML placeholders avoid redundant example prefix and lighter palette a
   assert.match(css,/\[data-theme="dark"\]/);
 });
 test('mobile summary arrow control matches statement manager touch dimensions',()=>{
-  assert.match(css,/#monthly-next\{width:35px;min-width:35px;height:37px;min-height:37px/);
+  const shared=read('public/styles/layout-v195.css');
+  assert.match(shared,/\.finance-period-nav>button\[aria-label="翌月"\]/);
+  assert.match(shared,/min-height:39px;height:39px/);
+  assert.doesNotMatch(css,/#monthly-next/);
 });

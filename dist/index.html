@@ -30,18 +30,21 @@
         </svg>
       </button>
       <div id="mobile-nav-panel" class="mobile-nav-panel">
-      <div class="side-label">WORKSPACE</div>
+      <div class="side-label nav-section-label">ダッシュボード</div>
       <button type="button" id="nav-home" class="nav-entry active" aria-current="page" data-nav-label="ホーム"><span class="nav-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 10 9-7 9 7v10h-6v-7H9v7H3Z"/></svg></span><span class="nav-text">ホーム</span></button>
-          <button type="button" id="nav-import" class="nav-entry" data-nav-label="明細インポート"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V3m0 0-4 4m4-4 4 4"/><path d="M4 15v5h16v-5"/></svg></span><span class="nav-text">明細インポート</span></button>
-          <button type="button" id="nav-manage" class="nav-entry" data-nav-label="明細管理"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span><span class="nav-text">明細管理</span></button>
       <button type="button" id="nav-summary" class="nav-entry" data-nav-label="月別サマリー"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4m8-4v4M3 9h18M8 14h3m-3 3h3"/></svg></span><span class="nav-text">月別サマリー</span></button>
       <button type="button" id="nav-analysis" class="nav-entry" data-nav-label="収支分析"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V11h4v9M10 20V4h4v16M16 20v-7h4v7M2 20h20"/></svg></span><span class="nav-text">収支分析</span></button>
-      <button type="button" id="nav-subscriptions" class="nav-entry" data-nav-label="固定費・サブスク管理"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 8a8 8 0 0 0-14-2L4 8m0 0V3m0 5h5M4 16a8 8 0 0 0 14 2l2-2m0 0v5m0-5h-5"/></svg></span><span class="nav-text">固定費・サブスク管理</span></button>
-      <button type="button" id="nav-reports" class="nav-entry" data-nav-label="月次レポート"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2h8l5 5v15H6zM14 2v6h5M9 13h6M9 17h6"/></svg></span><span class="nav-text">月次レポート</span></button>
-      <button type="button" id="nav-rules" class="nav-entry" data-nav-label="ルール"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16M7 12h10M10 19h4"/><circle cx="9" cy="5" r="2" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/></svg></span><span class="nav-text">ルール</span></button>
+      <div class="side-label nav-section-label">データ管理</div>
+      <button type="button" id="nav-import" class="nav-entry" data-nav-label="明細インポート"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V3m0 0-4 4m4-4 4 4"/><path d="M4 15v5h16v-5"/></svg></span><span class="nav-text">明細インポート</span></button>
+      <button type="button" id="nav-manage" class="nav-entry" data-nav-label="明細管理"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span><span class="nav-text">明細管理</span></button>
+      <button type="button" id="nav-subscriptions" class="nav-entry" data-nav-label="固定費管理"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 8a8 8 0 0 0-14-2L4 8m0 0V3m0 5h5M4 16a8 8 0 0 0 14 2l2-2m0 0v5m0-5h-5"/></svg></span><span class="nav-text">固定費管理</span></button>
       <button type="button" id="nav-assets" class="nav-entry" data-nav-label="口座管理"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="14" rx="2"/><path d="M3 11h18m-13 5h4"/></svg></span><span class="nav-text">口座管理</span></button>
+      <div class="side-label nav-section-label">記録・将来設計</div>
+      <button type="button" id="nav-reports" class="nav-entry" data-nav-label="月次レポート"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2h8l5 5v15H6zM14 2v6h5M9 13h6M9 17h6"/></svg></span><span class="nav-text">月次レポート</span></button>
       <button type="button" id="nav-future" class="nav-entry" data-nav-label="資産予測"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 17 7-7 4 4 7-8m-6 0h6v6"/></svg></span><span class="nav-text">資産予測</span></button>
       <div class="sidebar-bottom-actions">
+        <div class="side-label nav-section-label">環境設定</div>
+        <button type="button" id="nav-rules" class="nav-entry" data-nav-label="利用先ルール"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16M7 12h10M10 19h4"/><circle cx="9" cy="5" r="2" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/></svg></span><span class="nav-text">利用先ルール</span></button>
         <button type="button" id="nav-settings" class="nav-entry" data-nav-label="設定"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="var(--navy)"/><circle cx="16" cy="17" r="3" fill="var(--navy)"/></svg></span><span class="nav-text">設定</span></button>
         <a id="nav-payroll" class="nav-entry nav-payroll" href="https://oreno-payroll.github.io/" target="_blank" rel="noopener noreferrer" aria-label="Payrollを新しいタブで開く" data-nav-label="Payrollを開く"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 4h7v7m0-7-9 9M20 14v6H4V4h6"/></svg></span><span class="nav-text">Payrollを開く</span></a>
         <button id="sidebar-collapse-toggle" class="nav-entry sidebar-collapse-toggle" type="button" aria-expanded="true" aria-label="メニューを折りたたむ" title="メニューを折りたたむ"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/><path class="nav-collapse-arrow" d="m16 9-3 3 3 3"/></svg></span><span class="nav-text" id="sidebar-collapse-label">折りたたむ</span></button>
@@ -55,7 +58,7 @@
             </svg>
           </button>
         </div>
-        <div class="sidebar-meta"><span>Finance v1.9.43</span><time id="app-updated-at" datetime="2026-11-24">更新 2026/11/24 JST</time></div>
+        <div class="sidebar-meta"><span>Finance v2.0.0</span><time id="app-updated-at" datetime="2026-11-24">更新 2026/11/24 JST</time></div>
       </div>
       </div>
     </aside>
@@ -70,20 +73,20 @@
           <header class="finance-page-heading import-page-heading"><div><div class="eyebrow">STATEMENT IMPORT</div><h1>明細インポート<span class="accent-dot">.</span></h1></div><button type="button" id="import-add-open" class="secondary-action import-add-open hidden">＋ 明細を追加</button></header>
           <div class="home-return-bar"><button type="button" id="import-back-home" class="secondary-action hidden">← ホームへ戻る</button></div>
         <div id="import-inline-entry" class="import-inline-entry">
-        <section id="import-upload-panel" class="panel import-panel" aria-label="明細の取り込み">
-          <div class="panel-heading"><div><div class="step">STEP 01</div><h2>明細の取り込み</h2></div><span class="pill neutral">端末内で処理</span></div>
+        <section id="import-upload-panel" class="panel import-panel" aria-label="明細を追加">
+          <div class="panel-heading"><div><div class="step">STEP 01</div><h2>明細を追加</h2></div><span class="pill neutral">端末内で処理</span></div>
           <div class="import-methods">
-            <div id="pdf-pane" class="import-method" role="group" aria-label="CSV・PDFファイルの取り込み">
+            <div id="pdf-pane" class="import-method" role="group" aria-label="CSV・PDFファイルの追加">
               <label id="dropzone" class="dropzone" for="file-input" tabindex="0">
                 <div class="drop-icon">↑</div><b class="drop-desktop-label">CSV・PDFをここへドロップ</b><b class="drop-mobile-label">CSV・PDFを選択</b><span>またはクリックしてファイルを選択</span>
               </label>
               <input id="file-input" type="file" accept="application/pdf,.pdf,text/csv,.csv" multiple hidden>
             </div>
-            <details id="paste-pane" class="import-method import-paste-details"><summary>詳細な取り込み方法：Web明細のテキスト貼り付け</summary><div class="import-paste-body">
+            <details id="paste-pane" class="import-method import-paste-details"><summary>別の追加方法：Web明細のテキスト貼り付け</summary><div class="import-paste-body">
               <label class="sr-only" for="paste-input">Web画面の全内容をコピーして貼り付け</label>
               <textarea id="paste-input" spellcheck="false" placeholder="Web明細をここに貼り付け" rows="5"></textarea>
               <button id="parse-paste" type="button" class="primary-action parse-action"><svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M14 2v6h6"/><circle cx="14" cy="14" r="3"/><path d="m16.2 16.2 2.8 2.8"/></svg><span>明細を解析する</span></button>
-              <p class="hint">長い明細は入力欄の中だけスクロールできます。HTML形式も解析に利用します。</p></div>
+              </div>
             </details>
           </div>
           <div class="import-upload-feedback hidden" id="import-upload-feedback" role="alert"></div>
@@ -103,7 +106,7 @@
 
             <div id="preview-content" class="hidden detail-stack">
               <div class="detail-summary-block">
-                <div class="panel-heading detail-heading"><div><div class="step">STEP 03</div><h2>選択中の明細</h2></div><span class="pill neutral" id="detail-status-pill">確認中</span></div>
+                <div class="panel-heading detail-heading"><div><div class="step">STEP 03</div><h2>解析結果を確認</h2></div><span class="pill neutral" id="detail-status-pill">確認中</span></div>
                 <div class="detail-summary-top">
                   <div class="amount-summary" role="group" aria-label="請求総額"><strong id="amount-stated">—</strong><div class="amount-line"><span>抽出した取引の合計</span><b id="amount-calculated">—</b></div><div class="amount-line diff"><span>差額</span><b id="amount-diff">—</b></div></div>
                   <div class="summary-main">
@@ -123,7 +126,6 @@
                       <div><span>支払日</span><strong id="detail-date">—</strong></div>
                       <div><span>抽出した取引</span><strong id="detail-count">—</strong></div>
                     </div>
-                    <div id="verification-ok" class="notice good verification-ok hidden">✓ 明細の合計額が請求額と一致しています。</div>
                   </div>
                 </div>
                 <div id="notice-list" class="notice-list"></div>
@@ -131,30 +133,31 @@
 
               <div id="transactions-panel" class="transactions-panel-inner">
                 <h3 class="sr-only">取引明細（確認用）</h3>
-                <div class="table-scroll"><table class="transaction-table"><colgroup><col class="col-date"><col class="col-merchant"><col class="col-amount"><col class="col-note"></colgroup><thead><tr><th aria-sort="none"><button type="button" class="sort-button" id="sort-date" aria-label="利用日を昇順に並べ替え"><span>利用日</span><span class="sort-arrow" aria-hidden="true">↕</span></button></th><th>利用先 / 名称</th><th class="amount-column" aria-sort="none"><button type="button" class="sort-button sort-button-amount" id="sort-amount" aria-label="当月請求額を昇順に並べ替え"><span>当月請求額</span><span class="sort-arrow" aria-hidden="true">↕</span></button></th><th>補足</th></tr></thead><tbody id="transaction-rows"></tbody></table></div>
+                <div class="table-scroll"><table class="transaction-table"><colgroup><col class="col-date"><col class="col-merchant"><col class="col-amount"><col class="col-note"></colgroup><thead><tr><th aria-sort="none"><button type="button" class="sort-button" id="sort-date" aria-label="利用日を昇順に並べ替え"><span>利用日</span><span class="sort-arrow" aria-hidden="true">↕</span></button></th><th>利用先</th><th class="amount-column" aria-sort="none"><button type="button" class="sort-button sort-button-amount" id="sort-amount" aria-label="当月請求額を昇順に並べ替え"><span>当月請求額</span><span class="sort-arrow" aria-hidden="true">↕</span></button></th><th>補足</th></tr></thead><tbody id="transaction-rows"></tbody></table></div>
               </div>
             </div>
           </section>
         </section>
-        <div class="batch-bar" role="group" aria-label="明細の一括取り込み">
-          <div class="batch-bar-copy"><strong id="batch-status">取込対象はありません</strong><span id="batch-description">解析された明細を確認してください。</span></div>
-          <div class="import-batch-actions"><button type="button" id="import-payment-settings" class="secondary-action hidden">引落日を設定</button><button type="button" id="batch-import" class="save-action" disabled>明細を一括取り込む</button></div>
+        <div class="batch-bar" role="group" aria-label="明細の一括保存">
+          <div class="batch-bar-copy"><strong id="batch-status">保存対象はありません</strong><span id="batch-description"></span></div>
+          <div class="import-batch-actions"><button type="button" id="import-payment-settings" class="secondary-action hidden">引落日を設定</button><button type="button" id="batch-import" class="save-action" disabled>保存</button></div>
         </div>
         </div>
         <dialog id="import-add-dialog" class="import-add-dialog" aria-labelledby="import-add-title">
-          <div class="import-add-head"><h2 id="import-add-title">明細を追加</h2><button id="import-add-close" type="button" aria-label="閉じる" class="import-add-close">×</button></div>
+          <div class="import-add-head"><h2 id="import-add-title">明細を追加</h2><button id="import-add-close" type="button" aria-label="閉じる" class="import-add-close finance-modal-x">×</button></div>
           <div id="import-dialog-content" class="import-add-body"></div>
         </dialog>
         <dialog id="import-revision-dialog" class="import-revision-dialog" aria-labelledby="import-revision-title">
           <div class="import-revision-inner">
-            <h2 id="import-revision-title">既存明細との差分確認</h2>
+            <div class="finance-modal-head"><h2 id="import-revision-title">既存明細との差分確認</h2><button id="import-revision-close" type="button" class="finance-modal-x" aria-label="閉じる">×</button></div>
             <p id="import-revision-summary" class="import-revision-summary"></p>
+            <p class="import-revision-summary">差し替えは取込待ちに追加され、保存操作でOneDriveへ反映されます。</p>
             <div id="import-revision-stats" class="import-revision-stats"></div>
             <div id="import-revision-details" class="import-revision-details"></div>
             <label id="import-revision-override-warning" class="import-revision-override-warning hidden"><input type="checkbox" id="import-revision-override-accept">引き継げない表示名・補足を確認しました</label>
             <div class="import-revision-actions">
               <button type="button" id="import-revision-cancel" class="secondary-action">差し替えない</button>
-              <button type="button" id="import-revision-accept" class="save-action">差し替えを取込待ちへ追加</button>
+              <button type="button" id="import-revision-accept" class="save-action">差し替える</button>
             </div>
           </div>
         </dialog>
@@ -164,7 +167,7 @@
             <div><div class="eyebrow">MONTHLY SUMMARY</div><h1>月別サマリー<span class="accent-dot">.</span></h1>
               <p class="lead"><span id="monthly-heading-period">今月</span> · 口座引落月基準（カードは明細記載の支払日）</p></div>
           </div>
-          <div class="monthly-controls finance-period-nav" aria-label="表示年月を切り替える">
+          <div id="monthly-period-controls" class="monthly-controls finance-period-nav" aria-label="表示年月を切り替える">
               <button type="button" id="monthly-prev" aria-label="前月">‹</button>
               <label for="monthly-period" class="sr-only">集計年月</label><input id="monthly-period" type="month" aria-label="集計年月">
               <button type="button" id="monthly-next" aria-label="翌月">›</button>
@@ -174,30 +177,24 @@
           <div id="monthly-content" aria-live="polite"></div>
         </section>
 
-        <section id="subscriptions-view" class="hidden subscriptions-view" aria-label="固定費・サブスク管理">
-          <header class="finance-page-heading"><div class="eyebrow">SUBSCRIPTIONS</div><h1>固定費・サブスク管理<span class="accent-dot">.</span></h1><p class="lead">カード・銀行・現金の継続支出を管理</p></header>
+        <section id="subscriptions-view" class="hidden subscriptions-view" aria-label="固定費管理">
+          <header class="finance-page-heading"><div class="eyebrow">SUBSCRIPTIONS</div><h1>固定費管理<span class="accent-dot">.</span></h1></header>
           <div id="subscriptions-content" class="subscriptions-content"></div>
         </section>
 
         <section id="reports-view" class="hidden reports-view" aria-label="月次レポート">
-          <header class="finance-page-heading"><div class="eyebrow">MONTHLY REPORTS</div><h1>月次レポート<span class="accent-dot">.</span></h1><p class="lead">保存した時点の収支を振り返る記録</p></header>
+          <header class="finance-page-heading"><div class="eyebrow">MONTHLY REPORTS</div><h1>月次レポート<span class="accent-dot">.</span></h1></header>
           <div id="reports-content" class="reports-content"></div>
         </section>
 
         <section id="analysis-view" class="hidden analysis-view" aria-label="収支分析">
-          <header class="analysis-header finance-page-heading"><div class="eyebrow">ANALYTICS</div><h1>収支分析<span class="accent-dot">.</span></h1><p class="lead">月次・年間の推移</p></header>
+          <header class="analysis-header finance-page-heading"><div class="eyebrow">ANALYTICS</div><h1>収支分析<span class="accent-dot">.</span></h1></header>
           <div id="analysis-content" class="analysis-content"></div>
         </section>
 
         <section id="manage-view" class="hidden manage-view" aria-label="明細の管理">
           <header class="finance-page-heading"><div class="eyebrow">STATEMENT MANAGEMENT</div><h1>明細管理<span class="accent-dot">.</span></h1></header>
-          <div class="manage-return-bar"><button type="button" id="manage-back-analysis" class="secondary-action hidden">← 収支分析へ戻る</button><button type="button" id="manage-back-home" class="secondary-action hidden">← ホームへ戻る</button><button type="button" id="manage-back-summary" class="secondary-action hidden">← 月別サマリーへ戻る</button></div>
-          <section id="manage-drilldown-breakdown" class="panel manage-drilldown-breakdown hidden" aria-label="分析の金額内訳"></section>
-          <div class="manage-grid">
-            <section class="panel manage-index statement-index-panel">
-              <div class="panel-heading"><div><div class="step">STEP 01</div><h2>明細一覧</h2></div><span id="manage-list-count" class="pill neutral">0件</span></div>
-              <div id="manage-drilldown" class="manage-drilldown hidden" role="status"><div><strong id="manage-drilldown-title"></strong><small id="manage-drilldown-description">支払月で絞り込み中 · 該当する取引行のみ表示</small></div><button type="button" id="manage-drilldown-clear" class="secondary-action">絞り込み解除</button></div>
-              <div id="manage-period-controls" class="manage-period-controls" role="group" aria-label="請求月で明細を絞り込む">
+          <div id="manage-period-controls" class="manage-period-controls finance-period-nav" role="group" aria-label="請求月で明細を絞り込む">
                 <button type="button" id="manage-prev-month" aria-label="前月">‹</button>
                 <label class="sr-only" for="manage-period">請求月</label>
                 <input type="month" id="manage-period" aria-label="請求月">
@@ -205,21 +202,27 @@
                 <button type="button" id="manage-current-month">今月</button>
                 <button type="button" id="manage-show-all" aria-label="全期間を表示">すべて</button>
               </div>
+          <div class="manage-return-bar"><button type="button" id="manage-back-analysis" class="secondary-action hidden">← 収支分析へ戻る</button><button type="button" id="manage-back-home" class="secondary-action hidden">← ホームへ戻る</button><button type="button" id="manage-back-summary" class="secondary-action hidden">← 月別サマリーへ戻る</button></div>
+          <section id="manage-drilldown-breakdown" class="panel manage-drilldown-breakdown hidden" aria-label="分析の金額内訳"></section>
+          <div class="manage-grid">
+            <section class="panel manage-index statement-index-panel">
+              <div class="panel-heading"><div><h2>明細一覧</h2></div><span id="manage-list-count" class="pill neutral">0件</span></div>
+              <div id="manage-drilldown" class="manage-drilldown hidden" role="status"><div><strong id="manage-drilldown-title"></strong><small id="manage-drilldown-description">支払月で絞り込み中 · 該当する取引行のみ表示</small></div><button type="button" id="manage-drilldown-clear" class="secondary-action">絞り込み解除</button></div>
               <div id="manage-list" class="statement-list" aria-label="編集する明細の一覧"></div>
             </section>
             <section class="panel manage-editor detail-panel">
               <div id="manage-empty" class="preview-empty"><h3>編集する明細を選択してください</h3></div>
               <div id="manage-content" class="hidden">
-                <div class="panel-heading"><div><div class="step">STEP 02</div><h2>選択中の明細</h2></div><span id="manage-status" class="pill neutral">未保存</span></div>
+                <div class="panel-heading"><div><h2>選択中の明細</h2></div><span id="manage-status" class="pill neutral">未保存</span></div>
                 <div class="manage-fields">
                   <label>カード<select id="manage-card" class="card-select"></select></label>
                   <div class="manage-fixed-field"><span>請求月</span><output id="manage-month" aria-label="請求月（取り込み後は変更不可）">—</output></div>
                   <div class="manage-fixed-field"><span>支払日</span><output id="manage-payment" aria-label="支払日（取り込み後は変更不可）">—</output></div>
                 </div>
-                <div id="manage-points" class="manage-statement-points"><span>獲得ポイント</span><strong>0 pt</strong></div>
-                <div class="manage-toolbar"><h3>取引明細</h3><button type="button" id="manage-add-row" class="secondary-action">＋ 行を追加</button></div>
-                <div class="table-scroll"><table class="transaction-table"><colgroup><col class="col-date"><col class="col-merchant"><col class="col-amount"><col class="col-note"><col class="col-operation"></colgroup><thead><tr><th aria-sort="none"><button type="button" id="manage-sort-date" class="manage-sort-button" aria-label="利用日順に並べ替え">利用日 ↕</button></th><th>利用先</th><th class="amount-column" aria-sort="none"><button type="button" id="manage-sort-amount" class="manage-sort-button" aria-label="金額順に並べ替え">金額 ↕</button></th><th>補足</th><th>操作</th></tr></thead><tbody id="manage-rows"></tbody></table></div>
-                <div class="manage-foot"><p id="manage-validation"></p><button type="button" id="manage-original-download" class="secondary-action" disabled>原本PDFをダウンロード</button><button type="button" id="manage-save" class="save-action">保存</button><button type="button" id="manage-delete" class="secondary-action">この明細を削除</button></div>
+                <div id="manage-points" class="manage-statement-points"><span>推定ポイント</span><strong>—</strong></div>
+                <div class="manage-toolbar"><h3>取引明細</h3><div class="manage-toolbar-actions"><button type="button" id="manage-clear-changes" class="secondary-action" disabled>変更をクリア</button><button type="button" id="manage-add-row" class="secondary-action">＋ 行を追加</button></div></div>
+                <div class="table-scroll"><table class="transaction-table"><colgroup><col class="col-date"><col class="col-merchant"><col class="col-amount"><col class="col-note"><col class="col-operation"></colgroup><thead><tr><th aria-sort="none"><button type="button" id="manage-sort-date" class="sort-button" aria-label="利用日を昇順に並べ替え"><span>利用日</span><span class="sort-arrow" aria-hidden="true">↕</span></button></th><th>利用先</th><th class="amount-column" aria-sort="none"><button type="button" id="manage-sort-amount" class="sort-button sort-button-amount" aria-label="当月請求額を昇順に並べ替え"><span>当月請求額</span><span class="sort-arrow" aria-hidden="true">↕</span></button></th><th>補足</th><th>操作</th></tr></thead><tbody id="manage-rows"></tbody></table></div>
+                <div class="manage-foot"><p id="manage-validation"></p><button type="button" id="manage-delete" class="danger-action">削除</button><button type="button" id="manage-original-download" class="secondary-action hidden" disabled>原本PDFをダウンロード</button><button type="button" id="manage-save" class="save-action">保存</button></div>
               </div>
             </section>
           </div>
@@ -229,12 +232,11 @@
           <div class="rules-heading finance-page-heading">
             <div class="eyebrow">MERCHANT ALIASES</div>
             <h1>利用先ルール<span class="accent-dot">.</span></h1>
-            <p class="lead">カード会社の元の名称は残したまま、見やすい表示名に統一します。</p>
           </div>
           <div id="rules-lock-message" class="panel rules-lock-message hidden">ルールの管理には、OneDriveへの接続と保管庫のロック解除が必要です。</div>
           <div id="rules-workspace" class="rules-workspace hidden">
             <section class="panel rules-form-panel" aria-labelledby="rules-editor-title">
-              <div class="panel-heading"><div><div class="step">STEP 01</div><h2 id="rules-editor-title">新しいルール</h2></div></div>
+              <div class="panel-heading"><div><h2 id="rules-editor-title">新しいルール</h2></div></div>
               <form id="rules-form" autocomplete="off">
                 <div class="rules-pattern-header"><label for="rule-pattern">カード明細に記載される利用先</label><button type="button" id="rules-pick-merchant" class="rules-pick-button">履歴から選ぶ</button></div>
                 <div class="rule-pattern-editor">
@@ -242,7 +244,7 @@
                   <input id="rule-pattern" type="text" maxlength="200" required placeholder="AA運送" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore="true">
                   <div id="rule-pattern-alternatives" class="rule-pattern-alternatives"></div>
                   <button id="rule-pattern-add" type="button" class="rules-pick-button">＋ 利用先を追加</button>
-                  <p id="rule-pattern-help" class="rules-help">複数の利用先に同じ表示名・カテゴリーを適用できます。</p>
+                  <p id="rule-pattern-help" class="rules-help">複数の利用先を指定できます。ルールは過去の明細にも適用されます。</p>
                 </div>
                 <div class="rules-form-pair">
                   <fieldset class="rules-field rule-mode-fieldset">
@@ -278,8 +280,8 @@
               </form>
             </section>
             <section class="panel rules-list-panel" aria-labelledby="rules-list-title">
-              <div class="panel-heading"><div><div class="step">STEP 02</div><h2 id="rules-list-title">登録済みルール</h2></div><span id="rules-list-count" class="pill neutral">0件</span></div>
-              <div class="rules-list-tools"><p>過去の明細にも表示時に適用されます。元の利用先とPDF原本は変更しません。</p><button id="rules-reload" type="button" class="text-button">最新ルールを取得</button></div>
+              <div class="panel-heading"><div><h2 id="rules-list-title">登録済みルール</h2></div><span id="rules-list-count" class="pill neutral">0件</span></div>
+              <div class="rules-list-tools"><button id="rules-reload" type="button" class="text-button">最新ルールを取得</button></div>
               <div id="rules-list" class="rules-list"></div>
               <p id="rules-sync-status" class="rules-sync-status" role="status" aria-live="polite">OneDriveでルールを管理します。</p>
             </section>
@@ -289,7 +291,7 @@
         <dialog id="categories-dialog" class="categories-dialog" aria-labelledby="categories-dialog-title">
           <div class="categories-dialog-head">
             <div><div class="eyebrow">CATEGORY SETTINGS</div><h2 id="categories-dialog-title">カテゴリーを管理</h2></div>
-            <button type="button" id="categories-dialog-close" class="categories-dialog-x" aria-label="閉じる">×</button>
+            <button type="button" id="categories-dialog-close" class="categories-dialog-x finance-modal-x" aria-label="閉じる">×</button>
           </div>
           <div class="categories-dialog-content">
             <div class="rules-category-create">
@@ -305,13 +307,13 @@
             <div id="rules-category-list" class="rules-category-list"></div>
           </div>
           <div class="categories-dialog-foot">
-            <p id="rules-category-status" role="status" aria-live="polite">カテゴリーを追加・編集したら、OneDriveに保存してください。</p>
+            <p id="rules-category-status" role="status" aria-live="polite"></p>
             <div class="categories-dialog-actions"><button type="button" id="categories-dialog-cancel" class="secondary-action">キャンセル</button><button type="button" id="categories-dialog-save" class="save-action">保存</button></div>
           </div>
         </dialog>
 
         <dialog id="recent-merchants-dialog" class="recent-merchants-dialog" aria-labelledby="recent-merchants-title">
-          <div class="recent-merchants-heading"><div><h2 id="recent-merchants-title">最近の利用先から選択</h2><p>過去に保存したカード明細の元の利用先を表示します。</p></div><button type="button" id="recent-merchants-close" aria-label="閉じる">×</button></div>
+          <div class="recent-merchants-heading"><div><h2 id="recent-merchants-title">最近の利用先から選択</h2><p>過去に保存したカード明細の元の利用先を表示します。</p></div><button type="button" id="recent-merchants-close" class="finance-modal-x" aria-label="閉じる">×</button></div>
           <div class="recent-merchants-tools"><label>対象カード<select id="recent-merchants-card"><option value="">すべてのカード</option></select></label><label>利用先を検索<input id="recent-merchants-search" type="search" placeholder="店名などで検索"></label></div>
           <div id="recent-merchants-count" class="recent-merchants-count"></div>
           <div id="recent-merchants-list" class="recent-merchants-list"></div>
@@ -327,7 +329,7 @@
           <div class="assets-return-bar"><button type="button" id="assets-back-home" class="secondary-action hidden">← ホームへ戻る</button></div>
           <div id="assets-lock-message" class="panel assets-lock-message">口座管理にはOneDriveへの接続と保管庫のロック解除が必要です。</div>
           <div id="assets-workspace" class="hidden">
-            <div class="assets-section-head"><div><div class="step">STEP 01</div><h2>口座残高</h2><p>最後に確認した残高から、入出金後の残高を予測します。</p></div><span class="pill neutral">4口座</span></div>
+            <div class="assets-section-head"><div><h2>口座残高</h2><p>最後に確認した残高から、入出金後の残高を予測します。</p></div></div>
             <form id="assets-balances-form" autocomplete="off">
               <div class="assets-account-layout">
               <section class="assets-account-group" aria-labelledby="assets-main-heading">
@@ -350,6 +352,7 @@
               <p class="assets-operation-status" id="assets-balances-status" role="status" aria-live="polite"></p>
             </form>
             <details class="assets-account-info-panel" id="assets-info-details"><summary>残高の計算内訳・注意事項</summary><div id="assets-account-info" class="assets-account-info"></div></details>
+            <p class="assets-reconcile-shared">前回の別日に確認した残高があると、予測と実績の差を表示します。</p>
             <section class="panel assets-one-time-panel" aria-labelledby="assets-once-title">
               <div class="assets-once-heading">
                 <div><h2 id="assets-once-title">入出金の記録</h2><span class="assets-help">単発の出金・入金・振替</span></div>
@@ -361,7 +364,7 @@
             </section>
             <dialog id="assets-once-dialog" class="assets-once-dialog" aria-labelledby="assets-once-dialog-title">
               <form id="assets-once-form" autocomplete="off">
-                <div class="assets-once-modal-head"><h2 id="assets-once-dialog-title">入出金を登録</h2><button id="assets-once-close" type="button" aria-label="閉じる" class="assets-once-close">×</button></div>
+                <div class="assets-once-modal-head finance-modal-head"><h2 id="assets-once-dialog-title">入出金を登録</h2><button id="assets-once-close" type="button" aria-label="閉じる" class="assets-once-close finance-modal-x">×</button></div>
                 <fieldset class="assets-once-choice"><legend>種類</legend>
                   <label><input type="radio" name="assets-once-kind" value="expense">支出</label>
                   <label><input type="radio" name="assets-once-kind" value="income">入金</label>
@@ -397,17 +400,17 @@
                 <div class="mizuho-plan-actions"><button type="submit" class="secondary-action">送金予測を保存</button><span id="mizuho-plan-status" class="assets-operation-status" role="status"></span></div>
               </form>
             </details>
-            <div class="assets-section-head assets-section-second"><div><div class="step">STEP 02</div><h2>定期入出金</h2><p>口座の定期入金・引落・振替を登録します。</p></div><span class="pill neutral">残高予測に反映中</span></div>
+            <div class="assets-section-head assets-section-second"><div><h2>定期入金・振替</h2><p>口座への定期入金と口座間振替を登録します。銀行引落は固定費管理で編集できます。</p></div></div>
             <div class="assets-recurring-grid">
               <section class="panel assets-form-panel" aria-label="定期入出金の登録">
-                <div class="panel-heading"><div><h2 id="assets-recurring-form-title">定期入出金を追加</h2></div></div>
+                <div class="panel-heading"><div><h2 id="assets-recurring-form-title">定期入金・振替を追加</h2></div></div>
                 <form id="assets-recurring-form" autocomplete="off">
                   <div class="recurring-top-row">
                     <label class="rules-field" for="assets-recurring-name">名称
-                    <input id="assets-recurring-name" maxlength="80" required placeholder="医療保険、貯金口座への積立">
+                    <input id="assets-recurring-name" maxlength="80" required placeholder="給与、貯金口座への積立">
                   </label>
                     <label class="rules-field" for="assets-recurring-kind">種類
-                      <select id="assets-recurring-kind"><option value="expense">支出（銀行引落）</option><option value="income">収入（銀行入金）</option><option value="transfer">口座間振替</option></select>
+                      <select id="assets-recurring-kind"><option value="income">収入（銀行入金）</option><option value="transfer">口座間振替</option></select>
                     </label>
                   </div>
                   <div class="recurring-account-row">
@@ -420,9 +423,7 @@
                     <label class="rules-field" for="assets-recurring-to">入金先の口座
                       <select id="assets-recurring-to"></select>
                     </label>
-                  <label class="rules-field" for="assets-recurring-category" id="assets-category-wrap">カテゴリー
-                    <select id="assets-recurring-category"><option value="">分類しない</option></select>
-                  </label>
+
                   </div>
                   <div class="recurring-schedule-row">
                     <label class="rules-field" for="assets-recurring-frequency">繰り返し
@@ -452,12 +453,16 @@
                   <p class="assets-operation-status" id="assets-recurring-status" role="status" aria-live="polite"></p>
                 </form>
               </section>
-              <section class="panel assets-list-panel" aria-label="登録済み定期入出金">
+              <section class="panel assets-list-panel" aria-label="登録済み定期入金・振替">
                 <div class="panel-heading"><div><h2>登録済みの設定</h2></div><span class="pill neutral" id="assets-recurring-count">0件</span></div>
                 <div class="assets-list" id="assets-recurring-list"></div>
               </section>
             </div>
 
+            <section class="panel assets-list-panel assets-fixed-cost-reference" aria-label="銀行引落の固定費">
+              <div class="panel-heading"><div><h2>銀行引落の固定費</h2><p>契約・料金・停止期間の編集は固定費管理で行います。</p></div><button type="button" id="assets-fixed-cost-open" class="secondary-action">固定費管理へ</button></div>
+              <div class="assets-list" id="assets-fixed-cost-list"></div>
+            </section>
             <p class="assets-footnote"></p>
           </div>
         </section>
@@ -466,19 +471,20 @@
         <section id="future-view" class="hidden future-view" aria-label="将来の貯金・NISA予測">
   <div class="assets-heading finance-page-heading"><div class="eyebrow">SAVINGS FORECAST</div><h1>資産予測<span class="accent-dot">.</span></h1></div>
   <section id="future-panel" class="panel future-panel" aria-label="資産形成の将来予測">
-              <div class="future-header"><div><h2>将来の貯金・NISA予測</h2><p class="future-help">現金貯金・NISA・合計の将来予測</p></div></div>
+              <div class="future-header"><div><h2>将来の貯金・NISA予測</h2></div></div>
               <div class="future-planner">
                 <section class="future-step" aria-label="予測する年齢">
-                  <div class="future-step-head"><h3>何歳まで予測する？</h3><span id="future-target-label" class="future-step-summary">40歳の誕生月</span></div>
+                  <div class="future-step-head"><h3>予測する年齢</h3><output id="future-age-value" for="future-age" class="future-step-summary">40歳</output></div>
                   <button type="button" id="future-birth-settings" class="text-button future-birth-settings" hidden>生年月を設定</button>
                   <input id="future-target" type="month" hidden aria-label="予測終了月">
-                  <label class="future-range-label" for="future-age"><span>目標年齢</span><output id="future-age-value">40歳</output></label>
-                  <input id="future-age" type="range" min="18" max="80" step="1" value="40">
+                  <p id="future-target-label" class="future-muted"></p>
+                  <input id="future-age" aria-label="予測する年齢" type="range" min="18" max="80" step="1" value="40">
                 </section>
                 <section class="future-step" aria-label="NISAの予定">
-                  <div class="future-step-head"><h3>NISAの運用・積立</h3></div>
+                  <div class="future-step-head"><h3>積立・運用条件</h3></div>
                   <label class="future-range-label" for="future-nisa-rate"><span>想定年利</span><output id="future-nisa-rate-value">3.0%</output></label>
                   <input id="future-nisa-rate" type="range" min="0" max="10" step="0.5" value="3">
+                  <p id="future-scenario-hint" class="future-muted"></p>
                 </section>
                 <details id="future-scenario-accordion" class="future-scenario-accordion">
                   <summary>積立額を変更して比較</summary>
@@ -492,7 +498,6 @@
                       <label id="future-cash-amount-wrap" for="future-saving-amount">変更後の現金積立（月額・円）<input id="future-saving-amount" type="number" min="0" step="1" inputmode="numeric" value="20000"></label>
                       <label id="future-nisa-amount-wrap" for="future-scenario-nisa" hidden>変更後のNISA積立（月額・円）<input id="future-scenario-nisa" type="number" min="0" step="1" inputmode="numeric" value="20000"></label>
                     </div>
-                    <p id="future-scenario-hint" class="future-muted"></p>
                   </section>
                 </details>
               </div>
@@ -517,28 +522,27 @@
             </div>
             <div class="cloud-overview-info">
               <div class="cloud-status-cell">
-                <p id="cloud-live-status" class="cloud-probe-result" role="status">未接続</p>
-                <p id="cloud-account" class="cloud-account">未接続</p>
-                <p id="cloud-auth-state" class="cloud-auth-state" role="status">Microsoftアカウントが未接続</p>
+                <span>Microsoftアカウント</span>
+                <p id="cloud-account" class="cloud-account" hidden></p>
+                <div class="cloud-status-inline"><p id="cloud-auth-state" class="cloud-auth-state" role="status">未接続</p><span class="cloud-vault-label">暗号化保管庫</span><p id="cloud-live-status" class="cloud-probe-result" role="status">未確認</p></div>
               </div>
             </div>
             <p id="cloud-status" class="cloud-status hidden" role="status" aria-live="polite"></p>
             <div class="cloud-primary-actions" aria-label="接続・保管庫の操作">
-              <button type="button" id="cloud-login" class="save-action">Microsoftアカウントで接続</button>
-              <button type="button" id="cloud-reauth" class="secondary-action">Microsoft認証をやり直す</button>
-              <button type="button" id="cloud-live-refresh" class="secondary-action">最新データを取得</button>
-              <button type="button" id="cloud-live-lock" class="secondary-action">保管庫をロック</button>
+              <button type="button" id="cloud-login" class="save-action">Microsoft接続</button>
+              <button type="button" id="cloud-reauth" class="secondary-action">再認証</button>
+              <button type="button" id="cloud-live-refresh" class="secondary-action">最新データ取得</button>
+              <button type="button" id="cloud-live-lock" class="secondary-action">保管庫ロック</button>
               <button type="button" id="cloud-resume-batch" class="secondary-action hidden">保存を再開</button>
-              <button type="button" id="cloud-new-vault" class="secondary-action hidden">新しい保管庫を作成</button>
+              <button type="button" id="cloud-new-vault" class="secondary-action hidden">保管庫作成</button>
             </div>
-            <details class="cloud-auth-diagnostics"><summary>接続の診断情報</summary><pre id="cloud-auth-diagnostic">診断対象の接続エラーはありません。</pre><small>トークン・パスワード・アカウント名は記録しません。</small></details>
             <div class="cloud-account-actions" role="group" aria-label="Microsoftアカウントの操作">
               <button type="button" id="cloud-switch-account" class="cloud-link-action">別のアカウントに切り替える</button>
               <button type="button" id="cloud-logout" class="cloud-link-action">サインアウト</button>
             </div>
             <div class="cloud-remember-controls">
               <div class="cloud-remember-copy">
-                <strong>次回からのパスフレーズ入力</strong>
+                <strong>パスフレーズ入力</strong>
                 <p id="cloud-remember-status" role="status" aria-live="polite">状態を確認しています…</p>
                 <small>自分専用のブラウザだけで利用してください。金融データはOneDriveに保存されます。</small>
               </div>
@@ -570,30 +574,12 @@
                   <input id="cloud-next-confirm" type="password" class="cloud-field" autocomplete="new-password" minlength="12" required autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="もう一度入力">
                   <button type="button" class="password-visibility-toggle" data-password-toggle="cloud-next-confirm" aria-controls="cloud-next-confirm" aria-label="確認用パスフレーズを表示" aria-pressed="false">表示</button>
                 </div>
-                <p class="cloud-help cloud-rotate-caution">変更が終わるまでページを閉じないでください。変更後は保存済みのパスフレーズも更新してください。</p>
+                <p class="cloud-help cloud-rotate-caution">すべての端末を最新版に更新し、旧版のタブを閉じてください。変更が終わるまでページを閉じないでください。変更後は保存済みのパスフレーズも更新してください。</p>
                 <button type="submit" id="cloud-rotate-submit" class="save-action">暗号化パスフレーズを変更</button>
               </form>
             </div>
             <p id="cloud-rotate-status" class="cloud-status" role="status" aria-live="polite"></p>
           </section>
-
-          <section class="panel cloud-panel cloud-cleanup-panel" aria-labelledby="cloud-cleanup-title">
-            <div class="panel-heading"><div><h2 id="cloud-cleanup-title">暗号化データの整理</h2></div></div>
-            <p class="cloud-help">明細の削除後も残っているPDF原本と、パスフレーズ変更前の暗号化世代を確認できます。調査だけでは削除しません。</p>
-            <p class="cloud-help cloud-rotate-caution">削除後は以前のパスフレーズによる復旧に使用できなくなります。OneDriveのバックアップを必ず確認してください。OneDriveのごみ箱や過去バージョンにもデータが残る場合があります。完全消去する場合はOneDrive側でも削除してください。旧v1保管庫・バックアップスナップショットも整理できます。スナップショットは復旧手段なので、削除するものだけ個別に選択してください。</p>
-            <button type="button" id="cloud-cleanup-scan" class="secondary-action cloud-button">不要データを調べる</button>
-            <div id="cloud-cleanup-options" class="hidden">
-              <label class="rules-check"><input type="checkbox" id="cloud-cleanup-originals"> 未参照PDF原本 <span id="cloud-cleanup-original-count"></span></label>
-              <label class="rules-check"><input type="checkbox" id="cloud-cleanup-versions"> 旧暗号化世代 <span id="cloud-cleanup-version-count"></span></label>
-              <label class="rules-check"><input type="checkbox" id="cloud-cleanup-legacy"> 切替前の旧保存領域 <span id="cloud-cleanup-legacy-count"></span></label>
-              <label class="rules-check"><input type="checkbox" id="cloud-cleanup-v1"> 旧v1保管庫・移行済みPDF原本 <span id="cloud-cleanup-v1-count"></span></label>
-              <div class="cloud-cleanup-snapshots"><p class="cloud-help">バックアップスナップショット（削除するものを個別選択）</p><div id="cloud-cleanup-snapshot-list"></div></div>
-              <label class="rules-check"><input type="checkbox" id="cloud-cleanup-backup"> 削除前にバックアップを確認しました</label>
-              <button type="button" id="cloud-cleanup-delete" class="secondary-action cloud-button" disabled>選択した不要データを削除</button>
-            </div>
-            <p id="cloud-cleanup-result" class="cloud-help" role="status" aria-live="polite"></p>
-          </section>
-
         </section>
             <details class="panel settings-nisa-panel settings-disclosure" id="settings-nisa-panel" aria-label="NISA連携設定">
               <summary>NISA連携</summary>
@@ -604,8 +590,9 @@
                 <div class="assets-nisa-fields">
                   <label class="rules-field" for="assets-nisa-card">カード<select id="assets-nisa-card"></select></label>
                   <label class="rules-field" for="assets-nisa-merchant">元の利用先に含まれる文字<input id="assets-nisa-merchant" maxlength="90" placeholder="楽天証券" autocomplete="off"></label>
+                  <button type="submit" id="assets-nisa-save" class="save-action">保存</button>
                 </div>
-                <div class="assets-nisa-actions"><button type="submit" id="assets-nisa-save" class="secondary-action">連携条件を保存</button><button type="button" id="assets-nisa-disable" class="text-button">連携を解除</button><span id="assets-nisa-match-count" class="assets-nisa-count" hidden></span></div>
+                <div class="assets-nisa-actions"><button type="button" id="assets-nisa-disable" class="text-button">連携を解除</button><span id="assets-nisa-match-count" class="assets-nisa-count" hidden></span></div>
                 <p class="assets-help settings-nisa-warning">カード積立と定期入金を重複登録しないようご確認ください。</p>
                 <p id="assets-nisa-status" class="assets-operation-status" role="status" aria-live="polite"></p>
               </form>
@@ -614,7 +601,7 @@
                   <label for="assets-birth-month">生年月
                     <input id="assets-birth-month" type="month" min="1900-01" max="2100-12">
                   </label>
-                  <button id="assets-birth-save" type="submit" class="secondary-action">保存</button>
+                  <button id="assets-birth-save" type="submit" class="save-action">保存</button>
                 </form>
                 <p id="assets-birth-status" class="assets-operation-status" role="status" aria-live="polite"></p>
               </div>
@@ -623,41 +610,59 @@
               <summary>カード設定</summary>
               <form id="settings-card-form" class="settings-card-body">
                 <div id="settings-card-list" class="settings-card-list"></div>
-                <div class="settings-card-footer"><button type="submit" class="secondary-action" id="settings-card-save">カード設定を保存</button><span id="settings-card-status" class="assets-operation-status" role="status"></span></div>
+                <div class="settings-card-footer"><button type="submit" class="save-action" id="settings-card-save">カード設定を保存</button><span id="settings-card-status" class="assets-operation-status" role="status"></span></div>
               </form>
             </details>
             <details class="panel assets-payroll-panel settings-payroll-disclosure" id="settings-payroll-disclosure" aria-label="Payrollの給与連携">
               <summary class="settings-payroll-summary">Payroll連携</summary>
               <div class="settings-payroll-body">
-              <div class="assets-payroll-layout">
-                <form id="assets-payroll-connect" autocomplete="off">
-                  <label class="rules-field" for="assets-payroll-secret">Payrollのパスフレーズ
-                    <input id="assets-payroll-secret" type="password" minlength="12" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="初回登録・変更時だけ入力">
-                  </label>
-                  <div class="assets-payroll-actions"><button id="assets-payroll-sync" type="submit" class="secondary-action">給与データを取得</button><button id="assets-payroll-forget" type="button" class="text-button">連携を解除</button></div>
-
-                </form>
-                <form id="assets-payroll-deposit-form" autocomplete="off">
-                  <label class="rules-field" for="assets-payroll-deposit">給与の振込先口座
-                    <select id="assets-payroll-deposit"><option value="">残高には加算しない（収入集計のみ）</option><option value="rakuten-bank">楽天銀行へ入金</option><option value="cash-savings">現金貯金専用口座へ入金</option></select>
-                  </label>
-                  <button type="submit" id="assets-payroll-deposit-save" class="secondary-action">入金先設定を保存</button>
-
-                </form>
-                <section id="assets-payroll-summary" class="assets-payroll-history-card" aria-label="Payroll同期状況">
-                  <h3 class="assets-payroll-history-title">同期状況</h3>
-                  <div class="assets-payroll-summary-body">
-                  <div class="assets-payroll-metrics"><div><small>取得した給与明細</small><strong id="assets-payroll-count">0件</strong></div><div><small>最終同期</small><strong id="assets-payroll-last">未同期</strong></div></div>
-                  <label id="assets-payroll-stale" class="assets-payroll-stale hidden"><input id="assets-payroll-use-stale" type="checkbox"> 古い給与データを残高・収支予測に使用する（このタブのみ）</label>
+                <div class="settings-payroll-content">
+                  <form id="assets-payroll-connect" class="settings-payroll-form" autocomplete="off">
+                    <div class="settings-payroll-fields">
+                      <label class="rules-field" for="assets-payroll-secret">Payrollのパスフレーズ
+                        <input id="assets-payroll-secret" type="password" minlength="12" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="初回登録・変更時だけ入力">
+                      </label>
+                      <button id="assets-payroll-sync" type="submit" class="secondary-action">給与データを取得</button>
+                    </div>
+                    <div class="settings-payroll-actions"><button id="assets-payroll-forget" type="button" class="text-button">連携を解除</button></div>
+                  </form>
+                  <form id="assets-payroll-deposit-form" class="settings-payroll-form settings-payroll-section" autocomplete="off">
+                    <div class="settings-payroll-fields">
+                      <label class="rules-field" for="assets-payroll-deposit">給与の振込先口座
+                        <select id="assets-payroll-deposit"><option value="">残高には加算しない（収入集計のみ）</option><option value="rakuten-bank">楽天銀行へ入金</option><option value="cash-savings">現金貯金専用口座へ入金</option></select>
+                      </label>
+                      <button type="submit" id="assets-payroll-deposit-save" class="save-action">入金先設定を保存</button>
+                    </div>
+                  </form>
+                  <section id="assets-payroll-summary" class="settings-payroll-section" aria-labelledby="assets-payroll-summary-heading">
+                    <h3 id="assets-payroll-summary-heading">同期状況</h3>
+                    <dl class="settings-payroll-metrics"><div><dt>取得した給与明細</dt><dd id="assets-payroll-count">0件</dd></div><div><dt>最終同期</dt><dd id="assets-payroll-last">未同期</dd></div></dl>
+                    <label id="assets-payroll-stale" class="assets-payroll-stale hidden"><input id="assets-payroll-use-stale" type="checkbox"> 古い給与データを残高・収支予測に使用する（このタブのみ）</label>
+                  </section>
                 </div>
-              </section>
-              </div>
+              <p id="assets-payroll-mapping-warning" class="assets-operation-status bad" role="status" aria-live="polite"></p>
               <p id="assets-payroll-status" class="assets-operation-status" role="status" aria-live="polite"></p>
               </div>
             </details>
           <details class="cloud-advanced" id="cloud-advanced">
             <summary><strong>詳細設定</strong></summary>
             <div class="cloud-advanced-content">
+          <section class="panel cloud-panel cloud-cleanup-panel" aria-labelledby="cloud-cleanup-title">
+            <div class="panel-heading"><div><h2 id="cloud-cleanup-title">暗号化データの整理</h2></div></div>
+            <p class="cloud-help">明細の削除後も残っているPDF原本と、パスフレーズ変更前の暗号化世代を確認できます。調査だけでは削除しません。</p>
+            <p class="cloud-help cloud-rotate-caution">すべての端末を最新版に更新し、旧版のタブを閉じてください。削除後は以前のパスフレーズによる復旧に使用できなくなります。OneDriveのバックアップを必ず確認してください。OneDriveのごみ箱や過去バージョンにもデータが残る場合があります。完全消去する場合はOneDrive側でも削除してください。旧v1保管庫・バックアップスナップショットも整理できます。スナップショットは復旧手段なので、削除するものだけ個別に選択してください。</p>
+            <button type="button" id="cloud-cleanup-scan" class="secondary-action cloud-button">不要データを調べる</button>
+            <div id="cloud-cleanup-options" class="hidden">
+              <label class="rules-check"><input type="checkbox" id="cloud-cleanup-originals"> 未参照PDF原本 <span id="cloud-cleanup-original-count"></span></label>
+              <label class="rules-check"><input type="checkbox" id="cloud-cleanup-versions"> 旧暗号化世代 <span id="cloud-cleanup-version-count"></span></label>
+              <label class="rules-check"><input type="checkbox" id="cloud-cleanup-legacy"> 切替前の旧保存領域 <span id="cloud-cleanup-legacy-count"></span></label>
+              <label class="rules-check"><input type="checkbox" id="cloud-cleanup-v1"> 旧v1保管庫・移行済みPDF原本 <span id="cloud-cleanup-v1-count"></span></label>
+              <div class="cloud-cleanup-snapshots"><p class="cloud-help">バックアップスナップショット（削除するものを個別選択）</p><div id="cloud-cleanup-snapshot-list"></div></div>
+              <label class="rules-check"><input type="checkbox" id="cloud-cleanup-backup"> 削除前にバックアップを確認しました</label>
+              <button type="button" id="cloud-cleanup-delete" class="secondary-action cloud-button danger-action" disabled>選択した不要データを削除</button>
+            </div>
+            <p id="cloud-cleanup-result" class="cloud-help" role="status" aria-live="polite"></p>
+          </section>
               <div class="cloud-grid">
                 <div class="cloud-settings-left">
 <section class="panel cloud-panel">
@@ -700,7 +705,7 @@
                       </div>
                       <button type="button" id="cloud-folder-check" class="secondary-action cloud-button">保存先を確認</button>
                     </div>
-                    <div class="cloud-tool-group cloud-tool-diagnostic">
+                    <div class="cloud-tool-group cloud-tool-diagnostic"><pre id="cloud-auth-diagnostic" class="cloud-auth-diagnostic-output" hidden>診断対象の接続エラーはありません。</pre>
                       <div class="cloud-tool-description">
                         <strong>保管庫の診断</strong>
                         <p>保存や読み込みに問題があるとき、暗号化ファイルを読み取り専用で調べます。</p>
@@ -750,7 +755,7 @@
       <input id="legacy-cleanup-file" type="file" accept="application/json,.json">
     </label>
     <div class="legacy-cleanup-actions">
-      <button type="button" class="secondary-action hidden" id="legacy-cleanup-delete" disabled>旧データを削除</button>
+      <button type="button" class="secondary-action hidden danger-action" id="legacy-cleanup-delete" disabled>旧データを削除</button>
       <button type="button" class="secondary-action" id="legacy-cleanup-close">閉じる</button>
     </div>
   </dialog>

@@ -1,7 +1,9 @@
+import {formatRate,formatDate} from './formatters.js';
+import {requestConfirmation,cancelConfirmation,confirmationPending} from './modal.js';
 /** Flat card settings: select one card, edit only its actual properties.
  * Card preference writes remain a single encrypted OneDrive assets update. */
 import {CARDS} from '../models/types.js';
-import {DEFAULT_POINT_RATES} from '../summary/point-benefits.js';
+import {DEFAULT_POINT_RATES,editPointRate,type PointRateEditMode} from '../summary/point-benefits.js';
 import {validateCardPreferences,type CardPreference,type AssetAccountId} from '../cloud/assets.js';
 import {CloudWriteUncertainError,type LiveVault} from '../cloud/live-vault.js';
 import { showActivity, simpleActivity } from './activity-feedback.js';
@@ -21,7 +23,7 @@ function dayInput(value:string):HTMLInputElement{
   const el=document.createElement('input');el.type='number';el.min='1';el.max='31';el.step='1';el.inputMode='numeric';el.value=value;return el;
 }
 interface Controls {name:HTMLInputElement;mode:HTMLSelectElement;month:HTMLSelectElement;day:HTMLInputElement;
- paymentMonth?:HTMLSelectElement;paymentDay?:HTMLInputElement;rate:HTMLInputElement;effectiveOn:HTMLInputElement;debit:HTMLSelectElement;panel:HTMLElement}
+ paymentMonth?:HTMLSelectElement;paymentDay?:HTMLInputElement;rate:HTMLInputElement;effectiveOn:HTMLInputElement;debit:HTMLSelectElement;panel:HTMLElement;rateMode?:HTMLSelectElement;expectedFuture?:string;initialRate:string;initialDay:string}
 export function initCardSettings(getVault:()=>LiveVault|null,onSaved:()=>void):CardSettingsUi{
   const form=document.getElementById('settings-card-form') as HTMLFormElement;
   const list=document.getElementById('settings-card-list')!;
@@ -29,12 +31,24 @@ export function initCardSettings(getVault:()=>LiveVault|null,onSaved:()=>void):C
   const status=document.getElementById('settings-card-status')!;
   if(!form||!list||!save||!status)throw new Error('カード設定画面を表示できません。');
   let owner:LiveVault|null=null,busy=false,dirty=false,selectedCardId=CARDS[0]!.id;
+  let configurationBaseline='',epoch=0;
+  const confirmationOwner={};
+  const discard=make('button','secondary-action','編集内容を破棄');discard.type='button';discard.hidden=true;save.after(discard);
+  const fingerprint=()=>JSON.stringify([...rows.values()].map(row=>Array.from(row.panel.querySelectorAll<HTMLInputElement|HTMLSelectElement>('input,select'),field=>field.value)));
+  discard.addEventListener('click',async()=>{
+    const vault=getVault(),revision=epoch,draft=fingerprint();
+    if(!vault?.unlocked||busy||!dirty||confirmationPending())return;
+    if(!await requestConfirmation({owner:confirmationOwner,title:'カード設定の編集を破棄しますか？',message:'未保存のカード設定を破棄し、最新の設定を表示します。',acceptLabel:'破棄する',cancelLabel:'編集を続ける',destructive:true}))return;
+    if(revision!==epoch||getVault()!==vault||!vault.unlocked||busy||!dirty||fingerprint()!==draft)return;
+    dirty=false;status.textContent='';render();
+  });
   const rows=new Map<string,Controls>();
   function render():void {
     const vault=getVault();if(owner===vault&&dirty)return;
-    owner=vault;dirty=false;
+    owner=vault;dirty=false;discard.hidden=true;
     const prefs=vault?.unlocked?vault.assetSettings().cardPreferences??{}:{};
     const debitAccounts=vault?.unlocked?vault.assetSettings().cardDebitAccounts??{}:{};
+    configurationBaseline=JSON.stringify([prefs,debitAccounts]);
     list.replaceChildren();rows.clear();
     const picker=make('div','settings-card-picker');picker.setAttribute('role','radiogroup');picker.setAttribute('aria-label','設定するカード');
     const panels=make('div','settings-card-panels');const tabs=new Map<string,HTMLInputElement>();
@@ -75,12 +89,41 @@ export function initCardSettings(getVault:()=>LiveVault|null,onSaved:()=>void):C
       // Both optional settings share a single compact two-column row.
       const extras=make('div','card-setting-secondary-fields');
       const points=make('div','card-setting-extra card-setting-points');
-      const rate=document.createElement('input');rate.type='number';rate.min='0';rate.max='100';rate.step='0.01';rate.inputMode='decimal';rate.placeholder='1.2';rate.value=pref?.pointRatePercent===undefined?'':String(pref.pointRatePercent);
-      points.append(field('還元率（%）',rate));
+      const rate=document.createElement('input');rate.type='number';rate.min='0';rate.max='100';rate.step='0.01';rate.inputMode='decimal';rate.placeholder=String(DEFAULT_POINT_RATES[card.id]??0);rate.value=pref?.pointRatePercent===undefined?'':String(pref.pointRatePercent);
+      const rateEdit=make('div','card-setting-rate-edit');
+      rateEdit.append(field('還元率（%）',rate));
       const effectiveOn=document.createElement('input');effectiveOn.type='date';
       const today=new Date();effectiveOn.value=`${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
       effectiveOn.setAttribute('aria-label',`${card.name}の還元率の適用開始日`);
-      points.append(field('変更の適用開始日',effectiveOn));
+      effectiveOn.min=effectiveOn.value;
+      rateEdit.append(field('変更の適用開始日',effectiveOn));
+      let rateMode:HTMLSelectElement|undefined,expectedFuture:string|undefined;
+      if(vault?.unlocked){
+        const day=effectiveOn.value,history=pref?.pointRateHistory??[];
+        const disclosure=make('details','card-setting-rate-history-list');disclosure.append(make('summary','','還元率の変更履歴'));
+        const active=history.length?Math.max(0,history.reduce((last,x,i)=>x.effectiveOn<=day?i:last,-1)):-1;
+        for(const [index,entry] of [...history.entries()].reverse()){
+          const line=make('div','card-setting-rate-history-line');
+          const label=make('div','');label.append(make('span','',entry.effectiveOn==='1900-01-01'?'従来の還元率':`${formatDate(entry.effectiveOn)}から`),make('small','',index===active?'現在適用中':index>active?'適用予定':'過去の還元率'));
+          line.append(label,make('b','',formatRate(entry.ratePercent)));disclosure.append(line);
+        }
+        const latest=history.at(-1);
+        if(latest&&latest.effectiveOn>day&&history.length>1){
+          expectedFuture=latest.effectiveOn;effectiveOn.value=latest.effectiveOn;rate.value=String(latest.ratePercent);
+          rateEdit.querySelector('.card-setting-field>span')!.textContent='変更予定の還元率（%）';
+          rateMode=select([['replace','最新の変更予定を修正'],['cancel','最新の変更予定を取り消す'],['append','次の変更予定を追加']],'replace');
+          const operation=rateMode;
+          const adjustRate=()=>{
+            const cancel=operation.value==='cancel';rate.disabled=cancel;effectiveOn.disabled=cancel;
+            const append=operation.value==='append';
+            if(append){const next=new Date(`${latest.effectiveOn}T00:00:00Z`);next.setUTCDate(next.getUTCDate()+1);effectiveOn.min=next.toISOString().slice(0,10);effectiveOn.value=effectiveOn.min;}
+            else{effectiveOn.min=day;effectiveOn.value=latest.effectiveOn;rate.value=String(latest.ratePercent);}
+          };
+          operation.addEventListener('change',adjustRate);
+          rateEdit.append(field('変更予定の操作',operation));
+        }else if(latest&&latest.effectiveOn>=day)effectiveOn.min=latest.effectiveOn;
+        points.append(rateEdit);if(history.length>1||history.some(x=>x.effectiveOn>day))points.append(disclosure);
+      }else points.append(rateEdit);
 
       const reminder=make('div','card-setting-extra card-setting-reminder');
       const mode=select([['auto','自動で案内'],['custom','案内日を指定'],['none','案内しない']],pref?.review===null?'none':pref?.review?'custom':'auto');
@@ -93,7 +136,7 @@ export function initCardSettings(getVault:()=>LiveVault|null,onSaved:()=>void):C
       extras.append(points,reminder);panel.append(extras);
       panels.append(panel);
       const pc=(panel as HTMLElement & {paymentControls?:[HTMLSelectElement,HTMLInputElement]}).paymentControls;
-      rows.set(card.id,{name,mode,month,day,paymentMonth:pc?.[0],paymentDay:pc?.[1],rate,effectiveOn,debit,panel});
+      rows.set(card.id,{name,mode,month,day,paymentMonth:pc?.[0],paymentDay:pc?.[1],rate,effectiveOn,debit,panel,rateMode,expectedFuture,initialRate:rate.value,initialDay:effectiveOn.value});
     }
     list.append(picker,panels);if(!CARDS.some(c=>c.id===selectedCardId))selectedCardId=CARDS[0]!.id;
     activate(selectedCardId);
@@ -104,15 +147,16 @@ export function initCardSettings(getVault:()=>LiveVault|null,onSaved:()=>void):C
   }
   const markDirty=(event:Event)=>{
     if(event.target instanceof HTMLInputElement&&event.target.matches('.card-setting-choice input[type="radio"]'))return;
-    dirty=true;status.textContent='';
+    dirty=true;discard.hidden=false;status.textContent='';
   };
   form.addEventListener('input',markDirty);form.addEventListener('change',markDirty);
   form.addEventListener('submit',event=>{
-    event.preventDefault();if(busy)return;
+    event.preventDefault();if(busy||confirmationPending())return;
     void(async()=>{
-      const vault=getVault();if(!vault?.unlocked){simpleActivity('保管庫を解除してください。',true);return;}
+      const vault=getVault(),revision=epoch;if(!vault?.unlocked){simpleActivity('保管庫を解除してください。',true);return;}
       try{
-        const prior=vault.assetSettings().cardPreferences??{};
+        const settings=vault.assetSettings(),prior=settings.cardPreferences??{};
+        if(JSON.stringify([prior,settings.cardDebitAccounts??{}])!==configurationBaseline)throw new Error('カード設定が更新されました。最新情報を確認して編集し直してください。');
         const next:Record<string,CardPreference>={};
         const nextDebit:Record<string,AssetAccountId>={};
         for(const card of CARDS){
@@ -132,30 +176,25 @@ export function initCardSettings(getVault:()=>LiveVault|null,onSaved:()=>void):C
             pref.payment={monthOffset:Number(row.paymentMonth.value) as 0|1,day:n};
           }
           const old=prior[card.id];
-          const oldRate=old?.pointRatePercent??DEFAULT_POINT_RATES[card.id]??0;
-          const rate=row.rate.value.trim()?Number(row.rate.value):(DEFAULT_POINT_RATES[card.id]??0);
-          if(!Number.isFinite(rate)||rate<0||rate>100||Math.abs(rate*100-Math.round(rate*100))>1e-8)
-            throw new Error(`${card.name}の還元率は0〜100%、小数第2位までで入力してください。`);
-          if(old?.pointRateHistory)pref.pointRateHistory=structuredClone(old.pointRateHistory);
-          if(rate!==oldRate){
-            const effectiveOn=row.effectiveOn.value;
-            if(!/^\d{4}-\d{2}-\d{2}$/.test(effectiveOn))throw new Error(`${card.name}の適用開始日を確認してください。`);
-            const history=pref.pointRateHistory??[{effectiveOn:'1900-01-01',ratePercent:oldRate}];
-            if(effectiveOn<history.at(-1)!.effectiveOn)throw new Error(`${card.name}の適用日は直近の変更日以降にしてください。`);
-            if(effectiveOn===history.at(-1)!.effectiveOn)history[history.length-1]={effectiveOn,ratePercent:rate};
-            else history.push({effectiveOn,ratePercent:rate});
-            pref.pointRateHistory=history;
+          const mode=(row.rateMode?.value??'change') as PointRateEditMode;
+          const rateChanged=row.rate.value!==row.initialRate||row.effectiveOn.value!==row.initialDay||mode==='cancel'||mode==='append';
+          if(rateChanged){
+            const rate=row.rate.value.trim()?Number(row.rate.value):(DEFAULT_POINT_RATES[card.id]??0);
+            Object.assign(pref,editPointRate(card.id,old,mode,rate,row.effectiveOn.value,new Date().toLocaleDateString('sv-SE'),row.expectedFuture));
+          }else{
+            if(old?.pointRateHistory)pref.pointRateHistory=structuredClone(old.pointRateHistory);
+            if(old?.pointRatePercent!==undefined)pref.pointRatePercent=old.pointRatePercent;
           }
-          if(row.rate.value.trim()||old?.pointRatePercent!==undefined||rate!==oldRate)pref.pointRatePercent=rate;
           if(Object.keys(pref).length)next[card.id]=pref;
         }
         validateCardPreferences(next);
         busy=true;save.disabled=true;status.textContent='';showActivity('カード設定を保存中…','working');
         await vault.setCardConfiguration(next,nextDebit);
+        if(revision!==epoch||getVault()!==vault||!vault.unlocked)return;
         dirty=false;status.textContent='';showActivity('カード設定を保存しました。','good');render();onSaved();
-      }catch(error){status.textContent='';simpleActivity(error instanceof CloudWriteUncertainError?'保存結果を確認できません。最新データを取得してください。':error instanceof Error?error.message:'保存できませんでした。',true);}
+      }catch(error){if(revision!==epoch||getVault()!==vault||!vault.unlocked)return;status.textContent='';simpleActivity(error instanceof CloudWriteUncertainError?'保存結果を確認できません。最新データを取得してください。':error instanceof Error?error.message:'保存できませんでした。',true);}
       finally{busy=false;save.disabled=!getVault()?.unlocked;}
     })();
   });
-  render();return{render,reset:()=>{dirty=false;status.textContent='';render();},isDirty:()=>dirty,isBusy:()=>busy};
+  render();return{render,reset:()=>{epoch++;cancelConfirmation(confirmationOwner);dirty=false;status.textContent='';render();},isDirty:()=>dirty,isBusy:()=>busy||confirmationPending(confirmationOwner)};
 }
