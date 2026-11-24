@@ -37,17 +37,19 @@ test('network and reauthentication failures are separate, with redacted diagnost
   }finally{globalThis.document=old;}
 });
 
-test('every data menu shares the same connection gate while settings stays available',()=>{
-  const source=file('src/main.ts'),css=file('public/styles/cloud-gate-v1980.css');
-  for(const id of IDs)assert.match(source,new RegExp(`'${id}'`));
+test('every data menu delegates to a shared connection gate while settings stays available',()=>{
+  const source=file('src/main.ts'),gate=file('src/ui/cloud-gate.ts');
+  const css=file('public/styles/cloud-gate-v1980.css');
+  for(const id of IDs)assert.match(gate,new RegExp(`id:'${id}'`));
+  assert.match(source,/syncFinanceCloudGates\(\{/);
   assert.match(source,/const notice=cloudConnectionNotice\(\)/);
-  assert.match(source,/view\.classList\.toggle\('finance-cloud-gated',blocked\)/);
-  assert.match(source,/add\('設定を開く',\(\)=>showView\('settings'\)\)/);
-  assert.match(source,/add\('保管庫を解除',/);
-  assert.match(source,/notice\.kind==='not-connected'\?'Microsoftアカウントで接続':'通信を再試行'/);
-  assert.match(source,/add\('Microsoft認証をやり直す',/);
-  assert.match(css,/\.finance-cloud-gated\s*>\s*:not\(\.finance-page-heading\)/);
-  assert.doesNotMatch(source,/['"]settings-view['"],[\s\S]*?as const/);
+  assert.match(gate,/view\.classList\.toggle\('finance-cloud-gated',state\.blocked\)/);
+  assert.match(gate,/appendAction\(actions,'設定を開く',state\.onSettings\)/);
+  assert.match(gate,/appendAction\(actions,'保管庫を解除',state\.onUnlock,true\)/);
+  assert.match(gate,/appendAction\(actions,'Microsoft認証をやり直す',state\.onReauthenticate\)/);
+  assert.match(css,/max-width:none!important/);
+  assert.match(css,/#assets-page/);
+  assert.doesNotMatch(gate,/id:'settings-view'/);
 });
 
 test('explicit interactive Microsoft reauth uses the chosen account without sign-out',()=>{
