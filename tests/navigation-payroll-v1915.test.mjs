@@ -10,7 +10,7 @@ const css=src('public/styles/navigation-payroll-v1915.css');
 test('明細インポートと明細管理は独立したトップレベルメニュー',()=>{
   const nav=html.slice(html.indexOf('id="mobile-nav-panel" class="mobile-nav-panel"'),html.indexOf('class="sidebar-bottom-actions"'));
   assert.doesNotMatch(nav,/<details|sidebar-subnav|id="nav-statements-group"/);
-  assert.match(nav, /id="nav-home"[\s\S]*?id="nav-import"[\s\S]*?id="nav-manage"[\s\S]*?id="nav-summary"/);
+  assert.match(nav, /id="nav-home"[\s\S]*?id="nav-summary"[\s\S]*?id="nav-analysis"[\s\S]*?id="nav-import"[\s\S]*?id="nav-manage"/);
   for(const id of ['nav-import','nav-manage'])assert.equal((html.match(new RegExp(`id="${id}"`,'g'))||[]).length,1);
   assert.doesNotMatch(main,/getElementById\('nav-statements-group'\)/);
 });
@@ -44,7 +44,8 @@ test('Payroll同期状況は件数と最終同期だけ。未同期では0件と
   assert.doesNotMatch(payroll,/incomeByMonth|assets-payroll-months/);
   assert.match(payroll,/haveLast\?`\$\{payrollIncome\.length\}件`:'0件'/);
   assert.match(payroll,/payrollStale\?'（更新失敗・古いデータ）'/);
-  assert.match(css,/\.assets-payroll-summary-body\{[\s\S]*?overflow:visible!important/);
+  assert.match(section,/class="settings-payroll-metrics"/);
+  assert.doesNotMatch(section,/assets-payroll-history-card/);
 });
 
 test('公開用HTMLとCSSは編集元と一致する',()=>{

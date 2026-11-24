@@ -11,11 +11,11 @@ test('a different recurring edit cannot discard the unsaved form without confirm
   assert.equal(recurringSwitchNeedsConfirmation(false,'a','b'),false);
   assert.equal(recurringSwitchNeedsConfirmation(true,'a','a'),false);
   const source=read('src/ui/assets-settings.ts');
-  assert.match(source,/actions\.append\(addButton\('編集',\(\)=>\{openRecurringEditor\(item\);\}\)/);
+  assert.match(source,/actions\.append\(addButton\('編集',\(\)=>\{void openRecurringEditor\(item\);\}\)/);
   assert.match(source,/return openRecurringEditor\(match\)/);
-  assert.match(source,/if\(recurringSwitchNeedsConfirmation\(recurringHasChanges\(\),editingId,item\.id\)&&!window\.confirm/);
-  assert.match(source,/if\(editingId===item\.id\)\{[\s\S]*?return true;/);
-  assert.match(source,/\('assets-recurring-clear'\).*window\.confirm\('編集中の入力を破棄してクリアしますか？'\)/);
+  assert.match(source,/if\(recurringSwitchNeedsConfirmation\(recurringHasChanges\(\),editingId,item\.id\)\)\{[\s\S]*?!await requestConfirmation/);
+  assert.match(source,/if\(editingId===item\.id\)return true;/);
+  assert.match(source,/\('assets-recurring-clear'\)[\s\S]*?if\(recurringHasChanges\(\)\)\{[\s\S]*?!await requestConfirmation/);
 });
 
 test('asset errors persist at form and disappear on next progress/success, while warnings remain',()=>{
@@ -66,7 +66,7 @@ test('fixed-cost failures stay visible across tabs and preserve the current navi
   assert.match(render,/\(\)=>\{tab=value;render\(\);\}/);
   // An uncertain OneDrive write remains an explicit warning in the open form.
   assert.match(source,/error\.textContent=e instanceof CloudWriteUncertainError\?'保存結果未確認です。/);
-  assert.match(html,/data-nav-label="固定費・サブスク管理"/);
-  assert.match(html,/<h1>固定費・サブスク管理<span class="accent-dot">/);
+  assert.match(html,/data-nav-label="固定費管理"/);
+  assert.match(html,/<h1>固定費管理<span class="accent-dot">/);
   assert.match(read('public/styles/subscriptions-v183.css'),/\[data-theme="dark"\] \.subscriptions-notice\.error/);
 });

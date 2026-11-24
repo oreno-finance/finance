@@ -5,7 +5,7 @@ import {readFileSync} from 'node:fs';
 import {webcrypto} from 'node:crypto';
 import {estimateCardPoints} from '../dist/src/summary/card-points.js';
 import {validateCardPreferences} from '../dist/src/cloud/assets.js';
-import {LiveVault} from '../dist/src/cloud/live-vault.js';
+import {LiveVault} from './helpers/coordinated-vault.mjs';
 import {GraphError} from '../dist/src/cloud/onedrive-api.js';
 
 if(!globalThis.crypto)globalThis.crypto=webcrypto;

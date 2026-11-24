@@ -88,6 +88,7 @@ export class PayrollReadSession {
   const ix=indexCheck(await decoded<PayrollIndex>(head,this.key,indexAAD));
   const paths=ix.generation?['versions',ix.generation,'income']:['income'];
   const docs:PayrollIncomeDocument[]=[];
+  const versions:Array<{name:string;id:string;etag:string}>=[];
   // Index is authoritative. Never silently skip missing years.
   for(const y of [...new Set(ix.incomeYears)].sort()){
    const encrypted=await this.client.readPayrollPublishedFile(paths,`${y}.enc`,30_000_000);
@@ -97,7 +98,18 @@ export class PayrollReadSession {
    const doc=adaptPayrollSource(await decoded<SourceIncome>(env,this.key,incomeAAD));
    if(doc.year!==Number(y))throw Error('Payrollの収入ファイルの年度が一致しません。');
    docs.push(doc);
+   versions.push({name:`${y}.enc`,id:encrypted.id,etag:encrypted.etag});
   }
+  // Existing years may change without changing the index. Recheck each file
+  // and the root index last; this detects observed changes, not an atomic snapshot.
+  const unchanged=(before:{id:string;etag:string},after:{id:string;etag:string}|null)=>
+    !!before.id&&!!before.etag&&!!after&&before.id===after.id&&before.etag===after.etag;
+  for(const before of versions){
+   if(!unchanged(before,await this.client.readPayrollPublishedMetadata(paths,before.name)))
+    throw Error('Payrollの収入ファイルが同期中に更新されました。再同期してください。');
+  }
+  if(!unchanged(file,await this.client.readPayrollPublishedMetadata([],'index.enc')))
+   throw Error('Payrollの索引が同期中に更新されました。再同期してください。');
   return combinePayrollIncome(docs);
  }
 }

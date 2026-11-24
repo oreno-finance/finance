@@ -6,7 +6,7 @@ import {readFile, mkdtemp, mkdir, writeFile, access} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
-import {LiveVault} from '../dist/src/cloud/live-vault.js';
+import {LiveVault} from './helpers/coordinated-vault.mjs';
 import {emptyAssets, detectAssetsEditCollisions} from '../dist/src/cloud/assets.js';
 import {GraphError} from '../dist/src/cloud/onedrive-api.js';
 if(!globalThis.crypto)globalThis.crypto=webcrypto;
@@ -30,7 +30,7 @@ test('confirmed cloud statements always need confirmation, including failed vali
   const code=await readFile(new URL('../src/main.ts',import.meta.url),'utf8');
   const operation=code.slice(code.indexOf('async function deleteStatement('),code.indexOf('function notice('));
   assert.match(operation,/const mustConfirm\s*=\s*!!storedId\s*\|\|\s*!needsReview\(statement\)/);
-  assert.match(operation,/if\s*\(mustConfirm\s*&&\s*!window\.confirm\(message\)\)\s*return;/);
+  assert.match(operation,/if\s*\(mustConfirm\s*&&\s*!await requestConfirmation\(\{[\s\S]*?message,acceptLabel:[\s\S]*?\}\)\)\s*return;/);
   assert.match(operation,/暗号化PDF原本はOneDriveに保持/);
   assert.doesNotMatch(operation,/if\s*\(!needsReview\(statement\)\s*&&\s*!window\.confirm/);
 });

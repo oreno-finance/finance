@@ -51,7 +51,7 @@ test('UI links monthly summary and payment-month drilldown to recurrence editing
  assert.match(html,/id="manage-drilldown-breakdown"/);
  assert.match(main,/renderManagerDrilldownBreakdown\(context\)/);
  assert.match(main,/openRecurringForReview\(entry\.entryId\)/);
- assert.match(readFileSync('src/ui/assets-settings.ts','utf8'),/openRecurring:\(id:string\)/);
+ assert.match(readFileSync('src/ui/assets-settings.ts','utf8'),/openRecurring:async\(id:string\)/);
  assert.match(readFileSync('src/ui/monthly-summary.ts','utf8'),/report\.recurringLines\.filter\(item=>item\.cardOverlap\)/);
 });
 function auditFixture(){

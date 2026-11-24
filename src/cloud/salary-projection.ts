@@ -1,13 +1,14 @@
+import {estimateRegularNet,regularSalarySample} from './salary-estimate.js';
 /** Read-only bank balance projection including clearly labelled, unconfirmed salary estimates.
  * Neither the monthly estimate nor the input salary is persisted to Finance/OneDrive.
  */
 import { forecastAssets, matchingNisaRows, type AssetForecast } from './asset-projection.js';
 import type { AssetsDocument, AssetAccountId, BalanceSnapshot } from './assets.js';
 import type { CloudRecord } from './merge.js';
-import type { PayrollIncomeEntry } from './payroll-income.js';
+import { payrollRole, recurringSalaryRole, type PayrollIncomeEntry } from './payroll-income.js';
 import { recurringInMonth } from './recurring-schedule.js';
 import { monthlyReport, prepareMonthlyReports, type PreparedMonthlyReports, type MonthlyReport } from '../summary/monthly-summary.js';
-import { estimatedCardFixedBills } from './card-fixed-estimates.js';
+import { estimatedCardFixedBills, estimatedMizuhoFunding } from './card-fixed-estimates.js';
 import { mizuhoTransferForBill } from './mizuho-transfer.js';
 
 export interface ExpectedSalary {
@@ -23,10 +24,9 @@ export interface BankProjection {
   cardDebitByAccount:Partial<Record<AssetAccountId,number>>;
   fixedCostCardEstimatesByAccount:Partial<Record<AssetAccountId,number>>;
   autoTransferByAccount:Partial<Record<AssetAccountId,number>>;
+  estimatedTransferByAccount:Partial<Record<AssetAccountId,number>>;
 }
 const period=(date:string)=>date.slice(0,7);
-/** New producer includes job separately; old income files used employerId=main/side. */
-const roleOf=(item:PayrollIncomeEntry)=>item.job??(item.employerId==='main'?'main':item.employerId==='side'?'side':null);
 const monthIndex=(date:string)=>Number(date.slice(0,4))*12+Number(date.slice(5,7));
 const monthFromIndex=(value:number)=>`${Math.floor((value-1)/12)}-${String(((value-1)%12)+1).padStart(2,'0')}`;
 const validDay=(day:string)=>/^\d{4}-\d{2}-\d{2}$/.test(day) && !Number.isNaN(Date.parse(day+'T00:00:00Z')) && new Date(day+'T00:00:00Z').toISOString().slice(0,10)===day;
@@ -39,30 +39,22 @@ const payday=(month:string,day:number)=>{
   const last=new Date(Date.UTC(year,mm,0)).getUTCDate();
   return `${month}-${String(Math.min(day,last)).padStart(2,'0')}`;
 };
-const sane=(amount:number)=>Number.isSafeInteger(amount)&&amount>=0;
 /** Forecast a missing normal main-job salary from an actual recent salary, not from a bonus.
  * Never project more than the current and next month in account balance widgets.
  */
 export function expectedMainSalaries(entries:readonly PayrollIncomeEntry[],today:string,until:string):ExpectedSalary[] {
   if(!validDay(today)||!validDay(until)||until<today)return [];
   const current=monthIndex(today),last=monthIndex(until);
-  const past=entries.filter(item=>roleOf(item)==='main'&&item.kind==='salary'&&
-    validDay(item.paidOn)&&item.paidOn<=today&&sane(item.netPay))
-    .sort((a,b)=>b.paidOn.localeCompare(a.paidOn)||b.revision-a.revision);
-  const latest=past[0];
-  if(!latest||current-monthIndex(latest.paidOn)>2)return [];
-  let amount=latest.netPay;
-  let method:ExpectedSalary['method']='previous-net';
-  if(latest.grossPay!==null && latest.taxablePay!==null &&
-      sane(latest.grossPay)&&sane(latest.taxablePay)&&latest.taxablePay<=latest.grossPay){
-    const taxFree=latest.grossPay-latest.taxablePay;
-    if(taxFree<=latest.netPay){amount=latest.netPay-taxFree;method='net-excluding-nontaxable';}
-  }
-  if(!sane(amount)||amount===0)return [];
   const result:ExpectedSalary[]=[];
   for(let i=current;i<=Math.min(last,current+1);i++){
     const month=monthFromIndex(i);
-    if(entries.some(item=>roleOf(item)==='main'&&item.kind==='salary'&&period(item.paidOn)===month))continue;
+    if(entries.some(item=>payrollRole(item)==='main'&&item.kind==='salary'&&period(item.paidOn)===month))continue;
+    const samplePeriod=i===current?month:entries.some(e=>payrollRole(e)==='main'&&e.kind==='salary'&&period(e.paidOn)===period(today))?month:period(today);
+    const latest=regularSalarySample(entries,samplePeriod,today);
+    if(!latest)continue;
+    const amount=estimateRegularNet(latest);
+    if(amount===null||amount===0)continue;
+    const method:ExpectedSalary['method']=latest.grossPay===null||latest.taxablePay===null?'previous-net':'net-excluding-nontaxable';
     const date=payday(month,Number(latest.paidOn.slice(8,10)));
     if(date<=until)result.push({date,amount,sourceMonth:period(latest.paidOn),method});
   }
@@ -94,6 +86,7 @@ export function forecastBankBalances(
   const cardDebitByAccount:Partial<Record<AssetAccountId,number>>={};
   const fixedCostCardEstimatesByAccount:Partial<Record<AssetAccountId,number>>={};
   const autoTransferByAccount:Partial<Record<AssetAccountId,number>>={};
+  const estimatedTransferByAccount:Partial<Record<AssetAccountId,number>>={};
   for(const month of context.months){
     if(month>monthFromIndex(monthIndex(asOf)+1))continue;
     let report=context.reports.get(month);
@@ -131,18 +124,30 @@ export function forecastBankBalances(
     if(!Number.isSafeInteger(result))throw new Error('カード固定費の残高予測が大きすぎます。');
     bank.balance=result;
     fixedCostCardEstimatesByAccount[account]=(fixedCostCardEstimatesByAccount[account]??0)+estimate.amount;
-    bank.warning=[bank.warning,'固定費から推定したカード引落額を含みます（請求額未確定）。'].filter(Boolean).join(' ');
+    const funding=mizuhoTransferForBill(estimate,doc);
+    const note=funding&&funding.date<today?'推定請求の送金予定日が経過しているため、仮の送金は未反映です。':'';
+    bank.warning=[bank.warning,'固定費から推定したカード引落額を含みます（請求額未確定）。',note].filter(Boolean).join(' ');
+    if(note){const other=accounts['rakuten-bank'];other.warning=[other.warning,note].filter(Boolean).join(' ');}
+  }
+  for(const transfer of estimatedMizuhoFunding(doc,records,today,asOf)){
+    for(const [id,sign] of [['rakuten-bank',-1],['mizuho-bank',1]] as const){
+      const forecast=accounts[id];
+      if(forecast.balance===null||!forecast.baseline||transfer.date<=snapshotDay(forecast.baseline))continue;
+      forecast.balance+=sign*transfer.amount;
+      if(!Number.isSafeInteger(forecast.balance))throw Error('仮の送金予測額が大きすぎます。');
+      estimatedTransferByAccount[id]=(estimatedTransferByAccount[id]??0)+sign*transfer.amount;
+      forecast.warning=[forecast.warning,'固定費から推定したみずほ送金を含みます（未確定）。'].filter(Boolean).join(' ');
+    }
   }
   if(!payrollDepositAccount||!['rakuten-bank','cash-savings'].includes(payrollDepositAccount)||asOf<today)
-    return {accounts,estimatedByAccount,estimates:[],cardDebitByAccount,fixedCostCardEstimatesByAccount,autoTransferByAccount};
+    return {accounts,estimatedByAccount,estimates:[],cardDebitByAccount,fixedCostCardEstimatesByAccount,autoTransferByAccount,estimatedTransferByAccount};
   const balance=accounts[payrollDepositAccount];
-  if(balance.balance===null||!balance.baseline)return {accounts,estimatedByAccount,estimates:[],cardDebitByAccount,fixedCostCardEstimatesByAccount,autoTransferByAccount};
+  if(balance.balance===null||!balance.baseline)return {accounts,estimatedByAccount,estimates:[],cardDebitByAccount,fixedCostCardEstimatesByAccount,autoTransferByAccount,estimatedTransferByAccount};
   const baselineDay=snapshotDay(balance.baseline);
   const estimates=expectedMainSalaries(income,today,asOf).filter(estimate=>{
     if(estimate.date<=baselineDay)return false;
     return !recurringInMonth(period(estimate.date),doc.recurring).some(event=>
-      event.entry.kind==='income'&&event.entry.toAccountId===payrollDepositAccount&&
-      /給与|給料|salary|payroll/i.test(event.entry.name));
+      event.entry.toAccountId===payrollDepositAccount&&recurringSalaryRole(event.entry)==='main');
   });
   let sum=0;
   for(const item of estimates){sum+=item.amount;if(!Number.isSafeInteger(sum))throw new Error('給与見込みの集計額が大きすぎます。');}
@@ -152,5 +157,5 @@ export function forecastBankBalances(
     balance.balance=next;
     estimatedByAccount[payrollDepositAccount]=sum;
   }
-  return {accounts,estimatedByAccount,estimates,cardDebitByAccount,fixedCostCardEstimatesByAccount,autoTransferByAccount};
+  return {accounts,estimatedByAccount,estimates,cardDebitByAccount,fixedCostCardEstimatesByAccount,autoTransferByAccount,estimatedTransferByAccount};
 }

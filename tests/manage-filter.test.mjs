@@ -30,13 +30,14 @@ test('管理画面: 全年・全月なら年月未取得も含めて個別表示
   assert.deepEqual(filteredStatementIndices(statements, 'all','all'), [2,4,1,0,3,5]);
 });
 
-test('管理画面: 取込画面と共通カード部品・STEP表記を使用する', async () => {
+test('管理画面: 取込画面と共通カード部品を使用しSTEP表記は取込だけに残す', async () => {
   const { readFileSync } = await import('node:fs');
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const js = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
   assert.match(html, /id="manage-prev-month"/);
   assert.match(html, /id="manage-period"/);
-  assert.match(html, /STEP 01[\s\S]*STEP 02/);
+  assert.match(html, /STEP 01[\s\S]*STEP 02[\s\S]*STEP 03/);
+  assert.doesNotMatch(html.slice(html.indexOf('id="manage-view"')), /STEP 0[1-9]/);
   assert.doesNotMatch(html, /id="manage-back"/);
   assert.match(js, /function createStatementEntry/);
   assert.match(js, /managerList\.append\(createStatementEntry\(index, false\)\)/);

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
 import {readFileSync} from 'node:fs';
-import {LiveVault} from '../dist/src/cloud/live-vault.js';
+import {LiveVault} from './helpers/coordinated-vault.mjs';
 import {GraphError,OneDriveTestClient} from '../dist/src/cloud/onedrive-api.js';
 import {emptyAssets} from '../dist/src/cloud/assets.js';
 import {emptyIndex} from '../dist/src/cloud/layout.js';
@@ -150,7 +150,7 @@ test('phase two never disables generation checks, encryption, write uncertainty 
   assert.match(source,/const collisions=detectRuleEditCollisions\(base,local,remoteDoc\)/);
   assert.match(source,/this\.uncertainWrite\('assets',error\)/);
   assert.match(source,/this\.uncertainWrite\('rules',error\)/);
-  assert.match(source,/await this\.client\.writeYearVault\(year,await encryptDocument\(/);
+  assert.match(source,/const encrypted=await encryptDocument\(expected,key,salt\);guard\(\);await this\.client\.writeYearVault\(year,encrypted,null\)/);
   assert.match(api,/uploadSession\(path,bytes,existing\?\.etag\)/);
   assert.match(api,/'If-Match':etag/);
 });

@@ -1,3 +1,4 @@
+import {requestConfirmation,confirmationPending,type ConfirmationOptions} from '../ui/modal.js';
 import { createEncryptedProbe, decryptEncryptedProbe } from './test-envelope.js';
 import { OneDriveTestClient, GraphError } from './onedrive-api.js';
 import { clearPasswordField } from '../ui/password-fields.js';
@@ -27,7 +28,7 @@ const validId=(v:string)=>/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 let msal:MsalInstance|null=null;
 let selectedAccount:MsalAccount|null=null;
 let initializing:Promise<MsalInstance>|null=null;
-let activeId='';let busy=false;let verified=false;
+let activeId='';let busy=false;
 type AuthState='checking'|'connected'|'temporary'|'reauth'|'not-connected'|'restore'|'mismatch';
 let authState:AuthState='not-connected';
 let reauthenticationRequired=false;
@@ -88,7 +89,7 @@ function authStateText():string {return cloudConnectionNotice().message;}
 
 function authErrorMessage(kind:MicrosoftAuthFailure):string {
   switch(kind){
-    case 'interaction': return 'Microsoftアカウントの再認証が必要です。「再接続」を押してください。';
+    case 'interaction': return 'Microsoftアカウントの再認証が必要です。「再認証」を押してください。';
     case 'network': return 'ネットワークに接続できません。接続を確認して再試行してください。';
     case 'timeout': return 'Microsoft認証の確認が時間内に完了しませんでした。再試行してください。';
     case 'server': return 'Microsoft認証サービスに一時的な障害があります。再試行してください。';
@@ -108,17 +109,23 @@ function updateUi():void {
   // Keep explicit reconnect available even if the cached account looks connected.
   $('cloud-login').toggleAttribute('disabled',busy);
   $('cloud-reauth').toggleAttribute('disabled',busy||!validId(id));
-  $('cloud-auth-diagnostic').textContent=cloudAuthDiagnostic();
+  const diagnostic=$('cloud-auth-diagnostic');diagnostic.textContent=cloudAuthDiagnostic();diagnostic.hidden=!lastAuthIssue;
+  // Recovery remains available in failure states and through account switching,
+  // without competing with the normal vault actions on a healthy connection.
+  $('cloud-login').classList.toggle('hidden',connected&&authState==='connected');
+  $('cloud-reauth').classList.toggle('hidden',authState==='connected'||authState==='checking'||authState==='not-connected');
   $('cloud-switch-account').toggleAttribute('disabled',busy);
-  $('cloud-login').textContent=connected?'通信を再試行':'Microsoftアカウントで接続';
+  $('cloud-login').textContent=connected?'通信再試行':'Microsoft接続';
   $('cloud-logout').toggleAttribute('disabled',busy||!connected);
+  $('cloud-logout').hidden=!connected;
   $('cloud-folder-check').toggleAttribute('disabled',busy||!connected);
   $('cloud-vault-diagnose').toggleAttribute('disabled',busy||!connected);
   $('cloud-diagnostic-copy').toggleAttribute('disabled',busy||!$('cloud-diagnostic-report').textContent?.trim());
   $('cloud-upload').toggleAttribute('disabled',busy||!connected);
   $('cloud-download').toggleAttribute('disabled',busy||!connected);
-  $('cloud-account').textContent=connected?(account()?.username||'Microsoftアカウント'):'';
-  const state=$('cloud-auth-state');state.textContent=authStateText();
+  $('cloud-account').textContent=connected?(account()?.username||''):'';
+  $('cloud-account').hidden=!$('cloud-account').textContent;
+  const state=$('cloud-auth-state');state.textContent=authState==='connected'?'接続済み':authState==='checking'?'確認中':authState==='not-connected'?'未接続':authStateText();
   state.dataset.state=authState;
 }
 async function ensureMsal():Promise<MsalInstance> {
@@ -130,7 +137,7 @@ async function ensureMsal():Promise<MsalInstance> {
   initializing=(async()=>{
     let lib:MsalModule;
     try {const url=new URL('../../vendor/msal/msal-browser.bundle.js',import.meta.url).href;lib=await import(url) as MsalModule;}
-    catch {throw new Error('認証ライブラリの読み込みに失敗しました。npm install → npm run build を確認してください。');}
+    catch {throw new Error('認証機能を読み込めませんでした。ページを再読み込みしてください。');}
     const instance=new lib.PublicClientApplication({
       auth:{clientId:id,authority:'https://login.microsoftonline.com/consumers',redirectUri:redirectUri(),postLogoutRedirectUri:appUri(),navigateToLoginRequestUrl:false},
       cache:{cacheLocation:'localStorage'},
@@ -148,7 +155,7 @@ async function ensureMsal():Promise<MsalInstance> {
     instance.setActiveAccount(active);
     selectedAccount=active;
     if(active)rememberAccount(id,active);
-    msal=instance;activeId=id;verified=false;
+    msal=instance;activeId=id;
     authState=active?'checking':mismatched?'mismatch':'not-connected';
     return instance;
   })();
@@ -221,16 +228,25 @@ export function cloudConnectPrompt():CloudConnectPrompt {
   if(!account())return 'connect';
   return null;
 }
-export interface CloudHandlers {hasUnsavedChanges():boolean;canNavigate?():boolean;onRefresh():Promise<void>;onMigration():Promise<void>;onLock():boolean;onChangePassphrase(current:string,next:string,onProgress:(message:string)=>void):Promise<void>;onCleanupPreview():Promise<{generationCount:number;legacyFolderCount:number;unreferencedOriginalCount:number;legacyV1Count:number;snapshots:Array<{id:string;name:string;createdDateTime:string}>}>;onCleanupDelete(which:{oldGenerations:boolean;unreferencedOriginals:boolean;unversionedFolders:boolean;legacyV1:boolean;snapshotIds:string[]},onProgress:(message:string)=>void):Promise<number>}
+export interface CloudHandlers {hasUnsavedChanges():boolean;canNavigate?():boolean|Promise<boolean>;confirmationContext():()=>boolean;onRefresh():Promise<void>;onMigration():Promise<void>;onLock():boolean|Promise<boolean>;onChangePassphrase(current:string,next:string,onProgress:(message:string)=>void):Promise<void>;onCleanupPreview():Promise<{generationCount:number;legacyFolderCount:number;unreferencedOriginalCount:number;legacyV1Count:number;snapshots:Array<{id:string;name:string;createdDateTime:string}>}>;onCleanupDelete(which:{oldGenerations:boolean;unreferencedOriginals:boolean;unversionedFolders:boolean;legacyV1:boolean;snapshotIds:string[]},onProgress:(message:string)=>void):Promise<number>}
 export function initCloudSettings(handlers:CloudHandlers):void {
   let id='';try{id=localStorage.getItem(CLIENT_KEY)??'';}catch{ /* private browsing */ }
   $<HTMLInputElement>('cloud-client-id').value=id;
   // New installations show the only setup fields automatically; connected users see a tidy overview.
   if(!validId(id)) $<HTMLDetailsElement>('cloud-advanced').open=true;
   $<HTMLInputElement>('cloud-redirect-uri').value=redirectUri();
-  $<HTMLInputElement>('cloud-client-id').addEventListener('input',()=>{verified=false;updateUi();});
+  $<HTMLInputElement>('cloud-client-id').addEventListener('input',()=>{updateUi();});
+  const confirmationOwner={};
+  function authContext():()=>boolean {
+    const instance=msal,id=activeId,user=account()?.homeAccountId,input=$<HTMLInputElement>('cloud-client-id').value.trim(),stored=localStorage.getItem(CLIENT_KEY);
+    return ()=>instance===msal&&id===activeId&&user===account()?.homeAccountId&&input===$<HTMLInputElement>('cloud-client-id').value.trim()&&stored===localStorage.getItem(CLIENT_KEY);
+  }
+  async function confirmAction(options:Omit<ConfirmationOptions,'owner'>):Promise<boolean> {
+    const auth=authContext(),valid=handlers.confirmationContext();
+    return await requestConfirmation({...options,owner:confirmationOwner})&&auth()&&valid();
+  }
   async function action(fn:()=>Promise<void>):Promise<void> {
-    if(busy)return;busy=true;updateUi();
+    if(busy||confirmationPending())return;busy=true;updateUi();
     try{await fn();}catch(error){const reason=error instanceof Error?error.message:'不明なエラー';status(reason,'error');}
     finally{busy=false;updateUi();}
   }
@@ -260,8 +276,10 @@ export function initCloudSettings(handlers:CloudHandlers):void {
         return;
       }catch(error){recordCloudConnectionFailure(error);if(!reauthenticationRequired)throw error;}
     }
-    if(handlers.canNavigate){if(!handlers.canNavigate())return;}
-    else if(handlers.hasUnsavedChanges() && !window.confirm('未保存の変更があります。認証画面へ移動しますか？'))return;
+    const auth=authContext(),valid=handlers.confirmationContext();
+    if(handlers.canNavigate){if(!await handlers.canNavigate())return;}
+    else if(handlers.hasUnsavedChanges()&&!await confirmAction({title:'認証画面へ移動しますか？',message:'未保存の変更があります。',acceptLabel:'認証へ進む',destructive:true}))return;
+    if(!auth()||!valid()||instance!==msal||current?.homeAccountId!==account()?.homeAccountId)return;
     await instance.loginRedirect({scopes:SCOPES,...(current?.username?{loginHint:current.username}:{}),...(!current&&authState==='mismatch'?{prompt:'select_account'}:{})});
   });});
   $('cloud-reauth').addEventListener('click',()=>{void action(async()=>{
@@ -269,8 +287,10 @@ export function initCloudSettings(handlers:CloudHandlers):void {
     if(!validId(value)||localStorage.getItem(CLIENT_KEY)!==value)
       throw new Error('先にMicrosoft EntraのClient IDを設定・保存してください。');
     const instance=await ensureMsal();
-    if(handlers.canNavigate){if(!handlers.canNavigate())return;}
-    else if(handlers.hasUnsavedChanges()&&!window.confirm('未保存の変更があります。Microsoft認証をやり直しますか？'))return;
+    const auth=authContext(),valid=handlers.confirmationContext();
+    if(handlers.canNavigate){if(!await handlers.canNavigate())return;}
+    else if(handlers.hasUnsavedChanges()&&!await confirmAction({title:'Microsoft認証をやり直しますか？',message:'未保存の変更があります。',acceptLabel:'再認証する',destructive:true}))return;
+    if(!auth()||!valid()||instance!==msal)return;
     const current=account();
     // Explicitly interactive even if cached credentials exist. No sign-out,
     // no clearing another account's cached token, no unattended redirect.
@@ -279,16 +299,18 @@ export function initCloudSettings(handlers:CloudHandlers):void {
   });});
   $('cloud-switch-account').addEventListener('click',()=>{void action(async()=>{
     const instance=await ensureMsal();
-    if(!window.confirm('別のMicrosoftアカウントに切り替えますか？現在の保管庫をロックします。'))return;
-    if(!handlers.onLock())return;
+    const auth=authContext();
+    if(!await confirmAction({title:'Microsoftアカウントを切り替えますか？',message:'現在の保管庫をロックします。',acceptLabel:'切り替える'})||!auth())return;
+    if(!await handlers.onLock()||!auth())return;
     // Only an explicit account switch asks Microsoft to show the selector.
     await instance.loginRedirect({scopes:SCOPES,prompt:'select_account'});
   });});
   $('cloud-logout').addEventListener('click',()=>{void action(async()=>{
     const user=account();if(!msal||!user)return;
-    if(!window.confirm('Microsoftアカウントからサインアウトしますか？未保存の変更は失われます。'))return;
-    if(!handlers.onLock())return;
-    await msal.logoutRedirect({account:user,postLogoutRedirectUri:appUri()});
+    const instance=msal,auth=authContext();
+    if(!await confirmAction({title:'Microsoftアカウントからサインアウトしますか？',message:'現在の保管庫をロックします。未保存の変更は失われます。',acceptLabel:'サインアウト',destructive:true})||!auth())return;
+    if(!await handlers.onLock()||!auth())return;
+    await instance.logoutRedirect({account:user,postLogoutRedirectUri:appUri()});
   });});
   $('cloud-folder-check').addEventListener('click',()=>{void action(async()=>{
     const button=$<HTMLButtonElement>('cloud-folder-check');
@@ -300,7 +322,6 @@ export function initCloudSettings(handlers:CloudHandlers):void {
       await Promise.race([request,new Promise<void>((_resolve,reject)=>{
         timer=setTimeout(()=>reject(new Error('接続確認が時間内に完了しませんでした。ネットワークを確認してください。')),15000);
       })]);
-      verified=true;
       status('保存先にアクセスできました。','ok');
     }finally {
       if(timer)clearTimeout(timer);
@@ -331,9 +352,13 @@ export function initCloudSettings(handlers:CloudHandlers):void {
     const input=$<HTMLInputElement>('cloud-passphrase');
     try {
     if(input.value.length<12)throw new Error('テスト用パスフレーズは12文字以上で入力してください。');
-    const {encrypted,probe}=await createEncryptedProbe(input.value);
-    if(!window.confirm('金融データを含まない暗号化テストファイルをOneDriveに保存します。続行しますか？'))return;
-    await (await graphClient()).uploadEncryptedProbe(encrypted);
+    const valid=handlers.confirmationContext(),auth=authContext(),password=input.value;
+    if(!await confirmAction({title:'暗号化テストファイルを保存しますか？',message:'金融データを含まない暗号化テストファイルをOneDriveに保存します。',acceptLabel:'保存する'})||!valid()||!auth()||input.value!==password)return;
+    const {encrypted,probe}=await createEncryptedProbe(password);
+    if(!valid()||!auth()||input.value!==password)return;
+    const client=await graphClient();
+    if(!valid()||!auth()||input.value!==password)return;
+    await client.uploadEncryptedProbe(encrypted);
     $('cloud-probe-result').textContent=`アップロード成功：${probe.createdAt} / ID ${probe.nonce}`;
     status('暗号化テストデータをアップロードしました。','ok');
     } finally {clearPasswordField('cloud-passphrase');}
@@ -357,9 +382,10 @@ export function initCloudSettings(handlers:CloudHandlers):void {
   const snapshotList=$('cloud-cleanup-snapshot-list');
   const backupConfirmed=$<HTMLInputElement>('cloud-cleanup-backup');
   let cleanupCounts:{generationCount:number;legacyFolderCount:number;unreferencedOriginalCount:number;legacyV1Count:number;snapshots:Array<{id:string;name:string;createdDateTime:string}>}|null=null;
+  let cleanupContext:(()=>boolean)|null=null;
   const selectedSnapshots=()=>Array.from(snapshotList.querySelectorAll<HTMLInputElement>('input[data-snapshot-id]:checked')).map(input=>input.dataset.snapshotId!);
   function invalidateCleanup():void {
-    cleanupCounts=null;cleanupOptions.classList.add('hidden');cleanupDelete.disabled=true;
+    cleanupCounts=null;cleanupContext=null;cleanupOptions.classList.add('hidden');cleanupDelete.disabled=true;
     oldGenerations.checked=false;unreferencedOriginals.checked=false;unversionedFolders.checked=false;legacyV1.checked=false;backupConfirmed.checked=false;
     snapshotList.replaceChildren();
   }
@@ -373,8 +399,10 @@ export function initCloudSettings(handlers:CloudHandlers):void {
   cleanupScan.addEventListener('click',()=>{void action(async()=>{
     invalidateCleanup();cleanupResult.textContent='暗号化ファイルを確認中…';cleanupScan.disabled=true;
     try {
+      const valid=handlers.confirmationContext(),auth=authContext();
       const counts=await handlers.onCleanupPreview();
-      cleanupCounts=counts;
+      if(!valid()||!auth())throw new Error('確認中に保管庫が変更されました。再調査してください。');
+      cleanupCounts=counts;cleanupContext=()=>valid()&&auth();
       $('cloud-cleanup-original-count').textContent=`（${counts.unreferencedOriginalCount}件）`;
       $('cloud-cleanup-version-count').textContent=`（${counts.generationCount}世代）`;
       $('cloud-cleanup-legacy-count').textContent=`（${counts.legacyFolderCount}フォルダ）`;
@@ -397,12 +425,14 @@ export function initCloudSettings(handlers:CloudHandlers):void {
     finally{cleanupScan.disabled=false;}
   });});
   cleanupDelete.addEventListener('click',()=>{void action(async()=>{
-    if(!cleanupCounts||!backupConfirmed.checked)throw new Error('対象を調査し、バックアップを確認してください。');
+    if(!cleanupCounts||!cleanupContext?.()||!backupConfirmed.checked)throw new Error('対象を調査し、バックアップを確認してください。');
     const which={oldGenerations:oldGenerations.checked,unreferencedOriginals:unreferencedOriginals.checked,unversionedFolders:unversionedFolders.checked,legacyV1:legacyV1.checked,snapshotIds:selectedSnapshots()};
     const count=(which.oldGenerations?cleanupCounts.generationCount:0)+
       (which.unreferencedOriginals?cleanupCounts.unreferencedOriginalCount:0)+(which.unversionedFolders?cleanupCounts.legacyFolderCount:0)+(which.legacyV1?cleanupCounts.legacyV1Count:0)+which.snapshotIds.length;
     if(!count)return;
-    if(window.prompt(`${count}件（世代フォルダはフォルダ単位）の暗号化データをOneDriveから削除します。復旧ができなくなる場合があります。実行するには「削除」と入力してください。`) !== '削除')return;
+    const preview=cleanupCounts;
+    if(!await confirmAction({title:'OneDriveの不要データを削除しますか？',message:`${count}件（世代フォルダはフォルダ単位）の暗号化データをOneDriveから削除します。復旧ができなくなる場合があります。すべての端末を最新版に更新し、旧版のタブを閉じてから実行してください。新版索引に切り替わると旧版では解除できません。`,acceptLabel:'削除する',destructive:true,requiredText:'削除'}))return;
+    if(cleanupCounts!==preview||!cleanupContext?.()||!backupConfirmed.checked||JSON.stringify(which)!==JSON.stringify({oldGenerations:oldGenerations.checked,unreferencedOriginals:unreferencedOriginals.checked,unversionedFolders:unversionedFolders.checked,legacyV1:legacyV1.checked,snapshotIds:selectedSnapshots()}))throw new Error('削除対象が変更されました。再確認してください。');
     invalidateCleanup();cleanupScan.disabled=true;
     try{
       const removed=await handlers.onCleanupDelete(which,message=>{cleanupResult.textContent=message;});
@@ -418,7 +448,8 @@ export function initCloudSettings(handlers:CloudHandlers):void {
     if(next.length<12)throw new Error('新しいパスフレーズは12文字以上にしてください。');
     if(next!==confirm)throw new Error('確認用のパスフレーズが一致しません。');
     if(current===next)throw new Error('現在と異なるパスフレーズを指定してください。');
-    if(!window.confirm('OneDrive内の明細・PDF原本・設定を再暗号化します。作業中は他の端末で操作しないでください。続行しますか？'))return;
+    if(!await confirmAction({title:'暗号化パスフレーズを変更しますか？',message:'OneDrive内の明細・PDF原本・設定を再暗号化します。すべての端末を最新版に更新し、旧版のタブを閉じてください。新版索引に切り替わると旧版では解除できません。',acceptLabel:'再暗号化する',destructive:true}))return;
+    if(current!==$<HTMLInputElement>('cloud-current-secret').value||next!==$<HTMLInputElement>('cloud-next-secret').value||confirm!==$<HTMLInputElement>('cloud-next-confirm').value)throw new Error('入力内容が変更されました。再確認してください。');
     const button=$<HTMLButtonElement>('cloud-rotate-submit');
     button.disabled=true;
     message.className='cloud-status';
@@ -441,7 +472,7 @@ export function initCloudSettings(handlers:CloudHandlers):void {
   });});
   $('cloud-live-refresh').addEventListener('click',()=>{void action(async()=>{await handlers.onRefresh();status('OneDriveから最新データを読み込みました。','ok');});});
   $('cloud-live-migrate').addEventListener('click',()=>{void action(handlers.onMigration);});
-  $('cloud-live-lock').addEventListener('click',()=>{if(!busy)handlers.onLock();});
+  $('cloud-live-lock').addEventListener('click',()=>{void action(async()=>{await handlers.onLock();});});
   updateUi();
   // Passive startup must not set the global 'busy' flag, otherwise a stalled
   // MSAL initialization disables reconnect/diagnostics in Settings indefinitely.

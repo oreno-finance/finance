@@ -83,5 +83,5 @@ test('UI cannot mark confirmation as a balance, expense or card funding entry',(
   assert.match(assetsSource,/sameEdit\('mizuho-funding'/);
   assert.match(css,/home-funding/);
   assert.match(fixed,/\.fixed-cost-guidance\{/);
-  assert.match(read('src/ui/subscriptions.ts'),/subscriptions-muted fixed-cost-guidance/);
+  assert.doesNotMatch(read('src/ui/subscriptions.ts'),/集計について/);
 });

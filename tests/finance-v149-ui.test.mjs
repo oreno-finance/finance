@@ -14,7 +14,7 @@ test('sidebar exposes both statement routes directly, with settings and Payroll 
   for(const name of ['nav-import','nav-manage'])assert.equal(sidebar.split(`id="${name}"`).length-1,1);
   assert.ok(sidebar.indexOf('id="nav-import"')<sidebar.indexOf('id="nav-manage"'));
   assert.match(sidebar,/id="nav-manage"[^>]*>[\s\S]*?<span class="nav-text">明細管理<\/span><\/button>/);
-  assert.match(sidebar,/id="nav-rules"[^>]*>[\s\S]*?<span class="nav-text">ルール<\/span><\/button>/);
+  assert.match(sidebar,/id="nav-rules"[^>]*>[\s\S]*?<span class="nav-text">利用先ルール<\/span><\/button>/);
   const bottom=sidebar.slice(sidebar.indexOf('class="sidebar-bottom-actions"'),sidebar.indexOf('class="sidebar-footer"'));
   assert.match(bottom,/id="nav-settings"/);
   assert.match(bottom,/id="nav-payroll"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/);
@@ -26,8 +26,8 @@ test('management pager navigates by a whole calendar month without rewriting imp
     assert.equal(html.split(`id="${id}"`).length-1,1,id);
   }
   assert.doesNotMatch(html,/id="manage-filter-(year|month)"/);
-  assert.match(main,/function manageShiftMonth\(offset:number\)/);
-  assert.match(main,/new Date\(Date\.UTC\(year,month-1\+offset,1\)\)/);
+  assert.match(main,/bindMonthNavigator\(\$\('manage-period-controls'\)/);
+  assert.doesNotMatch(main,/function manageShiftMonth/);
   assert.match(main,/return managerIndices\(context\)/);
 });
 
@@ -52,6 +52,6 @@ test('merchant rows remain one-line editable with secondary original and rule de
   assert.match(main,/manage-merchant-main/);
   assert.match(main,/manage-merchant-secondary/);
   assert.match(main,/原文：\$\{row\.merchant\}/);
-  assert.match(main,/s\.rows\.splice\(index, 1\)/);
+  assert.match(main,/s\.rows\.findIndex\(entry=>entry\.id===row\.id\)/);
   assert.match(css,/@media\(max-width:800px\)/);
 });

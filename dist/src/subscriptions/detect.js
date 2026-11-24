@@ -3,6 +3,7 @@
 import { CARDS } from '../models/types.js';
 import { displayMerchant, normalizeMerchant } from '../cloud/merchant-rules.js';
 import { cardRecurringKey, nisaRuleOnDay } from '../cloud/assets.js';
+import { contractMerchantKeys, contractPaymentHistory, paymentTermsOn } from '../fixed-costs/payment-history.js';
 import { importErrors } from '../importers/batch-policy.js';
 const periodNumber = (p) => Number(p.slice(0, 4)) * 12 + Number(p.slice(5, 7)) - 1;
 const validDate = (d) => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(`${d}T00:00:00Z`)) && new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) === d;
@@ -44,7 +45,7 @@ function eligibleCardChargeGroups(source, asOf) {
             // The issuer's original merchant survives display-rule renames.
             const key = cardRecurringKey(s.cardId, row.merchant);
             const group = groups.get(key) ?? { cardId: s.cardId, merchant, values: [] };
-            group.values.push({ period, amount: row.amount });
+            group.values.push({ period, amount: row.amount, usedOn: row.usedOn, paymentDate: s.paymentDate });
             groups.set(key, group);
         }
     }
@@ -61,6 +62,34 @@ export function latestRegisteredCardCharges(source, asOf = todayPeriod()) {
 }
 export function latestRegisteredCardCharge(source, key, asOf = todayPeriod()) {
     return latestRegisteredCardCharges(source, asOf).get(key) ?? null;
+}
+/** Match the actual usage date to the contract's routing history. */
+export function contractCardEvidence(source, today) {
+    const groups = eligibleCardChargeGroups(source, today.slice(0, 7));
+    return item => {
+        const observations = [];
+        if ('kind' in item && !item.enabled)
+            return observations;
+        const keys = new Set(contractPaymentHistory(item).flatMap(x => x.merchantKey ? [x.merchantKey] : []));
+        for (const key of keys) {
+            const group = groups.get(key);
+            if (!group)
+                continue;
+            for (const value of group.values) {
+                if (value.usedOn < item.startOn || value.usedOn > today || value.paymentDate > today || (item.endOn !== null && value.usedOn > item.endOn))
+                    continue;
+                const terms = paymentTermsOn(item, value.usedOn);
+                if (terms.payment === 'card' && terms.cardId === group.cardId && terms.merchantKey === key)
+                    observations.push({ ...value, cardId: group.cardId });
+            }
+        }
+        return observations.sort((a, b) => b.paymentDate.localeCompare(a.paymentDate) || b.usedOn.localeCompare(a.usedOn));
+    };
+}
+export function latestContractCardCharge(observations) {
+    const month = observations.reduce((latest, x) => x.period > latest ? x.period : latest, '');
+    const latest = observations.filter(x => x.period === month);
+    return latest.length === 1 ? { month, amount: latest[0].amount } : null;
 }
 /** Detection accepts only valid, confirmed, uniquely-billed statements. */
 export function detectCardSubscriptions(source, asOf = todayPeriod()) {
@@ -124,7 +153,8 @@ export function detectCardSubscriptions(source, asOf = todayPeriod()) {
 }
 export function pendingCardSubscriptions(source, asOf) {
     const decisions = source.assets.cardRecurringDecisions ?? {};
-    return detectCardSubscriptions(source, asOf).filter(candidate => !matchedCardRecurringDecision(decisions, candidate));
+    const registered = contractMerchantKeys(source.assets);
+    return detectCardSubscriptions(source, asOf).filter(candidate => !matchedCardRecurringDecision(decisions, candidate) && !registered.has(candidate.key));
 }
 export function subscriptionDecision(candidate, state, now = new Date().toISOString()) {
     return { cardId: candidate.cardId, merchant: candidate.key.slice(candidate.cardId.length + 1), label: candidate.merchant, amount: candidate.amount,

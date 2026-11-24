@@ -211,7 +211,9 @@ test('unregistered cards do not erase registered recurring expenses from the rep
  s.assets.recurring=[recurring('expense',9000)];
  const report=monthlyReport('2026-11',s);
  assert.equal(report.cardOutflow,null);
- assert.equal(report.monthlyBalance,241000);
+ assert.equal(report.recurringExpense,9000);
+ assert.equal(report.monthlyBalance,null);
+ assert.equal(report.referenceBalance,null);
 });
 test('possible overlapping card and recurring transaction is flagged but not silently dropped',()=>{
  const s=source([record('a')]);

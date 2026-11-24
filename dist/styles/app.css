@@ -608,9 +608,17 @@ body{overflow:hidden}
 .cloud-status-cell>span{display:block;color:var(--muted);font-size:11px;font-weight:670;margin-bottom:8px}
 .cloud-status-cell .cloud-account,.cloud-status-cell .cloud-probe-result{margin:0;background:none;border:0;border-radius:0;padding:0;min-width:0;color:var(--ink);font-size:13px;font-weight:740;line-height:1.7}
 .cloud-overview .cloud-status{margin:0 0 18px;padding:10px 13px;border-radius:8px;font-size:11px}
-/* Frequent actions are a predictable grid; account changes live on a separate row. */
-.cloud-primary-actions{display:grid;grid-template-columns:minmax(0,1.5fr) repeat(2,minmax(0,1fr));gap:9px;align-items:stretch}
-.cloud-primary-actions button{min-width:0;width:100%;min-height:41px;padding:10px 12px;border-radius:9px;font-size:12px;white-space:normal;overflow-wrap:anywhere;line-height:1.45}
+/* Measure the action panel, not the viewport: it shares a row with other settings. */
+.cloud-overview{container:cloud-connection / inline-size}
+.cloud-primary-actions{display:grid;grid-template-columns:minmax(0,1fr);gap:9px;align-items:stretch;grid-auto-rows:minmax(44px,auto)}
+.cloud-primary-actions>button{box-sizing:border-box;min-width:0;max-width:100%;width:100%;min-height:44px;margin:0;padding:9px 10px;border-radius:9px;font-size:12px;white-space:normal;overflow-wrap:anywhere;line-height:1.45;text-align:center}
+@container cloud-connection (min-width:240px){
+  .cloud-primary-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cloud-primary-actions :is(#cloud-resume-batch,#cloud-new-vault){grid-column:span 2}
+}
+@container cloud-connection (min-width:520px){
+  .cloud-primary-actions{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
 .cloud-account-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px 18px;flex-wrap:wrap;padding:6px 0 0;margin-top:7px}
 .cloud-account-actions .cloud-link-action{appearance:none;border:0;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:650;line-height:1.5;padding:5px 0;cursor:pointer}
 .cloud-account-actions .cloud-link-action:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
@@ -650,8 +658,6 @@ body{overflow:hidden}
   .cloud-overview-label{font-size:10px}
   .cloud-overview-info{grid-template-columns:1fr;gap:10px}
   .cloud-status-cell{padding:12px 14px}
-  .cloud-primary-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .cloud-primary-actions #cloud-login{grid-column:1/-1}
   .cloud-account-actions{justify-content:flex-start}
   .cloud-account-actions .cloud-link-action{min-height:40px;padding:9px 0}
   .cloud-advanced>summary{padding:15px 13px}
@@ -660,10 +666,6 @@ body{overflow:hidden}
   .cloud-advanced .cloud-button{min-width:0;width:100%}
 }
 
-@media(min-width:681px) and (max-width:1150px){
-  .cloud-primary-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .cloud-primary-actions #cloud-login{grid-column:1/-1}
-}
 
 /* Blank import state: no 550px archival list when everything is committed. */
 #import-view .statement-index-panel.is-empty{min-height:0;padding-bottom:21px}
@@ -711,7 +713,7 @@ body{overflow:hidden}
 .rules-item-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:13px}
 .rules-item-actions button{border:1px solid var(--line);border-radius:7px;background:var(--panel);padding:7px 12px;cursor:pointer;color:var(--ink);font:inherit;font-size:11px}
 .rules-item-actions button:hover{border-color:var(--accent)}
-.rules-item-actions .rules-remove{color:#b64d56}
+.rules-item-actions .rules-remove{color:var(--action-danger-ink)}
 .rules-disabled .rules-item-name{opacity:.62}
 .rules-tag{flex:0 0 auto;border-radius:999px;background:var(--panel);border:1px solid var(--line);padding:4px 8px;font-size:10px;color:var(--muted)}
 .rules-sync-status{font-size:11px;color:var(--muted);margin:15px 0 0;line-height:1.7}
@@ -770,7 +772,7 @@ body{overflow:hidden}
 .rules-category-row>select{max-width:none}
 .rules-category-actions{display:flex;gap:5px}
 .rules-category-actions button{border:1px solid var(--line);background:var(--panel);border-radius:8px;color:var(--ink);font:inherit;font-size:11px;font-weight:700;padding:7px 10px;cursor:pointer}
-.rules-category-actions button.category-delete{color:#b64d56}
+.rules-category-actions button.category-delete{color:var(--action-danger-ink)}
 .rules-category-actions button:hover{border-color:var(--accent)}
 .rules-category-create{display:grid;grid-template-columns:minmax(0,1fr) 110px auto;align-items:end;gap:10px;border-top:1px solid var(--line);padding-top:18px;margin-top:16px}
 .rules-category-create label{display:flex;flex-direction:column;gap:6px;color:var(--muted);font-size:11px;font-weight:700;min-width:0}
@@ -814,7 +816,7 @@ body{overflow:hidden}
 .categories-dialog-content{overflow:auto;padding:18px 24px;min-height:0}
 .categories-dialog .rules-category-list{display:flex;flex-direction:column;gap:7px}
 .categories-dialog .rules-category-row{grid-template-columns:13px minmax(0,1fr) 122px 48px;gap:10px;padding:7px 10px;border-radius:9px;background:var(--bg)}
-.categories-dialog .rules-category-row .category-delete{border:0;background:transparent;color:#b64d56;font:inherit;font-size:11px;font-weight:700;cursor:pointer;padding:7px 2px}
+.categories-dialog .rules-category-row .category-delete{border:0;background:transparent;color:var(--action-danger-ink);font:inherit;font-size:11px;font-weight:700;cursor:pointer;padding:7px 2px}
 .categories-dialog .rules-category-row input,.categories-dialog .rules-category-row select{height:33px}
 .categories-dialog .rules-category-create{grid-template-columns:minmax(0,1fr) 122px auto;align-items:end;gap:10px;padding-top:16px;margin-top:15px}
 .categories-dialog .rules-category-create>button{min-height:35px;padding:6px 12px}
@@ -869,7 +871,7 @@ body{overflow:hidden}
 .assets-history-row{display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid var(--line);padding:9px 0;font-size:10px;color:var(--ink)}
 .assets-history-row span{min-width:0;overflow-wrap:anywhere}
 .assets-item-button{background:var(--panel);color:var(--ink);border:1px solid var(--line);padding:7px 11px;border-radius:7px;cursor:pointer;font-size:11px;white-space:nowrap}
-.assets-item-button:hover{border-color:var(--accent)}.assets-item-button.danger{color:#c6535c}
+.assets-item-button:hover{border-color:var(--accent)}.assets-item-button.danger{color:var(--action-danger-ink)}
 .assets-recurring-grid{display:grid;grid-template-columns:minmax(320px,1fr) minmax(0,1.05fr);gap:18px;align-items:start}
 .assets-recurring-grid>.panel{min-width:0;padding:23px}.assets-recurring-grid .panel-heading{margin-bottom:17px}
 .assets-recurring-grid .rules-field select,.assets-recurring-grid .rules-field input{font-size:12px}
@@ -999,7 +1001,7 @@ body{overflow:hidden}
 .assets-payroll-panel .panel-heading h2{font-size:16px}
 .assets-payroll-panel .panel-heading p{font-size:11px;line-height:1.7;color:var(--muted);margin:4px 0 0}
 .assets-payroll-layout{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}
-.assets-payroll-layout form{min-width:0;border:1px solid var(--line);border-radius:12px;padding:14px;background:var(--bg);display:flex;flex-direction:column;gap:10px}
+.assets-payroll-layout form{min-width:0;border:1px solid var(--line);border-radius:12px;padding:14px;background:var(--panel);display:flex;flex-direction:column;gap:10px}
 .assets-payroll-layout input,.assets-payroll-layout select{min-width:0;max-width:100%;width:100%}
 .assets-payroll-layout .rules-field{min-width:0}
 .assets-payroll-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -1014,7 +1016,7 @@ body{overflow:hidden}
 .assets-payroll-summary[open] .assets-payroll-chevron{transform:rotate(180deg)}
 .assets-payroll-summary-body{padding:13px 14px 15px;border-top:1px solid var(--line)}
 .assets-payroll-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-.assets-payroll-metrics>div{min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
+.assets-payroll-metrics>div{min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
 .assets-payroll-metrics small{font-size:10px;color:var(--muted);display:block}
 .assets-payroll-metrics strong{font-size:13px;display:block;margin-top:5px;overflow-wrap:anywhere}
 .assets-payroll-summary h3{font-size:12px;margin:15px 0 8px;color:var(--ink)}
@@ -1097,10 +1099,6 @@ body{overflow:hidden}
 .monthly-heading .eyebrow{font-size:11px;letter-spacing:1.6px;font-weight:800;color:var(--accent)}
 .monthly-heading h1{margin:5px 0;font-size:28px;letter-spacing:-.7px;color:var(--ink)}
 .monthly-heading .lead{color:var(--muted);line-height:1.65;margin:3px 0}
-.monthly-controls{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
-.monthly-controls button,.monthly-controls input{border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink);min-height:38px;padding:7px 11px}
-.monthly-controls input{max-width:154px;min-width:135px}
-.monthly-controls button:hover{border-color:var(--accent)}
 .monthly-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px;margin-bottom:18px}
 .monthly-metric{min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:20px 17px;display:flex;flex-direction:column;gap:12px}
 .monthly-metric-label{font-size:12px;font-weight:700;color:var(--muted)}
@@ -1131,7 +1129,7 @@ body{overflow:hidden}
 .monthly-issue button{align-self:flex-start}
 .monthly-lock{padding:28px;line-height:1.8;color:var(--muted)}
 @media(max-width:1050px){.monthly-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:670px){.monthly-heading h1{font-size:24px}.monthly-paired{grid-template-columns:minmax(0,1fr)}.monthly-metrics{gap:9px}.monthly-metric{padding:13px}.monthly-metric-value{font-size:19px}.monthly-panel{padding:15px}.monthly-controls{width:100%}.monthly-controls input{flex:1}.monthly-line{font-size:12px}}
+@media(max-width:670px){.monthly-heading h1{font-size:24px}.monthly-paired{grid-template-columns:minmax(0,1fr)}.monthly-metrics{gap:9px}.monthly-metric{padding:13px}.monthly-metric-value{font-size:19px}.monthly-panel{padding:15px}.monthly-line{font-size:12px}}
 
 /* Accessible monthly-summary drilldown controls use the existing link treatment. */
 .monthly-bar-head .monthly-ranking-link{min-width:0;max-width:72%;overflow-wrap:anywhere;white-space:normal;font:inherit;font-weight:650}
@@ -1176,7 +1174,7 @@ body{overflow:hidden}
 /* File-first import with a compact, optional legacy paste workflow. */
 .import-panel{min-height:0}
 .import-methods{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
-.import-methods .import-paste-details{min-width:0;padding:0;border:1px solid var(--line);border-radius:12px;padding:0;overflow:hidden}
+.import-methods .import-paste-details{min-width:0;border:1px solid var(--line);border-radius:12px;padding:0;overflow:hidden}
 .import-paste-details>summary{cursor:pointer;padding:13px 16px;font-size:12px;font-weight:650;color:var(--ink)}
 .import-paste-details[open]>summary{border-bottom:1px solid var(--line)}
 .import-paste-body{display:grid;gap:10px;padding:13px 15px}
@@ -1394,7 +1392,7 @@ body{overflow:hidden}
   height:100%;
   border:1px solid var(--line);
   border-radius:12px;
-  background:var(--bg);
+  background:var(--panel);
 }
 .settings-view .assets-payroll-history-card{
   position:relative;
@@ -1938,15 +1936,6 @@ select:not([multiple]){
 .sidebar .sidebar-bottom-actions #nav-payroll{margin:0!important}
 .sidebar .sidebar-footer{margin-top:9px}
 
-/* Month navigation mirrors the monthly-summary pager, plus an all-months action. */
-.manage-period-controls{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
-.manage-period-controls button,.manage-period-controls input{color:var(--ink);background:var(--panel);
-  border:1px solid var(--line);border-radius:8px;font:inherit;font-size:11px;min-height:37px;padding:7px 10px}
-.manage-period-controls button{font-weight:700}
-.manage-period-controls button:hover,.manage-period-controls button.active{border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
-.manage-period-controls #manage-period{width:145px;min-width:0;max-width:100%;font-size:12px}
-.manage-period-controls #manage-prev-month,.manage-period-controls #manage-next-month{width:35px;font-size:19px;padding:1px 5px}
-
 /* An ordered, editable list of aliases. No separator syntax to remember. */
 .rules-form-panel .rule-pattern-editor{display:flex;flex-direction:column;align-items:stretch;gap:7px;margin-bottom:13px}
 .rules-form-panel #rule-pattern,.rules-form-panel .rule-pattern-row input{width:100%;min-width:0;height:39px;
@@ -2009,14 +1998,14 @@ select:not([multiple]){
   .manage-editor .manage-merchant-secondary{display:flex;flex-wrap:wrap;gap:4px 10px}
   .manage-editor .manage-source-text{max-width:100%;white-space:normal;overflow-wrap:anywhere}
   .manage-editor #manage-rows td{padding:0!important;vertical-align:top}
-  .manage-period-controls{gap:5px}
-  .manage-period-controls #manage-period{flex:1 1 142px;max-width:175px}
+
+
 }
 @media(max-width:430px){
   .sidebar .sidebar-bottom-actions>.nav-entry{font-size:10.5px}
   .manage-editor .manage-merchant-main>input{flex-basis:100%;width:100%}
   .manage-editor .manage-merchant-main>.manage-rule-action{min-height:34px}
-  .manage-period-controls #manage-period{max-width:none;flex:1 1 130px}
+
 }
 
 /* SOURCE: layout-v150.css */
@@ -2820,7 +2809,7 @@ details[open] > summary::after{
 .assets-recurring-grid .recurring-account-row :is(input,select){min-width:0;width:100%;max-width:100%;box-sizing:border-box}
 
 /* An income entry has no withdrawal source or category, so fill the row with two inputs. */
-.assets-recurring-grid .recurring-account-row:has(#assets-recurring-from.hidden):has(#assets-category-wrap.hidden){grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.assets-recurring-grid .recurring-account-row:has(> .rules-field.hidden[for="assets-recurring-from"]){grid-template-columns:repeat(2,minmax(0,1fr))!important}
 
 /* All modal close crosses have the same unfussy appearance. */
 #assets-once-close,#categories-dialog-close,#recent-merchants-close{
@@ -2843,7 +2832,7 @@ html.assets-once-page-locked,html.assets-once-page-locked body{overflow:hidden!i
   .assets-links-grid>.assets-link-card{padding:12px!important}
 }
 @media(max-width:420px){
-  .assets-recurring-grid .recurring-account-row{grid-template-columns:minmax(0,1fr)!important}
+  .assets-recurring-grid .recurring-account-row,.assets-recurring-grid .recurring-account-row:has(> .rules-field.hidden[for="assets-recurring-from"]){grid-template-columns:minmax(0,1fr)!important}
 }
 
 /* SOURCE: ui-v160.css */
@@ -3193,7 +3182,7 @@ html.assets-once-page-locked,html.assets-once-page-locked body{overflow:hidden!i
     flex-direction:column;
   }
   #manage-view .manage-index > .panel-heading,
-  #manage-view .manage-index > .manage-period-controls {flex:0 0 auto}
+  #manage-view > .manage-period-controls {flex:0 0 auto}
   #manage-view .manage-index > .statement-list {
     flex:1 1 0;
     min-height:0!important;
@@ -3500,11 +3489,6 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 .assets-links-grid{grid-template-columns:minmax(0,1fr)}
 .assets-links-grid>.assets-card-debits{height:auto}
 .future-birth-settings{align-self:flex-start;padding:3px 0}
-/* Month switcher uses the same touch target and arrow proportions as statement management. */
-@media(max-width:800px){
-  .monthly-controls{gap:5px}
-  .monthly-controls #monthly-prev,.monthly-controls #monthly-next{width:35px;min-width:35px;height:37px;min-height:37px;padding:1px 5px;font-size:19px;font-weight:700;line-height:1}
-}
 @media(max-width:650px){
   .settings-nisa-panel{padding:15px}
   .settings-nisa-panel .assets-nisa-fields{grid-template-columns:minmax(0,1fr)}
@@ -3746,7 +3730,7 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 .reports-period-button.selected{border-color:var(--accent);color:var(--accent)}
 .reports-memo-label{font-size:12px;font-weight:700}
 .reports-memo{width:100%;min-height:85px;max-width:100%;background:var(--panel);color:var(--ink);font-size:13px}
-.reports-panel .primary-action{width:auto;display:inline-flex;justify-content:center;margin:0}
+.reports-panel .save-action{width:auto;display:inline-flex;justify-content:center;margin:0}
 .reports-panel .secondary-action{width:fit-content}
 .reports-revision-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .reports-feedback{margin:0;font-size:12px;color:var(--accent)}
@@ -3944,6 +3928,26 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 .assets-reconcile-card .assets-reconcile-action{align-self:flex-start;font-size:11px;padding:8px 11px;border:1px solid var(--line);border-radius:9px;color:var(--accent);background:var(--panel);font-weight:700;cursor:pointer}
 @media(max-width:500px){.assets-reconcile-figures{grid-template-columns:minmax(0,1fr)}.assets-reconcile-figure{flex-direction:row;align-items:baseline;justify-content:space-between;gap:8px}}
 
+/* Payroll: one settings panel, separate forms retain their own submit semantics. */
+.settings-view .settings-payroll-body{padding:18px 20px 20px}
+.settings-payroll-content{display:grid;gap:18px;min-width:0}
+.settings-payroll-form,.settings-payroll-section{min-width:0;margin:0}
+.settings-payroll-section{padding-top:18px;border-top:1px solid var(--line)}
+.settings-payroll-fields{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:12px;min-width:0}
+.settings-payroll-fields>.rules-field{margin:0;min-width:0}
+.settings-payroll-fields :is(input,select){width:100%;min-width:0;height:42px;text-align:left;text-align-last:left}
+.settings-view .settings-payroll-fields>button{width:auto;min-width:0;margin:0;height:42px;align-self:end;white-space:nowrap}
+.settings-payroll-actions{display:flex;justify-content:flex-end;margin-top:8px}
+.settings-payroll-section>h3{font-size:13px;margin:0 0 12px}
+.settings-payroll-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0}
+.settings-payroll-metrics>div{min-width:0}
+.settings-payroll-metrics dt{font-size:11px;color:var(--muted)}
+.settings-payroll-metrics dd{margin:5px 0 0;font-size:13px;font-weight:700;overflow-wrap:anywhere}
+.settings-payroll-body .assets-operation-status:empty{display:none}
+@media(max-width:800px){.settings-payroll-fields :is(input,select),.settings-payroll-fields>button{height:44px}}
+@media(max-width:720px){.settings-view .settings-payroll-body{padding:13px}}
+@media(max-width:630px){.settings-payroll-fields{grid-template-columns:minmax(0,1fr)}.settings-view .settings-payroll-fields>button{justify-self:end}}
+
 /* SOURCE: layout-v195.css */
 /* Finance v1.9.5: consistent compact navigation and card settings layout. */
 .finance-period-nav{display:inline-flex;align-items:center;gap:7px;min-width:0;flex-wrap:wrap}
@@ -3953,7 +3957,8 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 }
 .finance-period-nav>button{min-width:39px;display:inline-flex;align-items:center;justify-content:center;font-weight:650}
 .finance-period-nav>input,.finance-period-nav>select{width:148px;min-width:0;max-width:148px;font-variant-numeric:tabular-nums}
-.finance-period-nav>button:not(:disabled):hover{border-color:var(--accent);background:var(--accent-bg)}
+.finance-period-nav>button[aria-label="前月"],.finance-period-nav>button[aria-label="翌月"],.finance-period-nav>button[aria-label="前年"],.finance-period-nav>button[aria-label="翌年"]{width:39px;padding:1px 5px;font-size:19px;line-height:1}
+.finance-period-nav>button[aria-pressed="true"],.finance-period-nav>button:not(:disabled):hover{border-color:var(--accent);background:var(--accent-bg)}
 .finance-period-nav>:is(button,input,select):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .finance-period-nav>button:disabled{opacity:.4;cursor:not-allowed}
 .reports-controls,.analysis-controls{gap:10px;align-items:center}
@@ -3971,7 +3976,9 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
  .settings-view .card-setting-secondary-fields{grid-template-columns:minmax(0,1fr)}
  .finance-period-nav>input,.finance-period-nav>select{width:145px;max-width:145px}
 }
-@media(max-width:390px){.finance-period-nav{gap:5px}.finance-period-nav>button{min-width:35px;padding:7px}.finance-period-nav>input,.finance-period-nav>select{max-width:132px;width:132px}}
+@media(max-width:390px){.finance-period-nav{gap:5px}.finance-period-nav>button{min-width:39px;padding:7px}.finance-period-nav>input,.finance-period-nav>select{max-width:132px;width:132px}}
+
+#manage-view > .finance-period-nav{margin:0 0 14px;max-width:100%;align-self:flex-start}
 
 /* SOURCE: layout-v196.css */
 /* Finance 1.9.7: statement import uses document-area scrolling with content-sized children. */
@@ -4088,7 +4095,7 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 #cloud-live-bar,#operation-result {display:none!important}
 .toast.activity-toast {
   display:flex!important;position:fixed!important;z-index:300!important;
-  right:22px!important;bottom:86px!important;top:auto!important;left:auto!important;
+  right:22px!important;bottom:calc(16px + env(safe-area-inset-bottom,0px))!important;top:auto!important;left:auto!important;
   align-items:center;gap:11px;width:max-content;max-width:min(430px,calc(100vw - 28px));
   padding:13px 16px!important;margin:0!important;border:1px solid #405267!important;
   border-radius:13px!important;background:#18263c!important;color:#f4f8fc!important;
@@ -4120,7 +4127,7 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
   cursor:pointer;line-height:1;display:grid;place-items:center}
 .activity-toast .activity-dismiss:hover{background:#ffffff2b}
 .activity-toast .activity-dismiss:focus-visible{outline:2px solid #b7e5fc;outline-offset:1px}
-@media(max-width:800px){.toast.activity-toast{bottom:76px!important;right:12px!important;max-width:calc(100vw - 24px)}}
+@media(max-width:800px){.toast.activity-toast{bottom:calc(12px + env(safe-area-inset-bottom,0px))!important;right:12px!important;max-width:calc(100vw - 24px)}}
 @media(prefers-reduced-motion:reduce){.toast.activity-toast{transition:none!important}.activity-toast[data-kind="working"] .activity-icon{animation-duration:1.8s}}
 
 /* SOURCE: layout-v1910.css */
@@ -4296,7 +4303,7 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 .points-benefits{min-width:0;padding:17px 19px;display:grid;gap:11px}
 .points-benefits-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .points-benefits-heading h2{font-size:15px;margin:0;color:var(--ink)}
-.points-benefits-heading>strong{font-size:clamp(19px,2.4vw,26px);color:var(--accent);font-variant-numeric:tabular-nums}
+.points-benefits-heading>strong{font-size:16px;color:var(--accent);font-variant-numeric:tabular-nums}
 .points-benefits-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(210px,100%),1fr));gap:8px}
 .points-benefits-row{min-width:0;display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--bg)}
 .points-benefits-card{display:flex;flex-direction:column;gap:4px;min-width:0}
@@ -4562,7 +4569,7 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 /* Quiet secondary documentation. Overrides inherited subscriptions large-note styles. */
 #subscriptions-view .fixed-cost-guidance{font-size:12px!important;line-height:1.55!important;font-weight:400!important;color:var(--muted,#687387);margin:13px 0 0}
 #summary-view > .monthly-heading.finance-page-heading{display:block!important;align-items:initial!important;justify-content:initial!important;margin-bottom:12px}
-#summary-view > .monthly-controls.finance-period-nav{display:flex;justify-content:flex-start;align-items:center;flex-wrap:wrap;gap:8px;width:fit-content;max-width:100%;margin:0 0 20px}
+#summary-view > .monthly-controls.finance-period-nav{display:flex;justify-content:flex-start;align-items:center;flex-wrap:wrap;width:fit-content;max-width:100%;margin:0 0 20px}
 #summary-view > .monthly-controls #monthly-report-open{width:auto;flex:0 0 auto}
 .fixed-cost-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .fixed-cost-metric{display:grid;gap:6px;min-width:0;padding:16px;border:1px solid var(--line,#dde2e8);border-radius:12px;background:var(--panel,#fff)}
@@ -4582,9 +4589,9 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 .fixed-cost-form{padding:20px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px;overflow-y:auto;max-height:min(90dvh,820px)}
 .fixed-cost-form h2,.fixed-cost-form .fixed-cost-form-actions,.fixed-cost-form .fixed-cost-form-error{grid-column:1/-1;margin:0}
 .fixed-cost-form h2{font-size:1.4rem;margin-bottom:4px}
-.fixed-cost-field{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:12px;font-weight:650}
+.fixed-cost-field{display:flex;flex-direction:column;gap:7px;min-width:0;font-size:12px;font-weight:650;color:var(--muted)}
 .fixed-cost-field[hidden]{display:none!important}
-.fixed-cost-field input,.fixed-cost-field select,.fixed-cost-field textarea{box-sizing:border-box;max-width:100%;width:100%;min-height:39px;border:1px solid var(--line,#bdc7d2);border-radius:9px;background:var(--panel,#fff);color:inherit;padding:8px;font:inherit;font-size:14px}
+.fixed-cost-field input,.fixed-cost-field select,.fixed-cost-field textarea{box-sizing:border-box;max-width:100%;width:100%;min-height:42px;border:1px solid var(--line);border-radius:9px;background-color:var(--panel);color:var(--ink);padding:9px 12px;font:inherit;font-size:13px}
 .fixed-cost-field textarea{min-height:70px;resize:vertical}
 .fixed-cost-field:has([name="name"]),.fixed-cost-field:has([name="note"]){grid-column:1/-1}
 .fixed-cost-form-error{color:var(--danger,#bd3e43);font-size:12px;min-height:0}
@@ -4592,16 +4599,53 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 .fixed-cost-form-actions button{min-height:40px;padding:8px 18px}
 @media(max-width:620px){.fixed-cost-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.fixed-cost-metric:last-child{grid-column:1/-1}.fixed-cost-toolbar .subscriptions-tabs{width:100%;flex-wrap:nowrap;overflow-x:auto}.fixed-cost-toolbar .subscriptions-tab{flex:0 0 auto;white-space:nowrap}.fixed-cost-form{padding:15px;gap:10px}.fixed-cost-item{align-items:flex-start}.fixed-cost-item-price{text-align:right}}
 @media(max-width:360px){.fixed-cost-form{grid-template-columns:1fr}.fixed-cost-field{grid-column:1/-1}.fixed-cost-metrics{grid-template-columns:1fr}.fixed-cost-metric:last-child{grid-column:auto}}
-.fixed-cost-detail{padding:20px;display:grid;gap:14px;max-height:min(90dvh,820px);overflow:auto}
-.fixed-cost-detail h2{font-size:1.3rem;overflow-wrap:anywhere}
-.fixed-cost-detail h3{font-size:.95rem;margin-top:8px}
-.fixed-cost-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.fixed-cost-detail-pair{display:grid;gap:4px;min-width:0}
-.fixed-cost-detail-pair span{font-size:12px;color:var(--muted,#687387)}
-.fixed-cost-detail-pair strong{font-size:15px;overflow-wrap:anywhere}
 .fixed-cost-detail-line{display:flex;gap:12px;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--line,#dde2e8);font-size:13px}
 .fixed-cost-detail-line strong{white-space:nowrap}
-@media(max-width:360px){.fixed-cost-detail-grid{grid-template-columns:1fr}}
+
+/* Purpose-specific contract forms and read-only bank cost references. */
+.fixed-cost-form .fixed-cost-equivalent{grid-column:1/-1;font-size:12px;color:var(--muted);margin:0;overflow-wrap:anywhere}
+.fixed-cost-form-actions{flex-wrap:wrap}
+.assets-fixed-cost-reference{margin-top:18px}
+.assets-fixed-cost-reference .panel-heading{flex-wrap:wrap;gap:10px}
+.assets-fixed-cost-reference .assets-recurring-item>.assets-item-button{align-self:flex-start;margin-top:6px}
+
+/* Dated payment terms and read-only point rate history. */
+.card-setting-rate-history-line>div{display:grid;gap:4px;min-width:0;overflow-wrap:anywhere}
+.card-setting-rate-history-list{font-size:12px;min-width:0;overflow-wrap:anywhere}
+.card-setting-rate-history-list small{color:var(--muted);font-size:11px}
+.card-setting-rate-history-line{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)}
+.card-setting-rate-history-line b{white-space:nowrap}
+.card-setting-rate-edit{min-width:0}
+.card-setting-rate-edit>summary{cursor:pointer;font-weight:600;min-height:32px}
+.card-setting-rate-edit[open]>.card-setting-field{margin-top:8px}
+
+/* Shared registration and editing: three peer fields per row. */
+.fixed-cost-dialog:has(>.fixed-cost-create-mode){width:min(calc(100vw - 24px),840px);max-width:840px}
+/* Native select text alignment varies by browser. Keep the shared arrow and
+   explicitly align the selected value to the same leading edge as text inputs. */
+.fixed-cost-form .fixed-cost-field select{text-align:left;text-align-last:left}
+.fixed-cost-form .fixed-cost-field :is(input,select,textarea):focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+@media(min-width:801px){
+  .fixed-cost-create-mode{grid-template-columns:repeat(12,minmax(0,1fr));align-items:start}
+  .fixed-cost-create-mode>.fixed-cost-field,.fixed-cost-create-mode>.fixed-cost-price-choices{grid-column:span 4}
+  .fixed-cost-create-mode>.fixed-cost-field:has(:is([name="name"],[name="note"])){grid-column:1/-1}
+  .fixed-cost-create-mode[data-method="cash"]>.fixed-cost-field:has([name="method"]),
+  .fixed-cost-create-mode:not([data-method="card"])>.fixed-cost-field:has([name="category"]){grid-column:span 8}
+  .fixed-cost-create-mode[data-frequency="yearly"]>.fixed-cost-field:has(:is([name="frequency"],[name="startOn"],[name="month"],[name="day"])){grid-column:span 3}
+}
+@media(max-width:800px){.fixed-cost-create-mode{grid-template-columns:minmax(0,1fr)}.fixed-cost-create-mode>.fixed-cost-field,.fixed-cost-create-mode>.fixed-cost-price-choices{grid-column:1/-1}.fixed-cost-create-mode .fixed-cost-field :is(input,select){min-height:44px}}
+
+.fixed-cost-form .fixed-cost-equivalent{white-space:pre-line}
+.fixed-cost-form .fixed-cost-histories{grid-column:1/-1;min-width:0}
+.fixed-cost-history{border-top:1px solid var(--line);padding:10px 0}
+.fixed-cost-status-history,.fixed-cost-status-history+.fixed-cost-history{border-top:0}
+.fixed-cost-history.fixed-cost-status-history .fixed-cost-detail-line{border-bottom:0}
+.fixed-cost-history>summary{font-size:13px;font-weight:650;cursor:pointer}
+.fixed-cost-history .fixed-cost-detail-line{align-items:start;overflow-wrap:anywhere}
+.fixed-cost-history .fixed-cost-detail-line strong{white-space:normal;text-align:right;min-width:0}
+.fixed-cost-form-actions>.danger-action{margin-right:auto}
+.fixed-cost-form-actions>[hidden],.fixed-cost-histories[hidden]{display:none!important}
+@media(min-width:801px){.fixed-cost-create-mode>.fixed-cost-field:has(:is([name="priceAction"],[name="paymentAction"],[name="paymentDate"],[name="status"],[name="statusDate"])){grid-column:span 6}}
 
 /* SOURCE: cloud-gate-v1980.css */
 /* Finance v1.9.81: One consistent, full-width disconnected/locked layout.
@@ -4645,3 +4689,176 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
     flex:0 0 auto!important;
   }
 }
+
+/* Grouped navigation: preserve icon positions across collapsed and peek states.
+   Keep the complete rail reachable on short desktop and mobile viewports. */
+#finance-sidebar .nav-section-label{flex:0 0 auto;font-size:10px;font-weight:700;letter-spacing:.04em;color:#b5c2d1;line-height:16px;white-space:nowrap}
+@media(min-width:801px){
+  .app-shell #finance-sidebar.sidebar{overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
+  #finance-sidebar .nav-section-label{height:16px;margin:8px 0 3px;padding:0 12px}
+  #finance-sidebar .sidebar-bottom-actions{flex:0 0 auto;margin-top:auto;padding-top:0!important;border-top:0}
+  #finance-sidebar .sidebar-footer{flex:0 0 auto;margin-top:10px!important}
+  #finance-sidebar .nav-entry{flex-shrink:0}
+}
+@media(max-width:800px){
+  #finance-sidebar .mobile-nav-panel>.nav-section-label,
+  #finance-sidebar .mobile-nav-panel>.sidebar-bottom-actions>.nav-section-label{display:block!important;order:0!important;margin:9px 0 2px;padding:0 13px}
+}
+
+/* Shared action roles. Keep page-specific dimensions, not page-specific destructive colors.
+   save-action: commit/confirm; secondary-action: auxiliary; text-button: lightweight;
+   danger-action: destructive; primary-action is the legacy full-width parser CTA. */
+:root{--action-danger-ink:#a52d37;--action-danger-border:#e6b5ba;--action-danger-bg:#fff7f7;--action-danger-hover:#fce6e8}
+[data-theme="dark"]{--action-danger-ink:#ffb7bd;--action-danger-border:#81515b;--action-danger-bg:#35272f;--action-danger-hover:#4a303a}
+button.danger-action{color:var(--action-danger-ink);border:1px solid var(--action-danger-border);background:var(--action-danger-bg);border-radius:9px;font-weight:700}
+button.danger-action:not(.manage-row-delete,.rules-remove,.category-delete,.assets-item-button){min-height:39px;padding:9px 14px}
+button.danger-action:not(:disabled):hover{background:var(--action-danger-hover);border-color:var(--action-danger-ink);color:var(--action-danger-ink)}
+button:is(.save-action,.secondary-action,.danger-action,.text-button,.primary-action):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* Shared native-modal headings, actions and safe confirmation surface. */
+.finance-modal-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;grid-column:1/-1}
+.finance-modal-head h2{min-width:0;margin:0;overflow-wrap:anywhere}
+.finance-modal-x{flex:0 0 40px;width:40px;height:40px;display:grid;place-items:center;border:0;background:transparent;color:var(--muted);font-size:25px;line-height:1;padding:0;border-radius:8px}
+.finance-modal-x:hover{color:var(--ink);background:var(--soft)}
+.finance-modal-x:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.finance-confirm-dialog{box-sizing:border-box;position:fixed;inset:0;margin:auto;width:min(460px,calc(100vw - 28px));max-height:calc(100dvh - 28px);overflow:auto;overscroll-behavior:contain;padding:20px;border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--ink);box-shadow:0 18px 50px #0004}
+.finance-confirm-dialog::backdrop{background:rgba(12,24,42,.52)}
+.finance-confirm-dialog:not([open]){display:none}
+.finance-confirm-dialog h2{font-size:18px;line-height:1.5}
+.finance-confirm-message{margin:12px 0 20px;font-size:14px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+.finance-confirm-typed{display:grid;gap:8px;margin:0 0 16px;font-size:13px;color:var(--ink)}
+.finance-confirm-typed input{width:100%;min-width:0;box-sizing:border-box;min-height:44px}
+.finance-modal-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:10px}
+.finance-modal-actions button{min-height:44px;padding:9px 16px;max-width:100%;white-space:normal}
+@media(max-width:420px){.finance-confirm-dialog{padding:16px}.finance-modal-actions button{flex:1 1 110px}}
+
+/* Final UI: action dimensions are shared across workspaces. Compact row controls
+   and navigation retain their own sizes; only the action roles are normalized. */
+:root{--finance-action-height:40px;--finance-action-font:13px;--finance-modal-close-size:40px}
+@media(max-width:800px){:root{--finance-action-height:44px;--finance-modal-close-size:44px}}
+body button:is(.save-action,.secondary-action,.danger-action,.primary-action):not(:is(.manage-row-delete,.rules-remove,.category-delete,.assets-item-button,.finance-modal-x)){
+  font-size:var(--finance-action-font)!important;min-height:var(--finance-action-height)!important;height:auto!important;
+  border-radius:var(--radius-control);font-weight:700;white-space:normal;overflow-wrap:anywhere;
+}
+/* The dedicated connection grid deliberately keeps its >=44px touch targets. */
+body #cloud-view .cloud-primary-actions button{min-height:44px!important}
+body dialog.finance-confirm-dialog .finance-modal-actions button{min-height:44px!important}
+body dialog :is(.finance-modal-x,#import-add-close,#assets-once-close,#categories-dialog-close,#recent-merchants-close){
+  width:var(--finance-modal-close-size)!important;height:var(--finance-modal-close-size)!important;
+  min-width:var(--finance-modal-close-size)!important;min-height:var(--finance-modal-close-size)!important;
+  flex:0 0 var(--finance-modal-close-size)!important;font-size:25px!important;line-height:1!important;
+  display:grid!important;place-items:center!important;padding:0!important;margin:0!important;
+  border:0!important;background:transparent!important;color:var(--muted)!important;box-shadow:none!important;border-radius:8px!important;
+}
+body dialog :is(.finance-modal-x,#import-add-close,#assets-once-close,#categories-dialog-close,#recent-merchants-close):hover{color:var(--ink)!important;background:var(--bg)!important}
+body dialog :is(.finance-modal-x,#import-add-close,#assets-once-close,#categories-dialog-close,#recent-merchants-close):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+dialog :is(.finance-modal-head,.import-add-head,.categories-dialog-head,.recent-merchants-heading,.assets-once-modal-head){align-items:center;gap:12px}
+dialog :is(.finance-modal-head,.import-add-head,.categories-dialog-head,.recent-merchants-heading,.assets-once-modal-head) h2{font-size:18px;line-height:1.5;margin:0;min-width:0;overflow-wrap:anywhere}
+#rules-category-status:empty{margin:0}
+@media(min-width:631px){.categories-dialog-actions{margin-inline-start:auto}}
+.rules-list-tools{justify-content:flex-end}
+
+/* Polish 2: compact financial state and optional details. */
+#home-view .home-funding-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+#home-view .home-funding-amount{font-size:24px;font-variant-numeric:tabular-nums;line-height:1.3}
+#home-view .home-funding-controls button{min-height:40px;font-size:13px}
+.monthly-chart-date-controls{margin:6px 0}
+.monthly-chart-date-controls .monthly-chart-dates{margin-top:8px}
+.reports-previous-reminder{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 8px}
+.reports-revision-bar{flex-wrap:wrap;gap:8px}
+.points-benefits > .points-benefits-empty{margin:8px 0 0}
+@media(max-width:720px){#home-view .home-funding-controls button{min-height:44px}}
+#home-view .home-funding-heading .home-section-title{margin:0}
+
+/* Polish 3: compact account/contract management without changing controls. */
+.fixed-cost-next{white-space:pre-line}
+.future-step #future-age-value{font-size:19px;font-weight:800;font-variant-numeric:tabular-nums}
+.future-step :is(#future-target-label,#future-scenario-hint){margin:0;overflow-wrap:anywhere}
+.future-step :is(#future-target-label,#future-scenario-hint):empty{display:none}
+.future-annual-list{border:1px solid var(--line);border-radius:12px;min-width:0;overflow:hidden}
+.future-annual-list>summary{padding:13px 16px;font-size:13px;font-weight:700;cursor:pointer}
+.settings-view .cloud-overview-info{grid-template-columns:minmax(0,1fr);gap:10px}
+.settings-view #cloud-auth-state{margin:0;font-size:14px;font-weight:720;overflow-wrap:anywhere;color:var(--ink)}
+.settings-view #cloud-auth-state:is([data-state="reauth"],[data-state="temporary"],[data-state="restore"],[data-state="mismatch"]){color:var(--warning,#b7791f)}
+.card-setting-rate-history-list>summary{font-weight:600;cursor:pointer;font-size:12px;min-height:32px}
+.assets-reconcile-footnote>summary{cursor:pointer;font-weight:650}
+.assets-reconcile-footnote>p{margin:8px 0 0}
+@media(max-width:480px){.settings-view .cloud-overview-info{grid-template-columns:minmax(0,1fr)}}
+
+/* Keep all fixed-cost tabs reachable at narrow widths, including 320px. */
+@media(max-width:620px){.fixed-cost-toolbar .subscriptions-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%;min-width:0;overflow:visible}.fixed-cost-toolbar .subscriptions-tab{min-width:0;white-space:normal;padding:10px 8px;overflow-wrap:anywhere}}
+
+/* Acceptance polish: small contextual controls, one continuous settings disclosure. */
+.settings-view #cloud-account{font-size:15px;font-weight:700;color:var(--ink);margin:0;overflow-wrap:anywhere}
+.settings-view .cloud-status-inline{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 8px;margin-top:5px;font-size:11px;color:var(--muted)}
+.settings-view .cloud-status-inline :is(#cloud-live-status,#cloud-auth-state){font-size:12px;font-weight:600;margin:0}
+.settings-view #cloud-auth-state[data-state="connected"]{display:none}
+.settings-view .cloud-primary-actions:has(#cloud-login.hidden):has(#cloud-reauth.hidden){grid-template-columns:repeat(auto-fit,minmax(min(140px,100%),1fr))}
+.settings-view .cloud-auth-diagnostic-output{font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted);margin:0 0 12px}
+#home-view .home-funding-review{border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+#home-view .home-metric small{font-size:10px;line-height:1.45}
+#manage-view .manage-toolbar-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+#manage-view .manage-row-delete{width:30px;min-width:30px;height:30px;min-height:30px;padding:0;border:0;background:transparent;border-radius:7px;box-shadow:none;font-size:21px;line-height:1;color:var(--muted);text-align:center}
+#manage-view .manage-row-delete:hover,#manage-view .manage-row-delete:focus-visible{color:var(--danger,#b74754);background:var(--bg)}
+#manage-view .manage-editor .transaction-table .col-operation{width:44px}
+:is(#import-view .statement-index-panel,#manage-view .manage-index){padding-inline:12px!important}
+:is(#import-view,#manage-view) .statement-list{padding-inline:1px!important;scrollbar-gutter:auto}
+.assets-reconcile-shared{font-size:11px;color:var(--muted);margin:6px 0 12px;padding:0 16px;line-height:1.6}
+#assets-fixed-cost-list .assets-recurring-item{display:grid;gap:6px;padding:13px;min-width:0;overflow-wrap:anywhere}
+#assets-fixed-cost-list .assets-recurring-top{margin:0;min-width:0}
+#assets-fixed-cost-list .assets-recurring-top>b{white-space:nowrap}
+#assets-fixed-cost-list .assets-recurring-route{margin:0}
+#assets-fixed-cost-list .assets-recurring-actions{display:flex;justify-content:flex-end;gap:8px}
+.assets-fixed-cost-reference{padding:18px 16px;min-width:0}
+.fixed-cost-registered-item{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto 1fr;align-items:start;gap:6px 12px}
+.fixed-cost-registered-item .fixed-cost-item-info{grid-column:1;grid-row:1 / span 2;min-width:0;align-self:center}
+.fixed-cost-registered-item .fixed-cost-item-price{grid-column:2;grid-row:2;justify-self:end;align-self:end;min-width:0;text-align:right}
+.fixed-cost-registered-item .fixed-cost-item-price>strong{white-space:nowrap}
+.fixed-cost-registered-item .fixed-cost-item-actions{grid-column:2;grid-row:1;justify-self:end}
+.fixed-cost-edit-icon{width:34px;height:34px;min-height:34px!important;min-width:34px;display:grid;place-items:center;border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:8px;padding:0;font-size:21px;line-height:1}
+.fixed-cost-edit-icon:hover,.fixed-cost-edit-icon:focus-visible{color:var(--accent);border-color:var(--accent)}
+@media(max-width:800px){#manage-view .manage-row-delete{width:36px;min-width:36px;height:36px;min-height:36px}.fixed-cost-edit-icon{width:40px;height:40px;min-height:40px!important}}
+@media(max-width:480px){.fixed-cost-registered-item{padding:12px;gap:6px 8px}.fixed-cost-registered-item .fixed-cost-item-price>strong{font-size:14px}}
+
+/* Acceptance 2: compact, consistent form geometry and action alignment. */
+.settings-nisa-panel .assets-nisa-fields{grid-template-columns:minmax(0,1fr) minmax(0,1.35fr) auto;align-items:end;gap:12px}
+.settings-nisa-panel .assets-nisa-fields>.rules-field{margin:0}
+.settings-nisa-panel .assets-nisa-fields>#assets-nisa-save{width:auto;white-space:nowrap;min-width:0;margin:0;height:42px;align-self:end}
+.settings-nisa-panel .assets-nisa-actions{justify-content:flex-end;margin-top:8px}
+.future-panel .future-planner{align-items:stretch;min-width:0}
+.future-panel #future-scenario-accordion{grid-column:1/-1;width:100%;min-width:0;box-sizing:border-box;margin:0}
+.future-panel #future-scenario-settings{min-width:0;box-sizing:border-box;width:100%}
+.future-panel .future-scenario-fields{grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));min-width:0}
+.future-panel .future-scenario-choices{min-width:0;flex-wrap:wrap}
+.future-panel .future-scenario-fields>label{min-width:0;overflow-wrap:anywhere}
+.future-panel .future-step[aria-label="予測する年齢"]{justify-content:flex-start;min-height:140px}
+.fixed-cost-price-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;min-width:0;border:0;padding:0;margin:0}
+.fixed-cost-price-choices[hidden]{display:none!important}
+.fixed-cost-price-choices legend{font-size:12px;font-weight:650;color:var(--muted);margin-bottom:7px;padding:0}
+.fixed-cost-price-choice{display:flex;align-items:center;justify-content:flex-start;gap:5px;min-width:0;min-height:42px;padding:6px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink);font-size:12px;font-weight:650;cursor:pointer}
+.fixed-cost-price-choice:has(input:checked){border-color:var(--accent);background:var(--accent-bg)}
+.fixed-cost-price-choice:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+.fixed-cost-price-choice input{flex:0 0 16px;width:16px;height:16px;margin:0;accent-color:var(--accent)}
+.fixed-cost-edit-icon{background:transparent;border:0;box-shadow:none}
+#manage-view .manage-editor .manage-foot{display:flex!important;flex-direction:row;align-items:center;justify-content:flex-start;flex-wrap:wrap}
+#manage-view .manage-editor .manage-foot p{flex:1 0 100%;min-width:0}
+#manage-view .manage-editor .manage-foot button{width:auto;min-width:0;align-self:auto}
+#manage-view #manage-save{margin-left:auto}
+#manage-view #manage-delete{order:0}
+#manage-view #manage-original-download{order:1}
+#manage-view #manage-save{order:2}
+#import-view .import-batch-actions{justify-content:flex-end;width:auto;align-self:flex-end}
+#import-view .import-batch-actions>button{flex:0 0 auto;width:auto;min-width:0}
+#import-view #batch-import{min-width:84px;width:auto}
+.card-setting-rate-edit{display:grid;gap:8px}
+.card-setting-rate-edit>.card-setting-field{max-width:none}
+.settings-view .cloud-advanced-content>.cloud-cleanup-panel{margin:12px 0;min-width:0}
+@media(max-width:800px){.settings-nisa-panel .assets-nisa-fields :is(input,select),.settings-nisa-panel .assets-nisa-fields>#assets-nisa-save{height:44px}}
+@media(max-width:630px){.settings-nisa-panel .assets-nisa-fields{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.settings-nisa-panel .assets-nisa-fields>#assets-nisa-save{grid-column:1/-1;justify-self:end}.future-panel .future-step[aria-label="予測する年齢"]{min-height:120px}}
+@media(max-width:360px){.settings-nisa-panel .assets-nisa-fields{grid-template-columns:minmax(0,1fr)}}
+
+@media(min-width:1000px){.future-panel .future-planner{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Align settings form actions with the adjacent fields despite global action sizing. */
+body .settings-payroll-fields>button:is(.save-action,.secondary-action){min-height:42px!important}
+@media(max-width:800px){body .settings-payroll-fields>button:is(.save-action,.secondary-action){min-height:44px!important}}

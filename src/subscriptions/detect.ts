@@ -4,6 +4,7 @@ import { CARDS } from '../models/types.js';
 import { displayMerchant, normalizeMerchant } from '../cloud/merchant-rules.js';
 import { cardRecurringKey, nisaRuleOnDay, type CardRecurringDecision } from '../cloud/assets.js';
 import type { MonthlySource } from '../summary/monthly-summary.js';
+import {contractMerchantKeys, contractPaymentHistory, paymentTermsOn, type ContractOrigin} from '../fixed-costs/payment-history.js';
 import { importErrors } from '../importers/batch-policy.js';
 
 export interface SubscriptionCandidate {
@@ -16,7 +17,7 @@ const validDate=(d:string|null)=>!!d&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&!Number.isN
 const close=(a:number,b:number)=>Math.abs(a-b)<=Math.max(100,Math.round(Math.min(a,b)*0.08));
 const median=(items:number[])=>[...items].sort((a,b)=>a-b)[Math.floor(items.length/2)]!;
 const todayPeriod=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;};
-interface Observation {period:string; amount:number}
+interface Observation {period:string; amount:number; usedOn:string; paymentDate:string}
 interface Group {cardId:string;merchant:string;values:Observation[]}
 /** A single evidence pipeline for suggestions and registered charge comparisons.
  * This never edits a saved decision and excludes unsafe/ambiguous source records. */
@@ -46,7 +47,7 @@ function eligibleCardChargeGroups(source:MonthlySource,asOf:string):Map<string,G
       // The issuer's original merchant survives display-rule renames.
       const key=cardRecurringKey(s.cardId,row.merchant);
       const group=groups.get(key)??{cardId:s.cardId,merchant,values:[]};
-      group.values.push({period,amount:row.amount});groups.set(key,group);
+      group.values.push({period,amount:row.amount,usedOn:row.usedOn,paymentDate:s.paymentDate!});groups.set(key,group);
     }
   }
   return groups;
@@ -69,6 +70,29 @@ export function latestRegisteredCardCharge(source:MonthlySource,key:string,asOf=
   return latestRegisteredCardCharges(source,asOf).get(key)??null;
 }
 
+/** Match the actual usage date to the contract's routing history. */
+export function contractCardEvidence(source:MonthlySource,today:string): (item:ContractOrigin)=>readonly (Observation & {cardId:string})[] {
+  const groups=eligibleCardChargeGroups(source,today.slice(0,7));
+  return item=>{
+    const observations:Array<Observation & {cardId:string}>=[];
+    if('kind' in item&&!item.enabled)return observations;
+    const keys=new Set(contractPaymentHistory(item).flatMap(x=>x.merchantKey?[x.merchantKey]:[]));
+    for(const key of keys){
+      const group=groups.get(key);if(!group)continue;
+      for(const value of group.values){
+        if(value.usedOn<item.startOn||value.usedOn>today||value.paymentDate>today||(item.endOn!==null&&value.usedOn>item.endOn))continue;
+        const terms=paymentTermsOn(item,value.usedOn);
+        if(terms.payment==='card'&&terms.cardId===group.cardId&&terms.merchantKey===key)observations.push({...value,cardId:group.cardId});
+      }
+    }
+    return observations.sort((a,b)=>b.paymentDate.localeCompare(a.paymentDate)||b.usedOn.localeCompare(a.usedOn));
+  };
+}
+export function latestContractCardCharge(observations:readonly Observation[]):LatestRegisteredCharge|null {
+  const month=observations.reduce((latest,x)=>x.period>latest?x.period:latest,'');
+  const latest=observations.filter(x=>x.period===month);
+  return latest.length===1?{month,amount:latest[0]!.amount}:null;
+}
 /** Detection accepts only valid, confirmed, uniquely-billed statements. */
 export function detectCardSubscriptions(source:MonthlySource,asOf=todayPeriod()):SubscriptionCandidate[]{
   const groups=eligibleCardChargeGroups(source,asOf);
@@ -118,7 +142,8 @@ export function detectCardSubscriptions(source:MonthlySource,asOf=todayPeriod())
 }
 export function pendingCardSubscriptions(source:MonthlySource,asOf?:string):SubscriptionCandidate[]{
   const decisions=source.assets.cardRecurringDecisions??{};
-  return detectCardSubscriptions(source,asOf).filter(candidate=>!matchedCardRecurringDecision(decisions,candidate));
+  const registered=contractMerchantKeys(source.assets);
+  return detectCardSubscriptions(source,asOf).filter(candidate=>!matchedCardRecurringDecision(decisions,candidate)&&!registered.has(candidate.key));
 }
 export function subscriptionDecision(candidate:SubscriptionCandidate,state:CardRecurringDecision['state'],now=new Date().toISOString()):CardRecurringDecision {
   return {cardId:candidate.cardId,merchant:candidate.key.slice(candidate.cardId.length+1),label:candidate.merchant,amount:candidate.amount,

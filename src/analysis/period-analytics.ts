@@ -1,8 +1,8 @@
 /** Read-only cross-period analysis. Finance's payment-date monthlyReport remains the source of truth.
  * Never turn absent statements, income or future projections into verified zeroes. */
-import {changePeriod,monthlyReport,isValidPeriod,prepareMonthlyReports,type PreparedMonthlyReports,type MonthlyReport,type MonthlySource} from '../summary/monthly-summary.js';
+import {changePeriod,monthlyReport,monthlyCashflow,hasScheduledSalary,isValidPeriod,prepareMonthlyReports,type CashflowCoverage,type PreparedMonthlyReports,type MonthlyReport,type MonthlySource} from '../summary/monthly-summary.js';
 
-export type AnalysisCoverage='missing'|'partial'|'review'|'provisional'|'registered';
+export type AnalysisCoverage=CashflowCoverage;
 export type AnalysisDimension='card'|'category'|'merchant';
 export interface AnalysisMonth {
   period:string;
@@ -55,24 +55,10 @@ function sum(values:(number|null)[]):number|null {
   const valid=values.filter((v):v is number=>v!==null);
   return valid.length?valid.reduce(add,0):null;
 }
-function status(report:MonthlyReport,period:string):AnalysisCoverage{
-  if(report.cardOutflow===null)return report.recurringExpense+report.oneTimeExpense>0?'partial':'missing';
-  if(report.issues.some(item=>item.month===period)||report.unknownConfirmationCount||report.recurringCardOverlap)return 'review';
-  if(report.provisional.length)return 'provisional';
-  return 'registered';
-}
 function asMonth(period:string,source:MonthlySource,prepared:PreparedMonthlyReports):AnalysisMonth{
   const report=monthlyReport(period,source,prepared);
-  const coverage=status(report,period);
-  const expense=report.cardOutflow===null?
-    (report.recurringExpense+report.oneTimeExpense>0?add(report.recurringExpense,report.oneTimeExpense):null):
-    add(add(report.cardOutflow,report.recurringExpense),report.oneTimeExpense);
-  const livingExpense=report.livingOutflow===null?
-    (report.recurringExpense+report.oneTimeExpense>0?add(report.recurringExpense,report.oneTimeExpense):null):
-    add(add(report.livingOutflow,report.recurringExpense),report.oneTimeExpense);
-  const income=report.income;
-  return {period,report,coverage,income,expense,livingExpense,
-    balance:income===null||expense===null||report.monthlyBalance===null?null:report.monthlyBalance,
+  const {coverage,expense,livingExpense,balance}=monthlyCashflow(report);
+  return {period,report,coverage,income:report.income,expense,livingExpense,balance,
     nisa:report.cardOutflow===null?null:report.nisaOutflow};
 }
 function createGroups(months:AnalysisMonth[],dimension:AnalysisDimension):AnalysisGroup[]{
@@ -82,7 +68,7 @@ function createGroups(months:AnalysisMonth[],dimension:AnalysisDimension):Analys
     item.report.merchants.map(merchant=>({id:merchant.name,label:merchant.name,amount:merchant.amount})));
   records.forEach((items,index)=>{
     for(const item of items){
-      const group=groups.get(item.id)??{id:item.id,label:item.label,amounts:months.map(m=>dimension==='card'&&(m.report.cardOutflow===null)||m.coverage==='missing'?null:0)};
+      const group=groups.get(item.id)??{id:item.id,label:item.label,amounts:months.map(m=>m.report.cardOutflow===null?null:0)};
       group.label=item.label; // Latest configured display name.
       group.amounts[index]=add(group.amounts[index]??0,item.amount);
       groups.set(item.id,group);
@@ -116,7 +102,7 @@ export function analyzePeriods(source:MonthlySource,periods:readonly string[],cu
   const livingExpense=sum(months.map(month=>month.livingExpense)),balance=sum(months.map(month=>month.balance));
   const nisa=sum(months.map(month=>month.nisa));
   const validExpenses=knownExpenses.map(item=>item.amount);
-  const comparable=months.every(month=>month.coverage==='registered'&&month.income!==null&&month.balance!==null&&month.report.incomeEstimates.length===0);
+  const comparable=months.every(month=>month.coverage==='registered'&&month.income!==null&&month.balance!==null&&month.report.incomeEstimates.length===0&&!hasScheduledSalary(month.report));
   const totals:AnalysisTotals={income,expense,livingExpense,balance,nisa,
     knownIncomeMonths:months.filter(month=>month.income!==null).length,
     knownExpenseMonths:knownExpenses.length,
@@ -153,9 +139,9 @@ export function comparableDelta(current:PeriodAnalytics,previous:PeriodAnalytics
   {amount:number;percent:number|null}|null{
   if(!previous||current.months.length!==previous.months.length)return null;
   const ready=(item:PeriodAnalytics)=>item.months.every(month=>metric==='income'
-    ?month.income!==null&&month.report.incomeEstimates.length===0
+    ?month.income!==null&&month.report.incomeEstimates.length===0&&!hasScheduledSalary(month.report)
     :metric==='expense'?month.coverage==='registered'&&month.expense!==null
-    :month.coverage==='registered'&&month.balance!==null&&month.report.incomeEstimates.length===0);
+    :month.coverage==='registered'&&month.balance!==null&&month.report.incomeEstimates.length===0&&!hasScheduledSalary(month.report));
   if(!ready(current)||!ready(previous))return null;
   const a=current.totals[metric],b=previous.totals[metric];
   if(a===null||b===null)return null;

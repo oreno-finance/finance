@@ -1,4 +1,6 @@
+import {recurringOccursOn,recurringEffectiveAmount} from './recurring-schedule.js';
 import { CARDS, type CardDefinition } from '../models/types.js';
+import {validatePaymentHistory,validateHistoricalMerchantRoutes,type PaymentChange} from '../fixed-costs/payment-history.js';
 import { validateFixedCosts, validatePricing, validatePauses, type PriceChange, type PausePeriod, type FixedCostEntry } from '../fixed-costs/contracts.js';
 /** Finance assets settings are independent from statements and merchant rules.
  * Snapshots are confirmed balances, not reconstructed transactions. */
@@ -52,6 +54,7 @@ export interface RecurringEntry {
   categoryId: string | null; // Display metadata only; not used for projection in v1.2.4.
   enabled: boolean;
   /** Optional historic pricing and suspension data; older vaults do not contain these fields. */
+  paymentHistory?: PaymentChange[];
   pricing?: PriceChange[];
   pauses?: PausePeriod[];
   priceKind?: 'fixed'|'variable';
@@ -79,12 +82,19 @@ export interface OneTimeEntry {
 export function oneTimeAccountDelta(entry:OneTimeEntry,accountId:AssetAccountId):number {
   return (entry.toAccountId===accountId?entry.amount:0)-(entry.fromAccountId===accountId?entry.amount:0);
 }
-/** A dated manual entry can confirm or replace an otherwise duplicate schedule. */
-export function recurringCoveredByOneTime(occurrence:RecurringEntry,day:string,entries:readonly OneTimeEntry[]=[]):boolean {
-  const name=occurrence.name.normalize('NFKC').trim().toLocaleLowerCase();
-  return entries.some(entry=>entry.date===day&&entry.kind===occurrence.kind&&
-    entry.amount===occurrence.amount&&entry.fromAccountId===occurrence.fromAccountId&&
-    entry.toAccountId===occurrence.toAccountId&&entry.name.normalize('NFKC').trim().toLocaleLowerCase()===name);
+/** Match only a unique one-off to a unique scheduled occurrence. Ambiguity
+ * never silently deletes another payment. Cash contracts have no bank route. */
+export function recurringOneTimeMatch(occurrence:RecurringEntry,day:string,entries:readonly OneTimeEntry[]=[],status?:OneTimeStatus,peers:readonly RecurringEntry[]=[occurrence]):'none'|'unique'|'ambiguous' {
+  const normalize=(name:string)=>name.normalize('NFKC').trim().toLocaleLowerCase();
+  const name=normalize(occurrence.name);
+  const sameRoute=(entry:Pick<RecurringEntry,'kind'|'fromAccountId'|'toAccountId'|'name'>|OneTimeEntry)=>entry.kind===occurrence.kind&&entry.fromAccountId===occurrence.fromAccountId&&entry.toAccountId===occurrence.toAccountId&&normalize(entry.name)===name;
+  const count=entries.filter(entry=>(status===undefined||entry.status===status)&&entry.date===day&&entry.amount===occurrence.amount&&sameRoute(entry)).length;
+  if(!count)return 'none';
+  const candidates=peers.filter(entry=>sameRoute(entry)&&recurringOccursOn(entry,day)&&recurringEffectiveAmount(entry,day)===occurrence.amount);
+  return count===1&&candidates.length===1?'unique':'ambiguous';
+}
+export function recurringCoveredByOneTime(occurrence:RecurringEntry,day:string,entries:readonly OneTimeEntry[]=[],status?:OneTimeStatus,peers?:readonly RecurringEntry[]):boolean {
+  return recurringOneTimeMatch(occurrence,day,entries,status,peers)==='unique';
 }
 export interface AssetsConflict {itemId:string;field:string;discarded:unknown;chosen:unknown;at:string}
 /** Explicit per-payment-month acknowledgement, not a real bank transfer. */
@@ -244,7 +254,7 @@ export interface AssetsDocument {
   fixedCosts?:FixedCostEntry[];
   /** Explicit tombstones prevent deleted contracts reappearing after cloud merge. */
   deletedFixedCosts?:string[];
-  format: 'finance-assets-v1';
+  format: 'finance-assets-v1'|'finance-assets-v2';
   snapshots: BalanceSnapshot[];
   recurring: RecurringEntry[];
   deletedSnapshots: string[];
@@ -326,7 +336,8 @@ export function validateRecurring(raw:RecurringEntry):RecurringEntry {
   const pricing=raw.pricing===undefined?undefined:validatePricing(raw.pricing,raw.startOn);
   const pauses=raw.pauses===undefined?undefined:validatePauses(raw.pauses,raw.startOn,raw.endOn);
   if(pricing&&pricing.at(-1)!.amount!==raw.amount)throw new Error('定期支出の料金履歴と最新金額が一致しません。');
-  return {...raw,name:raw.name.trim(),...(pricing?{pricing}:{}),...(pauses?{pauses}:{})};
+  const paymentHistory=validatePaymentHistory(raw.paymentHistory,raw);
+  return {...raw,name:raw.name.trim(),...(pricing?{pricing}:{}),...(pauses?{pauses}:{}),...(paymentHistory?{paymentHistory}:{})};
 }
 export function validateNisaCardRule(raw:unknown):NisaCardRule|null {
   if(raw==null)return null; // Existing finance-assets-v1 documents remain readable.
@@ -403,11 +414,17 @@ export function validateCardDebitAccounts(value:unknown):Record<string,AssetAcco
 export function validateAssets(raw:unknown):AssetsDocument {
   if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('資産設定の暗号データが不正です。');
   const doc=raw as AssetsDocument;
-  if(doc.format!=='finance-assets-v1'||!Array.isArray(doc.snapshots)||!Array.isArray(doc.recurring)||
+  if(!['finance-assets-v1','finance-assets-v2'].includes(doc.format)||!Array.isArray(doc.snapshots)||!Array.isArray(doc.recurring)||
     !Array.isArray(doc.deletedSnapshots)||!Array.isArray(doc.deletedRecurring)||!Array.isArray(doc.conflicts)||
     doc.snapshots.length>1000||doc.recurring.length>300||doc.deletedSnapshots.length>2500||doc.deletedRecurring.length>2500||doc.conflicts.length>300)
     throw new Error('資産設定の形式または件数が不正です。');
   const snapshots=doc.snapshots.map(validateSnapshot),recurring=doc.recurring.map(validateRecurring);
+  const fixedCosts=validateFixedCosts(doc.fixedCosts,doc.format==='finance-assets-v2');
+  const historyCount=[...recurring,...(fixedCosts??[])].reduce((n,x)=>n+(x.paymentHistory?.length??0),0);
+  if(historyCount>2048||(historyCount>0&&doc.format!=='finance-assets-v2'))throw new Error('固定費履歴の保存形式または件数が不正です。');
+  // A unified contract is still stored in exactly one original collection.
+  if(doc.format==='finance-assets-v2'&&recurring.some(x=>fixedCosts?.some(f=>f.id===x.id)))throw new Error('固定費の契約IDが重複しています。');
+  if(doc.format==='finance-assets-v2')validateHistoricalMerchantRoutes({recurring,fixedCosts});
   if(doc.cardNoUseMonths!==undefined&&(!Array.isArray(doc.cardNoUseMonths)||doc.cardNoUseMonths.length>240||
     doc.cardNoUseMonths.some(month=>typeof month!=='string'||!/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(month))))
     throw new Error('カード利用なし確認の形式が不正です。');
@@ -429,7 +446,7 @@ export function validateAssets(raw:unknown):AssetsDocument {
     doc.fixedCosts?.some(s=>deletedFixedCosts.includes(s.id)))throw new Error('削除済み設定と有効な設定が重複しています。');
   if(doc.conflicts.some(c=>!c||typeof c.itemId!=='string'||!idPattern.test(c.itemId)||typeof c.field!=='string'||c.field.length>50||typeof c.at!=='string'||!Number.isFinite(Date.parse(c.at))))
     throw new Error('資産設定の競合履歴が不正です。');
-  return {format:'finance-assets-v1',snapshots,recurring,deletedSnapshots,deletedRecurring,conflicts:clone(doc.conflicts),nisaCardRule:validateNisaCardRule(doc.nisaCardRule),
+  return {format:doc.format,snapshots,recurring,deletedSnapshots,deletedRecurring,conflicts:clone(doc.conflicts),nisaCardRule:validateNisaCardRule(doc.nisaCardRule),
     ...(doc.nisaCardRuleHistory!==undefined?{nisaCardRuleHistory:validateNisaRuleHistory(doc.nisaCardRuleHistory)}:{}),payrollDepositAccount:validatePayrollDepositAccount(doc.payrollDepositAccount),
     ...(validateMizuhoPlan(doc.mizuhoTransferPlan)?{mizuhoTransferPlan:validateMizuhoPlan(doc.mizuhoTransferPlan)}:{}),
     ...(doc.mizuhoFundingChecks!==undefined?{mizuhoFundingChecks:validateMizuhoFundingChecks(doc.mizuhoFundingChecks)}:{}),
@@ -439,7 +456,7 @@ export function validateAssets(raw:unknown):AssetsDocument {
     ...(doc.cardDebitAccounts!==undefined?{cardDebitAccounts:validateCardDebitAccounts(doc.cardDebitAccounts)}:{}),
     ...(doc.cardPreferences!==undefined?{cardPreferences:validateCardPreferences(doc.cardPreferences)}:{}),
     ...(doc.cardRecurringDecisions!==undefined?{cardRecurringDecisions:validateCardRecurringDecisions(doc.cardRecurringDecisions)}:{}),
-    ...(doc.fixedCosts!==undefined?{fixedCosts:validateFixedCosts(doc.fixedCosts)}:{}),
+    ...(doc.fixedCosts!==undefined?{fixedCosts}:{}),
     ...(doc.deletedFixedCosts!==undefined?{deletedFixedCosts}:{}),
     ...(doc.oneTime!==undefined?{oneTime}:{}),...(doc.deletedOneTime!==undefined?{deletedOneTime}:{})};
 }
@@ -455,17 +472,40 @@ export interface AssetsEditCollision { itemId:string; field:string }
 function nisaSettings(doc:AssetsDocument):NisaRuleSettings {
   return {nisaCardRule:doc.nisaCardRule??null,...(doc.nisaCardRuleHistory?.length?{nisaCardRuleHistory:doc.nisaCardRuleHistory}:{})};
 }
+/** A pre-start correction can move a contract between the two storage
+ * collections. The inactive collection retains a tombstone. Merge this logical
+ * identity as one unit, including after a move back or a subsequent deletion. */
+function relocatedContractIds(...docs:AssetsDocument[]):Set<string>{
+  const ids=new Set<string>();
+  for(const doc of docs){
+    const fixedDeleted=new Set(doc.deletedFixedCosts??[]),bankDeleted=new Set(doc.deletedRecurring);
+    for(const x of doc.recurring)if(x.kind==='expense'&&fixedDeleted.has(x.id))ids.add(x.id);
+    for(const x of doc.fixedCosts??[])if(bankDeleted.has(x.id))ids.add(x.id);
+    for(const id of bankDeleted)if(fixedDeleted.has(id))ids.add(id);
+  }
+  return ids;
+}
+function contractPlacement(doc:AssetsDocument,id:string){
+  return {bank:doc.recurring.find(x=>x.id===id),fixed:doc.fixedCosts?.find(x=>x.id===id),
+    bankDeleted:doc.deletedRecurring.includes(id),fixedDeleted:!!doc.deletedFixedCosts?.includes(id)};
+}
+function samePlacement(a:ReturnType<typeof contractPlacement>,b:ReturnType<typeof contractPlacement>):boolean{
+  const canonical=(value:unknown)=>JSON.stringify(value,(_key,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,v[k]])):v);
+  return canonical(a)===canonical(b);
+}
 export function detectAssetsEditCollisions(base:AssetsDocument,local:AssetsDocument,remote:AssetsDocument):AssetsEditCollision[] {
   const collisions:AssetsEditCollision[]=[];
+  const relocated=relocatedContractIds(base,local,remote);
   const mark=(itemId:string,field:string)=>{
     if(!collisions.some(c=>c.itemId===itemId&&c.field===field))collisions.push({itemId,field});
   };
   const sameEdit=(itemId:string,field:string,baseline:unknown,left:unknown,right:unknown)=>{
     if(!same(left,baseline)&&!same(right,baseline)&&!same(left,right))mark(itemId,field);
   };
-  const collection=<T extends {id:string}>(b:T[],l:T[],r:T[],bDeleted:string[],lDeleted:string[],rDeleted:string[],fields:(keyof T)[])=>{
+  const collection=<T extends {id:string}>(b:T[],l:T[],r:T[],bDeleted:string[],lDeleted:string[],rDeleted:string[],fields:(keyof T)[],contract=false)=>{
     const bm=new Map(b.map(x=>[x.id,x])),lm=new Map(l.map(x=>[x.id,x])),rm=new Map(r.map(x=>[x.id,x]));
     for(const id of new Set([...bm.keys(),...lm.keys(),...rm.keys(),...bDeleted,...lDeleted,...rDeleted])){
+      if(contract&&relocated.has(id))continue; // Atomic relocation conflicts fail closed in mergeAssets.
       const bv=bm.get(id),lv=lm.get(id),rv=rm.get(id);
       if(lDeleted.includes(id)&&rv&&!same(rv,bv))mark(id,'delete');
       if(rDeleted.includes(id)&&lv&&!same(lv,bv))mark(id,'delete');
@@ -476,11 +516,11 @@ export function detectAssetsEditCollisions(base:AssetsDocument,local:AssetsDocum
   collection(base.snapshots,local.snapshots,remote.snapshots,base.deletedSnapshots,local.deletedSnapshots,remote.deletedSnapshots,
     ['accountId','balance','observedAt']);
   collection(base.recurring,local.recurring,remote.recurring,base.deletedRecurring,local.deletedRecurring,remote.deletedRecurring,
-    ['name','amount','kind','fromAccountId','toAccountId','frequency','dayOfMonth','monthOfYear','weekday','startOn','endOn','categoryId','enabled','pricing','pauses','priceKind','note']);
+    ['name','amount','kind','fromAccountId','toAccountId','frequency','dayOfMonth','monthOfYear','weekday','startOn','endOn','categoryId','enabled','pricing','pauses','priceKind','note','paymentHistory'],true);
   collection(base.oneTime??[],local.oneTime??[],remote.oneTime??[],base.deletedOneTime??[],local.deletedOneTime??[],remote.deletedOneTime??[],
     ['date','name','amount','kind','status','categoryId','fromAccountId','toAccountId','cardFunding']);
   collection(base.fixedCosts??[],local.fixedCosts??[],remote.fixedCosts??[],base.deletedFixedCosts??[],local.deletedFixedCosts??[],remote.deletedFixedCosts??[],
-    ['name','payment','cardId','merchantKey','categoryId','frequency','dayOfMonth','monthOfYear','weekday','startOn','endOn','amount','priceKind','pricing','pauses','note','updatedAt']);
+    ['name','payment','cardId','merchantKey','categoryId','frequency','dayOfMonth','monthOfYear','weekday','startOn','endOn','amount','priceKind','pricing','pauses','note','updatedAt','paymentHistory'],true);
   sameEdit('nisa-card-rule','nisaCardRule',nisaSettings(base),nisaSettings(local),nisaSettings(remote));
   sameEdit('payroll-deposit-account','payrollDepositAccount',base.payrollDepositAccount??null,local.payrollDepositAccount??null,remote.payrollDepositAccount??null);
   sameEdit('payroll-auto-credential','payrollAutoPassphrase',base.payrollAutoPassphrase??null,local.payrollAutoPassphrase??null,remote.payrollAutoPassphrase??null);
@@ -528,7 +568,10 @@ export function mergeAssets(base:AssetsDocument,local:AssetsDocument,remote:Asse
         const key=String(k),baseline=bv?.[k],left=lv[k],right=rv[k];
         if(same(left,baseline))merged[key]=clone(right);
         else if(same(right,baseline)||same(left,right))merged[key]=clone(left);
-        else{merged[key]=clone(left);conflicts.push({itemId:id,field:key,discarded:clone(right),chosen:clone(left),at:now});}
+        else{
+          if(key==='paymentHistory')throw new Error('支払条件履歴が同時に変更されました。最新情報を取得して変更し直してください。');
+          merged[key]=clone(left);conflicts.push({itemId:id,field:key,discarded:clone(right),chosen:clone(left),at:now});
+        }
       }
       entries.push(merged as T);deleted.delete(id);
     }
@@ -536,12 +579,24 @@ export function mergeAssets(base:AssetsDocument,local:AssetsDocument,remote:Asse
   };
   const snapshots=mergeGroup(base.snapshots,local.snapshots,remote.snapshots,base.deletedSnapshots,local.deletedSnapshots,remote.deletedSnapshots,
     ['accountId','balance','observedAt']);
-  const recurring=mergeGroup(base.recurring,local.recurring,remote.recurring,base.deletedRecurring,local.deletedRecurring,remote.deletedRecurring,
-    ['name','amount','kind','fromAccountId','toAccountId','frequency','dayOfMonth','monthOfYear','weekday','startOn','endOn','categoryId','enabled','pricing','pauses','priceKind','note']);
+  const relocated=relocatedContractIds(base,local,remote);
+  const ordinary=<T extends {id:string}>(items:T[])=>items.filter(x=>!relocated.has(x.id));
+  const ordinaryDeleted=(ids:string[])=>ids.filter(id=>!relocated.has(id));
+  const recurring=mergeGroup(ordinary(base.recurring),ordinary(local.recurring),ordinary(remote.recurring),ordinaryDeleted(base.deletedRecurring),ordinaryDeleted(local.deletedRecurring),ordinaryDeleted(remote.deletedRecurring),
+    ['name','amount','kind','fromAccountId','toAccountId','frequency','dayOfMonth','monthOfYear','weekday','startOn','endOn','categoryId','enabled','pricing','pauses','priceKind','note','paymentHistory']);
   const oneTimes=mergeGroup(base.oneTime??[],local.oneTime??[],remote.oneTime??[],base.deletedOneTime??[],local.deletedOneTime??[],remote.deletedOneTime??[],
     ['date','name','amount','kind','status','categoryId','fromAccountId','toAccountId','cardFunding']);
-  const fixedCosts=mergeGroup(base.fixedCosts??[],local.fixedCosts??[],remote.fixedCosts??[],base.deletedFixedCosts??[],local.deletedFixedCosts??[],remote.deletedFixedCosts??[],
-    ['name','payment','cardId','merchantKey','categoryId','frequency','dayOfMonth','monthOfYear','weekday','startOn','endOn','amount','priceKind','pricing','pauses','note','updatedAt']);
+  const fixedCosts=mergeGroup(ordinary(base.fixedCosts??[]),ordinary(local.fixedCosts??[]),ordinary(remote.fixedCosts??[]),ordinaryDeleted(base.deletedFixedCosts??[]),ordinaryDeleted(local.deletedFixedCosts??[]),ordinaryDeleted(remote.deletedFixedCosts??[]),
+    ['name','payment','cardId','merchantKey','categoryId','frequency','dayOfMonth','monthOfYear','weekday','startOn','endOn','amount','priceKind','pricing','pauses','note','updatedAt','paymentHistory']);
+  for(const id of relocated){
+    const b=contractPlacement(base,id),l=contractPlacement(local,id),r=contractPlacement(remote,id);
+    const chosen=samePlacement(l,b)?r:samePlacement(r,b)||samePlacement(l,r)?l:null;
+    if(!chosen)throw new Error('固定費の支払方法または契約内容が同時に変更・削除されました。最新情報を取得してください。');
+    if(chosen.bank)recurring.entries.push(clone(chosen.bank));
+    if(chosen.fixed)fixedCosts.entries.push(clone(chosen.fixed));
+    if(chosen.bankDeleted)recurring.deleted.push(id);
+    if(chosen.fixedDeleted)fixedCosts.deleted.push(id);
+  }
   const baseline=nisaSettings(base),left=nisaSettings(local),right=nisaSettings(remote);
   let nisa:NisaRuleSettings;
   if(same(left,baseline))nisa=clone(right);
@@ -617,7 +672,7 @@ export function mergeAssets(base:AssetsDocument,local:AssetsDocument,remote:Asse
   const plan=same(lPlan,bPlan)?rPlan:lPlan;
   if(!same(lPlan,bPlan)&&!same(rPlan,bPlan)&&!same(lPlan,rPlan))
     conflicts.push({itemId:'mizuho-transfer-plan',field:'mizuhoTransferPlan',discarded:rPlan??null,chosen:lPlan??null,at:now});
-  return validateAssets({format:'finance-assets-v1',snapshots:snapshots.entries,recurring:recurring.entries,
+  return validateAssets({format:[base,local,remote].some(x=>x.format==='finance-assets-v2')?'finance-assets-v2':'finance-assets-v1',snapshots:snapshots.entries,recurring:recurring.entries,
     deletedSnapshots:snapshots.deleted,deletedRecurring:recurring.deleted,conflicts:conflicts.slice(-200),nisaCardRule,...(nisa.nisaCardRuleHistory?{nisaCardRuleHistory:nisa.nisaCardRuleHistory}:{}),payrollDepositAccount,payrollAutoPassphrase,
     ...(birthMonth?{birthMonth}:{}),...(Object.keys(accounts).length?{cardDebitAccounts:accounts}:{}),
     ...(Object.keys(cardPreferences).length?{cardPreferences}:{}),
@@ -642,15 +697,15 @@ export function describeAssetsEditCollisions(base:AssetsDocument,local:AssetsDoc
     if(typeof value==='object')return JSON.stringify(value).slice(0,90);
     return String(value).slice(0,65);
   };
-  const find=(doc:AssetsDocument,id:string):BalanceSnapshot|RecurringEntry|OneTimeEntry|undefined=>
-    [...doc.snapshots,...doc.recurring,...(doc.oneTime??[])].find(entry=>entry.id===id);
+  const find=(doc:AssetsDocument,id:string):BalanceSnapshot|RecurringEntry|OneTimeEntry|FixedCostEntry|undefined=>
+    [...doc.snapshots,...doc.recurring,...(doc.oneTime??[]),...(doc.fixedCosts??[])].find(entry=>entry.id===id);
   return collisions.map(item=>{
     const present=find(local,item.itemId)??find(remote,item.itemId)??find(base,item.itemId);
     let label=item.itemId;
     if(present){
       if('accountId' in present)label=`${ASSET_ACCOUNTS.find(a=>a.id===present.accountId)?.name??present.accountId}・${present.observedAt.slice(0,10)}の残高`;
       else if('date' in present)label=`${present.date}・${present.name}`;
-      else label=`定期入出金「${present.name}」`;
+      else label=`${'payment' in present?'固定費':'定期入出金'}「${present.name}」`;
     }else if(item.itemId==='mizuho-transfer-plan')label='みずほ送金予測';
     else if(item.itemId==='mizuho-funding')label=`みずほ銀行への${item.field}分送金確認`;
     else if(item.itemId==='card-preferences')label=`カード設定（${CARDS.find(c=>c.id===item.field)?.name??item.field}）`;

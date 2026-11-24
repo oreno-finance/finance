@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {emptyRules,validateRules,listCategories,validateCategory,mergeRules,categoryMeta} from '../dist/src/cloud/merchant-rules.js';
-import {LiveVault} from '../dist/src/cloud/live-vault.js';
+import {LiveVault} from './helpers/coordinated-vault.mjs';
 import {GraphError} from '../dist/src/cloud/onedrive-api.js';
 
 const id='cat-550e8400-e29b-41d4-a716-446655440000';

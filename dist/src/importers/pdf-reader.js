@@ -41,7 +41,8 @@ function joinPageItems(items) {
 /** The optional original is never handed to PDF.js: its worker may transfer/
  * detach the input ArrayBuffer. The caller can safely retain it for encrypted
  * original-PDF storage without reading the File/Blob a second time. */
-export async function parsePdfFile(file, originalBytes) {
+export async function parsePdfFile(file, originalBytes, signal) {
+    signal?.throwIfAborted();
     assertPdfLimits(file.size);
     if (originalBytes && originalBytes.byteLength !== file.size)
         throw new Error('PDF原本のバイト長が一致しません。');
@@ -54,9 +55,12 @@ export async function parsePdfFile(file, originalBytes) {
     catch {
         throw new Error('PDF.jsが見つかりません。ターミナルで npm install → npm run build を実行してください。');
     }
+    signal?.throwIfAborted();
     lib.GlobalWorkerOptions.workerSrc = new URL('../../vendor/pdfjs/pdf.worker.mjs', import.meta.url).href;
+    const data = originalBytes ? new Uint8Array(originalBytes) : new Uint8Array(await file.arrayBuffer());
+    signal?.throwIfAborted();
     const task = lib.getDocument({
-        data: originalBytes ? new Uint8Array(originalBytes) : new Uint8Array(await file.arrayBuffer()),
+        data,
         isEvalSupported: false,
         useSystemFonts: true,
         cMapUrl: new URL('../../vendor/pdfjs/cmaps/', import.meta.url).href,
@@ -64,12 +68,18 @@ export async function parsePdfFile(file, originalBytes) {
         standardFontDataUrl: new URL('../../vendor/pdfjs/standard_fonts/', import.meta.url).href,
         wasmUrl: new URL('../../vendor/pdfjs/wasm/', import.meta.url).href,
     });
+    let destruction = null;
+    const destroy = () => destruction ??= task.destroy();
+    const abort = () => { void destroy().catch(() => { }); };
+    signal?.addEventListener('abort', abort, { once: true });
     try {
         const pdf = await task.promise;
+        signal?.throwIfAborted();
         assertPdfLimits(file.size, pdf.numPages);
         const pages = [];
         for (let page = 1; page <= pdf.numPages; page++) {
             const text = await (await pdf.getPage(page)).getTextContent();
+            signal?.throwIfAborted();
             pages.push(joinPageItems(text.items).join('\n'));
         }
         const result = parseStatementText(pages.join('\n'), 'pdf', file.name);
@@ -79,6 +89,7 @@ export async function parsePdfFile(file, originalBytes) {
         return result;
     }
     finally {
-        await task.destroy();
+        signal?.removeEventListener('abort', abort);
+        await destroy();
     }
 }

@@ -1,14 +1,16 @@
+import { recurringForCalculation } from '../fixed-costs/payment-history.js';
 /** Read-only, event-by-event projection for the explicitly selected bank account.
  * No transaction is marked as bank-confirmed, and no debit account is inferred. */
 import { recurringCoveredByOneTime } from '../cloud/assets.js';
+import { payrollRole, payrollRoleLabel, payrollCoversRecurringSalary, recurringSalaryRole } from '../cloud/payroll-income.js';
 import { expectedMainSalaries } from '../cloud/salary-projection.js';
 import { recurringInMonth } from '../cloud/recurring-schedule.js';
 import { monthlyReport } from './monthly-summary.js';
+import { estimatedCardFixedBills, estimatedMizuhoFunding } from '../cloud/card-fixed-estimates.js';
 import { mizuhoTransferForBill } from '../cloud/mizuho-transfer.js';
 const dateOf = (iso) => { const d = new Date(iso); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const nextMonth = (period) => { const y = Number(period.slice(0, 4)), m = Number(period.slice(5)); return `${y + (m === 12 ? 1 : 0)}-${String(m === 12 ? 1 : m + 1).padStart(2, '0')}`; };
 const lastDay = (period) => `${period}-${String(new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5)), 0)).getUTCDate()).padStart(2, '0')}`;
-const payrollName = /給与|給料|salary|payroll/i;
 export function bankTimeline(period, source, today, work) {
     if (work && work.prepared.records !== source.records)
         throw new Error('口座推移の明細索引が一致しません。');
@@ -33,6 +35,7 @@ export function bankTimeline(period, source, today, work) {
     const add = (event) => { if (event.date > start && event.date <= end && Number.isSafeInteger(event.amount))
         all.push(event); };
     // Explicit account assignments prevent unrelated card payments from being deducted.
+    const recurring = recurringForCalculation(assets);
     for (let month = start.slice(0, 7); month <= nextMonth(period); month = nextMonth(month)) {
         const report = work?.reports.get(month) ?? monthlyReport(month, source, work?.prepared);
         for (const card of report.cardLines) {
@@ -47,18 +50,25 @@ export function bankTimeline(period, source, today, work) {
             if (transfer)
                 add({ date: transfer.date, title: 'みずほ銀行へ送金（予測）', amount: -transfer.amount, kind: 'transfer' });
         }
-        for (const occurrence of recurringInMonth(month, assets.recurring)) {
+        for (const occurrence of recurringInMonth(month, recurring)) {
             const r = occurrence.entry;
-            if (recurringCoveredByOneTime(r, occurrence.date, assets.oneTime))
+            if (recurringCoveredByOneTime(r, occurrence.date, assets.oneTime, undefined, recurring))
                 continue;
             // Payroll-sourced salaries take priority over duplicate manually scheduled income.
-            if (source.payroll.ready && r.kind === 'income' && r.toAccountId === assets.payrollDepositAccount && payrollName.test(r.name))
+            if (source.payroll.ready && payrollCoversRecurringSalary(r, occurrence.date, source.payroll.entries, assets.payrollDepositAccount))
                 continue;
             const delta = (r.toAccountId === 'rakuten-bank' ? r.amount : 0) - (r.fromAccountId === 'rakuten-bank' ? r.amount : 0);
             if (delta !== 0)
                 add({ date: occurrence.date, title: r.name, amount: delta, kind: 'recurring' });
         }
     }
+    const estimatedBills = estimatedCardFixedBills(assets, source.records, today, end);
+    for (const bill of estimatedBills) {
+        if (assets.cardDebitAccounts?.[bill.cardId] === 'rakuten-bank')
+            add({ date: bill.paymentDate, title: bill.name, amount: -bill.amount, kind: 'card', provisional: true });
+    }
+    for (const funding of estimatedMizuhoFunding(assets, source.records, today, end))
+        add({ date: funding.date, title: 'みずほ銀行へ送金（固定費から推定・未確定）', amount: -funding.amount, kind: 'transfer', provisional: true });
     for (const entry of assets.oneTime ?? []) {
         const delta = (entry.toAccountId === 'rakuten-bank' ? entry.amount : 0) - (entry.fromAccountId === 'rakuten-bank' ? entry.amount : 0);
         if (delta)
@@ -67,11 +77,11 @@ export function bankTimeline(period, source, today, work) {
     if (source.payroll.ready && assets.payrollDepositAccount === 'rakuten-bank') {
         for (const entry of source.payroll.entries) {
             if (entry.paidOn > start && entry.paidOn <= end)
-                add({ date: entry.paidOn, title: entry.employerId === 'main' ? '本業給与' : '副業給与', amount: entry.netPay, kind: 'salary' });
+                add({ date: entry.paidOn, title: `${payrollRoleLabel(payrollRole(entry))} · ${entry.kind === 'bonus' ? '賞与' : entry.kind === 'adjustment' ? '調整' : '給与'}`, amount: entry.netPay, kind: 'salary' });
         }
         for (const item of expectedMainSalaries(source.payroll.entries, today, end)) {
-            if (assets.recurring.some(r => r.enabled && r.kind === 'income' && r.toAccountId === 'rakuten-bank' && payrollName.test(r.name) &&
-                recurringInMonth(item.date.slice(0, 7), [r]).some(e => e.date === item.date)))
+            if (assets.recurring.some(r => r.toAccountId === 'rakuten-bank' && recurringSalaryRole(r) === 'main' &&
+                recurringInMonth(item.date.slice(0, 7), [r]).length > 0))
                 continue;
             add({ date: item.date, title: '本業給与（見込み）', amount: item.amount, kind: 'salary-estimate' });
         }
@@ -96,5 +106,6 @@ export function bankTimeline(period, source, today, work) {
     for (const day of days)
         minimum = Math.min(minimum, day.balance);
     return { startDay: start, startBalance: baseline.balance, endBalance: current, minimum, days,
-        missingCardAccounts: [...missing], warning: assets.payrollDepositAccount !== 'rakuten-bank' ? '給与振込先が楽天銀行以外、または未設定です。' : !source.payroll.ready ? 'Payroll未連携のため給与は含みません。' : null };
+        missingCardAccounts: [...missing], warning: [assets.payrollDepositAccount !== 'rakuten-bank' ? '給与振込先が楽天銀行以外、または未設定です。' : !source.payroll.ready ? 'Payroll未連携のため給与は含みません。' : null,
+            estimatedBills.some(b => { const funding = mizuhoTransferForBill(b, assets); return !!funding && funding.date < today; }) ? '推定請求の送金予定日が経過しているため、仮の送金は未反映です。' : null].filter(Boolean).join(' ') || null };
 }

@@ -13,7 +13,7 @@ test('encrypted cleanup actions reuse the shared OneDrive secondary button desig
     for(const id of ['cloud-cleanup-scan','cloud-cleanup-delete']){
       const button=html.match(new RegExp(`<button\\b[^>]*\\bid="${id}"[^>]*>`,'i'))?.[0];
       assert.ok(button,`${id}: button must exist`);
-      assert.match(button,/class="secondary-action cloud-button"/,`${id}: shared button classes`);
+      assert.match(button,id.endsWith('delete')?/class="secondary-action cloud-button danger-action"/:/class="secondary-action cloud-button"/,`${id}: shared button classes`);
       assert.match(button,/type="button"/,`${id}: must never submit a form`);
     }
     assert.match(html,/<button[^>]*id="cloud-folder-check"[^>]*class="secondary-action cloud-button"/);

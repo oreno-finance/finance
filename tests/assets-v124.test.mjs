@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
 import {emptyAssets, validateAssets, validateSnapshot, validateRecurring, latestBalance, mergeAssets} from '../dist/src/cloud/assets.js';
-import {LiveVault} from '../dist/src/cloud/live-vault.js';
+import {LiveVault} from './helpers/coordinated-vault.mjs';
 import {encryptAssets, decryptAssets, freshSalt, deriveCloudKey, encryptRules} from '../dist/src/cloud/cloud-crypto.js';
 import {emptyRules} from '../dist/src/cloud/merchant-rules.js';
 import {GraphError} from '../dist/src/cloud/onedrive-api.js';

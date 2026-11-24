@@ -83,7 +83,7 @@ export function homeActions(source, report, forecast, today) {
         if (!forecast.debits.some(card => card.cardId === cardId))
             continue;
         add({ id: `missing-account:${cardId}`, kind: 'card-account', severity: 'high',
-            title: `${getCard(cardId)?.name ?? 'カード'}の引落口座が未設定です`, target: 'assets' });
+            title: `${source.assets.cardPreferences?.[cardId]?.name ?? getCard(cardId)?.name ?? 'カード'}の引落口座が未設定です`, target: 'settings' });
     }
     for (const issue of report.issues) {
         add({ id: `invalid:${issue.id}`, kind: 'invalid-statement', severity: 'high', title: `${issue.title}の明細を確認`,

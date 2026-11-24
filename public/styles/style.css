@@ -606,9 +606,17 @@ body{overflow:hidden}
 .cloud-status-cell>span{display:block;color:var(--muted);font-size:11px;font-weight:670;margin-bottom:8px}
 .cloud-status-cell .cloud-account,.cloud-status-cell .cloud-probe-result{margin:0;background:none;border:0;border-radius:0;padding:0;min-width:0;color:var(--ink);font-size:13px;font-weight:740;line-height:1.7}
 .cloud-overview .cloud-status{margin:0 0 18px;padding:10px 13px;border-radius:8px;font-size:11px}
-/* Frequent actions are a predictable grid; account changes live on a separate row. */
-.cloud-primary-actions{display:grid;grid-template-columns:minmax(0,1.5fr) repeat(2,minmax(0,1fr));gap:9px;align-items:stretch}
-.cloud-primary-actions button{min-width:0;width:100%;min-height:41px;padding:10px 12px;border-radius:9px;font-size:12px;white-space:normal;overflow-wrap:anywhere;line-height:1.45}
+/* Measure the action panel, not the viewport: it shares a row with other settings. */
+.cloud-overview{container:cloud-connection / inline-size}
+.cloud-primary-actions{display:grid;grid-template-columns:minmax(0,1fr);gap:9px;align-items:stretch;grid-auto-rows:minmax(44px,auto)}
+.cloud-primary-actions>button{box-sizing:border-box;min-width:0;max-width:100%;width:100%;min-height:44px;margin:0;padding:9px 10px;border-radius:9px;font-size:12px;white-space:normal;overflow-wrap:anywhere;line-height:1.45;text-align:center}
+@container cloud-connection (min-width:240px){
+  .cloud-primary-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cloud-primary-actions :is(#cloud-resume-batch,#cloud-new-vault){grid-column:span 2}
+}
+@container cloud-connection (min-width:520px){
+  .cloud-primary-actions{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
 .cloud-account-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px 18px;flex-wrap:wrap;padding:6px 0 0;margin-top:7px}
 .cloud-account-actions .cloud-link-action{appearance:none;border:0;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:650;line-height:1.5;padding:5px 0;cursor:pointer}
 .cloud-account-actions .cloud-link-action:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
@@ -648,8 +656,6 @@ body{overflow:hidden}
   .cloud-overview-label{font-size:10px}
   .cloud-overview-info{grid-template-columns:1fr;gap:10px}
   .cloud-status-cell{padding:12px 14px}
-  .cloud-primary-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .cloud-primary-actions #cloud-login{grid-column:1/-1}
   .cloud-account-actions{justify-content:flex-start}
   .cloud-account-actions .cloud-link-action{min-height:40px;padding:9px 0}
   .cloud-advanced>summary{padding:15px 13px}
@@ -658,10 +664,6 @@ body{overflow:hidden}
   .cloud-advanced .cloud-button{min-width:0;width:100%}
 }
 
-@media(min-width:681px) and (max-width:1150px){
-  .cloud-primary-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .cloud-primary-actions #cloud-login{grid-column:1/-1}
-}
 
 /* Blank import state: no 550px archival list when everything is committed. */
 #import-view .statement-index-panel.is-empty{min-height:0;padding-bottom:21px}
@@ -709,7 +711,7 @@ body{overflow:hidden}
 .rules-item-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:13px}
 .rules-item-actions button{border:1px solid var(--line);border-radius:7px;background:var(--panel);padding:7px 12px;cursor:pointer;color:var(--ink);font:inherit;font-size:11px}
 .rules-item-actions button:hover{border-color:var(--accent)}
-.rules-item-actions .rules-remove{color:#b64d56}
+.rules-item-actions .rules-remove{color:var(--action-danger-ink)}
 .rules-disabled .rules-item-name{opacity:.62}
 .rules-tag{flex:0 0 auto;border-radius:999px;background:var(--panel);border:1px solid var(--line);padding:4px 8px;font-size:10px;color:var(--muted)}
 .rules-sync-status{font-size:11px;color:var(--muted);margin:15px 0 0;line-height:1.7}
@@ -768,7 +770,7 @@ body{overflow:hidden}
 .rules-category-row>select{max-width:none}
 .rules-category-actions{display:flex;gap:5px}
 .rules-category-actions button{border:1px solid var(--line);background:var(--panel);border-radius:8px;color:var(--ink);font:inherit;font-size:11px;font-weight:700;padding:7px 10px;cursor:pointer}
-.rules-category-actions button.category-delete{color:#b64d56}
+.rules-category-actions button.category-delete{color:var(--action-danger-ink)}
 .rules-category-actions button:hover{border-color:var(--accent)}
 .rules-category-create{display:grid;grid-template-columns:minmax(0,1fr) 110px auto;align-items:end;gap:10px;border-top:1px solid var(--line);padding-top:18px;margin-top:16px}
 .rules-category-create label{display:flex;flex-direction:column;gap:6px;color:var(--muted);font-size:11px;font-weight:700;min-width:0}
@@ -812,7 +814,7 @@ body{overflow:hidden}
 .categories-dialog-content{overflow:auto;padding:18px 24px;min-height:0}
 .categories-dialog .rules-category-list{display:flex;flex-direction:column;gap:7px}
 .categories-dialog .rules-category-row{grid-template-columns:13px minmax(0,1fr) 122px 48px;gap:10px;padding:7px 10px;border-radius:9px;background:var(--bg)}
-.categories-dialog .rules-category-row .category-delete{border:0;background:transparent;color:#b64d56;font:inherit;font-size:11px;font-weight:700;cursor:pointer;padding:7px 2px}
+.categories-dialog .rules-category-row .category-delete{border:0;background:transparent;color:var(--action-danger-ink);font:inherit;font-size:11px;font-weight:700;cursor:pointer;padding:7px 2px}
 .categories-dialog .rules-category-row input,.categories-dialog .rules-category-row select{height:33px}
 .categories-dialog .rules-category-create{grid-template-columns:minmax(0,1fr) 122px auto;align-items:end;gap:10px;padding-top:16px;margin-top:15px}
 .categories-dialog .rules-category-create>button{min-height:35px;padding:6px 12px}
@@ -867,7 +869,7 @@ body{overflow:hidden}
 .assets-history-row{display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid var(--line);padding:9px 0;font-size:10px;color:var(--ink)}
 .assets-history-row span{min-width:0;overflow-wrap:anywhere}
 .assets-item-button{background:var(--panel);color:var(--ink);border:1px solid var(--line);padding:7px 11px;border-radius:7px;cursor:pointer;font-size:11px;white-space:nowrap}
-.assets-item-button:hover{border-color:var(--accent)}.assets-item-button.danger{color:#c6535c}
+.assets-item-button:hover{border-color:var(--accent)}.assets-item-button.danger{color:var(--action-danger-ink)}
 .assets-recurring-grid{display:grid;grid-template-columns:minmax(320px,1fr) minmax(0,1.05fr);gap:18px;align-items:start}
 .assets-recurring-grid>.panel{min-width:0;padding:23px}.assets-recurring-grid .panel-heading{margin-bottom:17px}
 .assets-recurring-grid .rules-field select,.assets-recurring-grid .rules-field input{font-size:12px}
@@ -997,7 +999,7 @@ body{overflow:hidden}
 .assets-payroll-panel .panel-heading h2{font-size:16px}
 .assets-payroll-panel .panel-heading p{font-size:11px;line-height:1.7;color:var(--muted);margin:4px 0 0}
 .assets-payroll-layout{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}
-.assets-payroll-layout form{min-width:0;border:1px solid var(--line);border-radius:12px;padding:14px;background:var(--bg);display:flex;flex-direction:column;gap:10px}
+.assets-payroll-layout form{min-width:0;border:1px solid var(--line);border-radius:12px;padding:14px;background:var(--panel);display:flex;flex-direction:column;gap:10px}
 .assets-payroll-layout input,.assets-payroll-layout select{min-width:0;max-width:100%;width:100%}
 .assets-payroll-layout .rules-field{min-width:0}
 .assets-payroll-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -1012,7 +1014,7 @@ body{overflow:hidden}
 .assets-payroll-summary[open] .assets-payroll-chevron{transform:rotate(180deg)}
 .assets-payroll-summary-body{padding:13px 14px 15px;border-top:1px solid var(--line)}
 .assets-payroll-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-.assets-payroll-metrics>div{min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
+.assets-payroll-metrics>div{min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
 .assets-payroll-metrics small{font-size:10px;color:var(--muted);display:block}
 .assets-payroll-metrics strong{font-size:13px;display:block;margin-top:5px;overflow-wrap:anywhere}
 .assets-payroll-summary h3{font-size:12px;margin:15px 0 8px;color:var(--ink)}

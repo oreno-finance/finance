@@ -18,7 +18,7 @@ test('opening a recurring editor does not count as a change or prompt on switchi
   assert.equal(recurringDraftSnapshot(copy()),baseline);
   assert.equal(recurringSwitchNeedsConfirmation(false,'insurance','internet'),false);
   assert.match(source,/recurringBaseline=recurringSnapshot\(\);/g);
-  assert.match(source,/if\(recurringHasChanges\(\)\&\&!window\.confirm\('編集中の入力を破棄してクリアしますか？'\)/);
+  assert.match(source,/if\(recurringHasChanges\(\)\)\{\s*if\(!await requestConfirmation\(/);
   assert.match(source,/isDirty:\(\)=>onceHasChanges\(\)\|\|recurringHasChanges\(\)/);
   assert.doesNotMatch(source,/editingId=item\.id;dirty=true/);
 });

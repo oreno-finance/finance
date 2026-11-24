@@ -1,7 +1,7 @@
 /* File-first import with a compact, optional legacy paste workflow. */
 .import-panel{min-height:0}
 .import-methods{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
-.import-methods .import-paste-details{min-width:0;padding:0;border:1px solid var(--line);border-radius:12px;padding:0;overflow:hidden}
+.import-methods .import-paste-details{min-width:0;border:1px solid var(--line);border-radius:12px;padding:0;overflow:hidden}
 .import-paste-details>summary{cursor:pointer;padding:13px 16px;font-size:12px;font-weight:650;color:var(--ink)}
 .import-paste-details[open]>summary{border-bottom:1px solid var(--line)}
 .import-paste-body{display:grid;gap:10px;padding:13px 15px}

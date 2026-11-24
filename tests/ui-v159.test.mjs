@@ -42,18 +42,20 @@ test('Mizuho prediction closed in details yet its form and controls remain avail
   assert.match(html, /id="mizuho-plan-form"/);
   assert.match(css,/#mizuho-plan-panel:not\(\[open\]\)>form\{display:none!important\}/);
 });
-test('recurring form shows amount, source bank and category in same responsive row',()=>{
+test('recurring form shows amount and bank routes in same responsive row, expenses use fixed costs',()=>{
   const section=html.slice(html.indexOf('<div class="recurring-account-row">'),html.indexOf('<div class="recurring-schedule-row">'));
   assert.ok(section.includes('id="assets-recurring-amount"'));
   assert.ok(section.includes('id="assets-recurring-from"'));
-  assert.ok(section.includes('id="assets-recurring-category"'));
+  assert.ok(section.includes('id="assets-recurring-to"'));
+  assert.ok(!section.includes('id="assets-recurring-category"'));
+  assert.match(html, /id="assets-fixed-cost-list"/);
   assert.match(css,/\.recurring-account-row\{display:grid!important;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
 });
 test('one-time modal confirms changed drafts on close and freezes background scroll',()=>{
   assert.doesNotMatch(assetUi, /入力途中の変更を破棄しますか/);
   assert.match(assetUi, /onceDialog\.addEventListener\('close',unlockOncePage\)/);
   assert.match(assetUi, /onceDialog\.showModal\(\);\s*lockOncePage\(\)/);
-  assert.match(assetUi, /function closeOnce\(\):void \{[\s\S]*?if\(onceHasChanges\(\)\&\&!window\.confirm/);
+  assert.match(assetUi, /async function closeOnce\(\):Promise<void> \{[\s\S]*?if\(onceHasChanges\(\)\)\{[\s\S]*?await requestConfirmation/);
   assert.match(css, /html\.assets-once-page-locked,html\.assets-once-page-locked body\{overflow:hidden!important/);
   assert.match(css, /#categories-dialog-close,#recent-merchants-close/);
 });

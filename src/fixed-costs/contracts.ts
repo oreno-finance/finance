@@ -1,6 +1,7 @@
 /** Unified fixed-cost metadata. Bank standing orders remain canonical in assets.recurring. */
 import { CARDS } from '../models/types.js';
 import type { AssetsDocument, RecurringEntry } from '../cloud/assets.js';
+import {validatePaymentHistory,type PaymentChange} from './payment-history.js';
 
 export type CostFrequency = 'monthly'|'yearly'|'weekly';
 export type PriceKind = 'fixed'|'variable';
@@ -26,6 +27,7 @@ export interface FixedCostEntry {
   pauses:PausePeriod[];
   note:string;
   updatedAt:string;
+  paymentHistory?:PaymentChange[];
 }
 const validDay=(value:string)=>/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(`${value}T00:00:00Z`))&&new Date(`${value}T00:00:00Z`).toISOString().slice(0,10)===value;
 const amountOk=(value:number)=>Number.isSafeInteger(value)&&value>0;
@@ -50,7 +52,7 @@ export function validatePauses(raw:unknown,startOn:string,endOn:string|null):Pau
     return {startOn:x.startOn,endOn:x.endOn};
   });
 }
-export function validateFixedCosts(raw:unknown):FixedCostEntry[]|undefined {
+export function validateFixedCosts(raw:unknown,historicalRoutes=false):FixedCostEntry[]|undefined {
   if(raw===undefined)return undefined;
   if(!Array.isArray(raw)||raw.length>500)throw new Error('固定費の保存形式が不正です。');
   const ids=new Set<string>(),merchantKeys=new Set<string>();
@@ -76,9 +78,10 @@ export function validateFixedCosts(raw:unknown):FixedCostEntry[]|undefined {
     const pricing=validatePricing(x.pricing,x.startOn);
     const pauses=validatePauses(x.pauses,x.startOn,x.endOn);
     if(x.amount!==pricing.at(-1)!.amount)throw new Error('最新料金と料金履歴が一致しません。');
-    if(x.merchantKey){const key=`${x.cardId}|${x.merchantKey}`;if(merchantKeys.has(key))throw new Error('同じカードの固定支出が重複しています。');merchantKeys.add(key);}
+    if(x.merchantKey&&!historicalRoutes){const key=`${x.cardId}|${x.merchantKey}`;if(merchantKeys.has(key))throw new Error('同じカードの固定支出が重複しています。');merchantKeys.add(key);}
     ids.add(x.id);
-    return {...x,name:x.name.trim(),pricing,pauses};
+    const paymentHistory=validatePaymentHistory(x.paymentHistory,x);
+    return {...x,name:x.name.trim(),pricing,pauses,...(paymentHistory?{paymentHistory}:{})};
   });
 }
 export function priceOnDay(pricing:readonly PriceChange[],day:string,defaultAmount:number):number {
@@ -105,6 +108,73 @@ export function fixedCostOccurrences(period:string,items:readonly FixedCostEntry
     }
   }
   return result;
+}
+/** Next contractual occurrence, not evidence of a paid bill or a card debit date.
+ * Skip whole suspension periods; use the same month-end/weekday rules as reports. */
+export function nextFixedCostDate(item:Pick<FixedCostEntry,'startOn'|'endOn'|'frequency'|'dayOfMonth'|'monthOfYear'|'weekday'> & {pauses?:readonly PausePeriod[];enabled?:boolean},fromDay:string):string|null {
+  if(item.enabled===false||!validDay(fromDay))return null;
+  let cursor=fromDay<item.startOn?item.startOn:fromDay;
+  const pauses=item.pauses??[];
+  for(let attempt=0;attempt<=pauses.length;attempt++){
+    if(item.endOn!==null&&cursor>item.endOn)return null;
+    const start=new Date(`${cursor}T00:00:00Z`);
+    let date:string|null=null;
+    // The next eligible calendar day is no more than one year away.
+    for(let i=0;i<=366;i++){
+      const d=new Date(start.getTime()+i*86400000),day=d.toISOString().slice(0,10);
+      if(!validDay(day)||(item.endOn!==null&&day>item.endOn))return null;
+      const last=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,0)).getUTCDate();
+      const match=item.frequency==='weekly'?d.getUTCDay()===item.weekday:
+        (item.frequency==='monthly'||d.getUTCMonth()+1===item.monthOfYear)&&d.getUTCDate()===(item.dayOfMonth===0?last:Math.min(item.dayOfMonth!,last));
+      if(match){date=day;break;}
+    }
+    if(!date)return null;
+    const pause=pauses.find(p=>date!>=p.startOn&&(p.endOn===null||date!<=p.endOn));
+    if(!pause)return date;
+    if(pause.endOn===null||pause.endOn==='9999-12-31')return null;
+    cursor=new Date(Date.parse(`${pause.endOn}T00:00:00Z`)+86400000).toISOString().slice(0,10);
+  }
+  return null;
+}
+/** Lifecycle changes preserve completed pauses and do not rewrite unrelated fields.
+ * A legacy disabled bank entry had no dated active history; restore only from the requested date. */
+export function changeFixedCostState(item:Pick<FixedCostEntry,'startOn'|'endOn'> & {pauses?:readonly PausePeriod[];enabled?:boolean},action:string,day:string):{endOn:string|null;pauses:PausePeriod[];enabled?:boolean}{
+  if(!validDay(day)||day<item.startOn||!['active','paused','ended'].includes(action))throw new Error('契約状態と適用日を確認してください。');
+  const before=(value:string)=>new Date(Date.parse(`${value}T00:00:00Z`)-86400000).toISOString().slice(0,10);
+  const after=(value:string)=>new Date(Date.parse(`${value}T00:00:00Z`)+86400000).toISOString().slice(0,10);
+  let pauses=(item.pauses??[]).map(p=>({...p})),endOn=item.endOn;
+  let enabled=item.enabled;
+  if(action==='ended'){
+    if(endOn!==null&&endOn<day)throw new Error('終了済みの契約は先に再開してください。');
+    endOn=day;pauses=pauses.filter(p=>p.startOn<=day).map(p=>({...p,endOn:p.endOn===null||p.endOn>day?day:p.endOn}));
+  }else if(action==='paused'){
+    if(enabled===false||(endOn!==null&&day>endOn))throw new Error('停止・終了済みの契約は先に再開してください。');
+    if(pauses.some(p=>day>=p.startOn&&(p.endOn===null||day<=p.endOn)))throw new Error('指定日はすでに停止期間です。');
+    const last=pauses.at(-1);
+    if(last&&(last.endOn===null||day<=last.endOn))throw new Error('既存の停止予定と重複しています。');
+    pauses.push({startOn:day,endOn});
+  }else{
+    if(enabled===false){
+      // The previous flag excluded the entire contract. Retain that effect before the resume date.
+      // Preserve any later pre-existing pause rather than silently discard it.
+      const later=pauses.filter(p=>p.startOn>=day);
+      pauses=day>item.startOn?[{startOn:item.startOn,endOn:before(day)},...later]:later;
+      enabled=true;
+    }else{
+      const open=pauses.find(p=>p.startOn<=day&&(p.endOn===null||p.endOn>=day))??pauses.find(p=>p.endOn===null&&p.startOn>day);
+      if(open){
+        if(open.startOn>=day)pauses.splice(pauses.indexOf(open),1);
+        else open.endOn=before(day);
+      }
+    }
+    if(endOn!==null&&endOn<day&&item.enabled!==false){
+      const gapStart=after(endOn);
+      if(gapStart<day)pauses.push({startOn:gapStart,endOn:before(day)});
+    }
+    endOn=null;
+  }
+  pauses.sort((a,b)=>a.startOn.localeCompare(b.startOn));
+  return {endOn,pauses:validatePauses(pauses,item.startOn,endOn),...(enabled===undefined?{}:{enabled})};
 }
 export function monthlyEquivalent(item:Pick<FixedCostEntry,'amount'|'frequency'>|Pick<RecurringEntry,'amount'|'frequency'>):number {
   return item.frequency==='yearly'?item.amount/12:item.frequency==='weekly'?item.amount*52/12:item.amount;

@@ -1,7 +1,8 @@
+import { formatYen as sharedYen, formatMonth, formatRate, formatNumber } from './formatters.js';
 import { futureProjection, suggestedNisaMonthly, targetMonthForAge, projectionAgeBounds } from '../cloud/future-projection.js';
 import { matchingNisaRows } from '../cloud/asset-projection.js';
-const yen = (n) => n === null ? '未登録' : `${Math.round(n).toLocaleString('ja-JP')}円`;
-const short = (n) => n === null ? '--' : Math.abs(n) >= 10000 ? `${(n / 10000).toLocaleString('ja-JP', { maximumFractionDigits: 1 })}万円` : `${Math.round(n).toLocaleString('ja-JP')}円`;
+const yen = (value) => sharedYen(value, 0, '未登録');
+const short = (n) => n === null ? '—' : Math.abs(n) >= 10000 ? `${formatNumber(n / 10000, 1)}万円` : yen(n);
 function el(tag, className = '', text) {
     const node = document.createElement(tag);
     node.className = className;
@@ -20,7 +21,7 @@ function monthAfter(month) {
     const y = Number(month.slice(0, 4)), m = Number(month.slice(5));
     return `${y + (m === 12 ? 1 : 0)}-${String(m === 12 ? 1 : m + 1).padStart(2, '0')}`;
 }
-function dateTitle(month) { return `${month.slice(0, 4)}年${Number(month.slice(5))}月`; }
+const dateTitle = formatMonth;
 const svgNS = 'http://www.w3.org/2000/svg';
 function svgNode(tag, attrs) {
     const node = document.createElementNS(svgNS, tag);
@@ -233,6 +234,7 @@ export function initFutureProjection(getSource) {
     let compare = false;
     let chartFilter = 'all';
     let chosenMonth = null;
+    let yearListOpen = false;
     // Only reuse within the same immutable vault snapshot and NISA-rule version.
     let cachedNisa = null;
     let renderTimer = null;
@@ -307,8 +309,14 @@ export function initFutureProjection(getSource) {
             renderTimer = null;
         }
         const source = getSource();
+        const previousList = results.querySelector('.future-annual-list');
+        if (previousList)
+            yearListOpen = previousList.open;
         results.replaceChildren();
+        find('future-scenario-hint').textContent = '';
         if (!source) {
+            find('future-age-value').textContent = '—';
+            find('future-target-label').textContent = '';
             hint.textContent = 'OneDrive保管庫の解除後に将来資産を試算できます。';
             return;
         }
@@ -329,9 +337,9 @@ export function initFutureProjection(getSource) {
             target.value = '';
         age.disabled = !bounds;
         birthSettings.hidden = !!birthMonth;
-        find('future-age-value').textContent = `${age.value}歳`;
-        find('future-nisa-rate-value').textContent = `${Number(nisaRate.value).toFixed(1)}%`;
-        find('future-target-label').textContent = birthMonth ? `${dateTitle(target.value)}（${age.value}歳）` : '生年月未設定';
+        find('future-age-value').textContent = bounds ? `${age.value}歳` : '—';
+        find('future-nisa-rate-value').textContent = formatRate(Number(nisaRate.value));
+        find('future-target-label').textContent = bounds ? `目標年月：${dateTitle(target.value)}` : '';
         if (!birthMonth) {
             hint.textContent = '生年月を設定してください。';
             return;
@@ -415,7 +423,12 @@ export function initFutureProjection(getSource) {
             }
             table.append(tbody);
             tableWrap.append(table);
-            results.append(tableWrap);
+            const annual = el('details', 'future-annual-list');
+            annual.open = yearListOpen;
+            annual.append(el('summary', '', '年別一覧'), tableWrap);
+            annual.addEventListener('toggle', () => { if (annual.isConnected)
+                yearListOpen = annual.open; });
+            results.append(annual);
         }
         catch (error) {
             hint.textContent = error instanceof Error ? error.message : '将来予測を計算できませんでした。';
@@ -438,9 +451,13 @@ export function initFutureProjection(getSource) {
         scenarioNisaEdited = false;
         results.replaceChildren();
         hint.textContent = '保管庫を解除してください。';
+        find('future-scenario-hint').textContent = '';
+        find('future-age-value').textContent = '—';
+        find('future-target-label').textContent = '';
         compare = false;
         chartFilter = 'all';
         chosenMonth = null;
+        yearListOpen = false;
         scenarioAccordion.open = false;
         scenarioPanel.hidden = true;
         cashChoice.checked = true;

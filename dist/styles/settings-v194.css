@@ -95,3 +95,23 @@
 .assets-reconcile-findings{margin:0;padding:0 0 0 17px;font-size:10px;line-height:1.65;color:var(--ink)}
 .assets-reconcile-card .assets-reconcile-action{align-self:flex-start;font-size:11px;padding:8px 11px;border:1px solid var(--line);border-radius:9px;color:var(--accent);background:var(--panel);font-weight:700;cursor:pointer}
 @media(max-width:500px){.assets-reconcile-figures{grid-template-columns:minmax(0,1fr)}.assets-reconcile-figure{flex-direction:row;align-items:baseline;justify-content:space-between;gap:8px}}
+
+/* Payroll: one settings panel, separate forms retain their own submit semantics. */
+.settings-view .settings-payroll-body{padding:18px 20px 20px}
+.settings-payroll-content{display:grid;gap:18px;min-width:0}
+.settings-payroll-form,.settings-payroll-section{min-width:0;margin:0}
+.settings-payroll-section{padding-top:18px;border-top:1px solid var(--line)}
+.settings-payroll-fields{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:12px;min-width:0}
+.settings-payroll-fields>.rules-field{margin:0;min-width:0}
+.settings-payroll-fields :is(input,select){width:100%;min-width:0;height:42px;text-align:left;text-align-last:left}
+.settings-view .settings-payroll-fields>button{width:auto;min-width:0;margin:0;height:42px;align-self:end;white-space:nowrap}
+.settings-payroll-actions{display:flex;justify-content:flex-end;margin-top:8px}
+.settings-payroll-section>h3{font-size:13px;margin:0 0 12px}
+.settings-payroll-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0}
+.settings-payroll-metrics>div{min-width:0}
+.settings-payroll-metrics dt{font-size:11px;color:var(--muted)}
+.settings-payroll-metrics dd{margin:5px 0 0;font-size:13px;font-weight:700;overflow-wrap:anywhere}
+.settings-payroll-body .assets-operation-status:empty{display:none}
+@media(max-width:800px){.settings-payroll-fields :is(input,select),.settings-payroll-fields>button{height:44px}}
+@media(max-width:720px){.settings-view .settings-payroll-body{padding:13px}}
+@media(max-width:630px){.settings-payroll-fields{grid-template-columns:minmax(0,1fr)}.settings-view .settings-payroll-fields>button{justify-self:end}}

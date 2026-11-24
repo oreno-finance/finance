@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
-import {LiveVault} from '../dist/src/cloud/live-vault.js';
+import {LiveVault} from './helpers/coordinated-vault.mjs';
 import {GraphError} from '../dist/src/cloud/onedrive-api.js';
 import {parseIndexEnvelope, decryptIndex, deriveCloudKey} from '../dist/src/cloud/cloud-crypto.js';
 if(!globalThis.crypto)globalThis.crypto=webcrypto;
@@ -55,11 +55,17 @@ test('rotation stages encrypted statements, original PDF, rules and assets befor
   assert.equal(vault.merchantRules().length,1);
   assert.deepEqual(await vault.original('doc2026'),pdf);
   const index=parseIndexEnvelope((await new FakeVersionedGraph(store).readFinanceIndex()).text);
-  assert.equal(index.format,'finance-cloud-index-envelope-v2');
+  assert.equal(index.format,'finance-cloud-index-envelope-v3');
   assert.ok(index.dataSetId);
   assert.deepEqual([...oldData].filter(([k])=>k.startsWith('legacy:')&&!k.endsWith(':index')), [...store.files].filter(([k])=>k.startsWith('legacy:')&&!k.endsWith(':index')),'old ciphertext is intact');
   assert.ok([...store.files.keys()].filter(k=>k.startsWith(`${index.dataSetId}:`)).length>=5);
-  await assert.rejects(new LiveVault(new FakeVersionedGraph(store)).unlock(oldPass),/パスフレーズ/);
+  // Concurrent authenticated reads may reject in different orders. All must fail closed.
+  const beforeRejectedUnlock=new Map(store.files);
+  const rejectedVault=new LiveVault(new FakeVersionedGraph(store));
+  await assert.rejects(rejectedVault.unlock(oldPass),/パスフレーズ|復号または整合性確認に失敗/);
+  assert.equal(rejectedVault.unlocked,false);
+  assert.throws(()=>rejectedVault.records(),/ロックされています/);
+  assert.deepEqual(store.files,beforeRejectedUnlock);
   const second=new LiveVault(new FakeVersionedGraph(store));await second.unlock(nextPass);
   assert.equal(second.records().length,2);
   assert.deepEqual(await second.original('doc2026'),pdf);
@@ -173,4 +179,60 @@ test('concurrent modification discovered at final check aborts generation activa
   assert.equal((await new FakeVersionedGraph(store).readFinanceIndex()).text,original);
   const oldReader=new LiveVault(new FakeVersionedGraph(store));await oldReader.unlock(oldPass);
   assert.equal(oldReader.records().length,1);
+});
+
+const deferred=()=>{let enter,release;const entered=new Promise(r=>{enter=r;}),done=new Promise(r=>{release=r;});return {entered,release,wait:async()=>{enter();await done;}};};
+test('Phase 6E: 再暗号化の最終確認後も別端末の書込みは索引切替まで拒否する',async()=>{
+ const {store,graph,vault}=setup();await vault.create(oldPass);await vault.addBalanceSnapshot(snapshot);
+ const peer=new LiveVault(new FakeVersionedGraph(store));await peer.unlock(oldPass);
+ const oldIndex=await graph.readFinanceIndex();const barrier=deferred(),write=graph.writeFinanceIndex.bind(graph);
+ graph.writeFinanceIndex=async(...args)=>{await barrier.wait();return write(...args);};
+ const rotating=vault.changePassphrase(oldPass,nextPass);await barrier.entered;
+ try{
+   await assert.rejects(peer.addBalanceSnapshot({...snapshot,id:'additional',balance:2000}),/別の端末/);
+   await assert.rejects(peer.upsertMerchantRule({id:'extra-rule',pattern:'OTHER',mode:'exact',cardId:null,displayName:'TEST',categoryId:null,priority:100,enabled:true}),/別の端末/);
+   await assert.rejects(peer.saveBatch([{id:'new-record',statement:statement()}]),/別の端末/);
+   assert.equal((await graph.readFinanceIndex()).text,oldIndex.text);
+ }finally{barrier.release();await rotating;}
+ const current=new LiveVault(new FakeVersionedGraph(store));await current.unlock(nextPass);
+ assert.deepEqual(current.assetSettings().snapshots,[snapshot]);assert.equal(current.records().length,0);
+ await assert.rejects(peer.addBalanceSnapshot({...snapshot,id:'additional',balance:2000}),/パスフレーズが変更/);
+ await current.addBalanceSnapshot({...snapshot,id:'additional',balance:2000});assert.equal(current.assetSettings().snapshots.length,2);
+});
+test('Phase 6E: 保存中には再暗号化を開始せず、保存後の再暗号化は変更を維持する',async()=>{
+ const {store,graph,vault}=setup();await vault.create(oldPass);
+ const peer=new LiveVault(new FakeVersionedGraph(store));await peer.unlock(oldPass);
+ const barrier=deferred(),write=graph.writeAssetSettings.bind(graph);graph.writeAssetSettings=async(...args)=>{await barrier.wait();return write(...args);};
+ const saving=vault.addBalanceSnapshot(snapshot);await barrier.entered;
+ try{await assert.rejects(peer.changePassphrase(oldPass,nextPass),/別の端末/);}
+ finally{barrier.release();await saving;}
+ await peer.changePassphrase(oldPass,nextPass);assert.deepEqual(peer.assetSettings().snapshots,[snapshot]);
+});
+test('Phase 6E: 最終切替の直前でロックされた場合は旧索引のまま停止する',async()=>{
+ const {store,graph,vault}=setup();await vault.create(oldPass);await vault.addBalanceSnapshot(snapshot);const prior=await graph.readFinanceIndex();
+ await assert.rejects(vault.changePassphrase(oldPass,nextPass,message=>{if(message.includes('切り替え中'))vault.lock();}),/ロック/);
+ assert.equal(vault.unlocked,false);assert.equal((await graph.readFinanceIndex()).text,prior.text);
+ const peer=new LiveVault(new FakeVersionedGraph(store));await peer.unlock(oldPass);assert.deepEqual(peer.assetSettings().snapshots,[snapshot]);
+});
+test('Phase 6E: 索引送信後のロックでは切替完了後も自動再解除しない',async()=>{
+ const {store,graph,vault}=setup();await vault.create(oldPass);await vault.addBalanceSnapshot(snapshot);
+ const barrier=deferred(),write=graph.writeFinanceIndex.bind(graph);graph.writeFinanceIndex=async(...args)=>{const result=await write(...args);await barrier.wait();return result;};
+ const operation=vault.changePassphrase(oldPass,nextPass),rejected=assert.rejects(operation,error=>error.name==='CloudWriteUncertainError'&&/ロック/.test(error.message));
+ await barrier.entered;vault.lock();barrier.release();await rejected;assert.equal(vault.unlocked,false);
+ const peer=new LiveVault(new FakeVersionedGraph(store));await peer.unlock(nextPass);assert.deepEqual(peer.assetSettings().snapshots,[snapshot]);
+});
+test('Phase 6E: 旧索引の初回管理操作はv3への切替のみ、データ再暗号化は再操作時に行う',async()=>{
+ const {graph,vault,store}=setup();await vault.create(oldPass);await vault.addBalanceSnapshot(snapshot);
+ const {encryptIndex}=await import('../dist/src/cloud/cloud-crypto.js');
+ const {key,salt}=vault.verifiedBrowserKey();const prior=await graph.readFinanceIndex(),decoded=await decryptIndex(parseIndexEnvelope(prior.text),key);
+ await graph.writeFinanceIndex(await encryptIndex(decoded,key,salt),prior); // old supported layout
+ const oldAssets=store.files.get('legacy:assets').text;
+ await assert.rejects(vault.changePassphrase(oldPass,nextPass),/新版の保管庫索引に更新/);
+ const newIndex=parseIndexEnvelope((await graph.readFinanceIndex()).text);
+ assert.equal(newIndex.format,'finance-cloud-index-envelope-v3');assert.equal(newIndex.dataSetId,undefined);assert.deepEqual(await decryptIndex(newIndex,key),decoded);
+ assert.equal(store.files.get('legacy:assets').text,oldAssets);
+ assert.ok(![...store.files.keys()].some(k=>!k.startsWith('legacy:')));
+ await assert.rejects(decryptIndex({...newIndex,format:'finance-cloud-index-envelope-v1'},key));
+ await assert.rejects(decryptIndex({...newIndex,dataSetId:crypto.randomUUID()},key));
+ await vault.changePassphrase(oldPass,nextPass);assert.deepEqual(vault.assetSettings().snapshots,[snapshot]);
 });

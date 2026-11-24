@@ -14,10 +14,75 @@ export class GraphError extends Error {
         this.code = code;
     }
 }
+/** This is an empty coordination folder, never a data file. Folder creation
+ * uses conflictBehavior=fail, not an upload session or a read-then-write lock.
+ * No lease expiry: a suspended tab must never regain permission after expiry. */
+const MUTATION_LOCK_NAME = 'finance-operation-lock';
+export class VaultOperationBusyError extends Error {
+    constructor() { super('別の端末で保管庫を保存・整理中です。完了後に再試行してください。処理が中断された場合はすべての端末を閉じ、OneDriveの保存状態と未完了のアップロードを確認してから finance/finance-operation-lock を手動で解除してください。'); this.name = 'VaultOperationBusyError'; }
+}
 export class OneDriveTestClient {
     tokenSource;
     http;
     onUnauthorized;
+    mutationLease = null;
+    mutationAcquiring = false;
+    async acquireVaultMutation(guard) {
+        if (this.mutationLease || this.mutationAcquiring)
+            throw new VaultOperationBusyError();
+        this.mutationAcquiring = true;
+        try {
+            guard();
+            const parent = await this.folderPath([FINANCE_DIR], true);
+            if (!parent)
+                throw new Error('保管庫の操作領域を確認できません。');
+            guard();
+            let item;
+            try {
+                const response = await this.graph(`/me/drive/items/${encodeURIComponent(parent)}/children`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: MUTATION_LOCK_NAME, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }),
+                }, false, true);
+                if (response.status !== 201)
+                    throw new Error('操作ロックの新規作成を確認できません。');
+                item = await response.json();
+            }
+            catch (error) {
+                if (error instanceof GraphError && [409, 412].includes(error.status))
+                    throw new VaultOperationBusyError();
+                throw new Error('保管庫の操作権を確認できません。再接続後も操作できない場合はすべての端末を閉じ、OneDrive上の操作ロックを確認してください。');
+            }
+            if (typeof item.id !== 'string' || !item.id || typeof item.eTag !== 'string' || !item.eTag || item.name !== MUTATION_LOCK_NAME || !item.folder || typeof item.folder !== 'object' || Array.isArray(item.folder) || (item.folder.childCount !== undefined && item.folder.childCount !== 0))
+                throw new Error('OneDriveの操作ロック作成結果が不明です。保存は開始しません。');
+            const lease = { uncertain: false, guard, released: false };
+            this.mutationLease = lease;
+            return async () => {
+                if (this.mutationLease !== lease)
+                    throw new Error('保管庫の操作権が変化しました。');
+                try {
+                    // A lost final response might mean the server is still committing.
+                    // Do not make a destructive operation possible by releasing its fence.
+                    if (lease.uncertain)
+                        throw new Error('OneDriveの書込み結果が不明なため操作ロックを保持しました。すべての端末を閉じ、保存結果と未完了のアップロードを確認してから finance/finance-operation-lock を手動で解除してください。');
+                    await this.graph(`/me/drive/items/${encodeURIComponent(item.id)}`, { method: 'DELETE', headers: { 'If-Match': item.eTag } }, false, true);
+                }
+                finally {
+                    lease.released = true;
+                    this.mutationLease = null;
+                }
+            };
+        }
+        finally {
+            this.mutationAcquiring = false;
+        }
+    }
+    checkMutationGuard() { if (this.mutationLease) {
+        if (this.mutationLease.released)
+            throw new Error('保管庫の操作権が解除されました。');
+        this.mutationLease.guard();
+    } }
+    markMutationUncertain() { if (this.mutationLease)
+        this.mutationLease.uncertain = true; }
     // Resolve Graph folder IDs once per client session. These are non-secret IDs,
     // retained only in memory; a new sign-in/client receives a fresh cache.
     appRoot = null;
@@ -43,6 +108,7 @@ export class OneDriveTestClient {
     forVaultDataSet(id) {
         const stage = new OneDriveTestClient(this.tokenSource, this.http, this.onUnauthorized);
         stage.setVaultDataSet(id);
+        stage.mutationLease = this.mutationLease;
         return stage;
     }
     financeDataPath(...tail) {
@@ -145,13 +211,19 @@ export class OneDriveTestClient {
             });
         });
     }
-    async graph(path, init = {}, allowNotModified = false) {
+    async graph(path, init = {}, allowNotModified = false, lockRequest = false) {
         const method = (init.method ?? 'GET').toUpperCase();
+        let sent = false;
         const request = async (forceRefresh = false) => {
             // An old client remains usable after the access token expires; MSAL owns
             // every token's lifetime. Never hold a bearer token inside this client.
+            if (method !== 'GET' && !lockRequest)
+                this.checkMutationGuard();
             const token = typeof this.tokenSource === 'string'
                 ? this.tokenSource : await this.tokenSource(forceRefresh);
+            if (method !== 'GET' && !lockRequest)
+                this.checkMutationGuard();
+            sent = true;
             countFinanceRequest(method === 'GET' ? 'graph.get' : 'graph.write');
             return measureFinancePhase('graph.request', () => this.httpWithReadTimeout(GRAPH + path, {
                 ...init,
@@ -159,7 +231,17 @@ export class OneDriveTestClient {
                 redirect: 'error',
             }));
         };
-        let response = await request();
+        let response;
+        try {
+            response = await request();
+        }
+        catch (error) {
+            if (sent && method !== 'GET' && !lockRequest)
+                this.markMutationUncertain();
+            throw error;
+        }
+        if (!lockRequest && method !== 'GET' && (response.status === 408 || response.status === 429 || response.status >= 500))
+            this.markMutationUncertain();
         // Only GET may be replayed on transient throttling. Never repeat a write,
         // upload-session request or chunk: its outcome could already be committed.
         if (method === 'GET')
@@ -325,11 +407,21 @@ export class OneDriveTestClient {
         for (let start = 0; start < bytes.byteLength; start += size) {
             const end = Math.min(start + size, bytes.byteLength);
             countFinanceRequest('graph.upload-chunk');
-            const part = await this.http(session.uploadUrl, {
-                method: 'PUT', credentials: 'omit',
-                headers: { 'Content-Range': `bytes ${start}-${end - 1}/${bytes.byteLength}` },
-                body: bytes.slice(start, end),
-            });
+            this.checkMutationGuard();
+            let part;
+            try {
+                part = await this.http(session.uploadUrl, {
+                    method: 'PUT', credentials: 'omit',
+                    headers: { 'Content-Range': `bytes ${start}-${end - 1}/${bytes.byteLength}` },
+                    body: bytes.slice(start, end),
+                });
+            }
+            catch (error) {
+                this.markMutationUncertain();
+                throw error;
+            }
+            if (part.status === 408 || part.status === 429 || part.status >= 500)
+                this.markMutationUncertain();
             if (!part.ok) {
                 if (part.status === 409 || part.status === 412)
                     throw new GraphError(part.status, 'conflict');
@@ -340,8 +432,10 @@ export class OneDriveTestClient {
                     throw new Error('OneDriveのアップロードが途中で終了しました。');
             }
             else {
-                if (part.status !== 200 && part.status !== 201)
+                if (part.status !== 200 && part.status !== 201) {
+                    this.markMutationUncertain();
                     throw new Error('OneDriveが保存完了を返しませんでした。');
+                }
                 const item = await part.json();
                 if (!item.id)
                     throw new Error('OneDriveの保存IDを取得できません。');
@@ -548,47 +642,52 @@ export class OneDriveTestClient {
         }
         return parent;
     }
-    async readNamedFile(parts, name, maxBytes) {
+    async findNamedFile(parts, name, fresh = false) {
+        // A cached directory ID may become stale when a folder is moved outside
+        // Finance. Resolve its path again once, then fail closed on an actual miss.
+        let item = null;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const hadCachedPath = parts.some((_, i) => this.directoryIds.has(`/${parts.slice(0, i + 1).join('/')}`));
+            const parent = await this.folderPath(parts, false);
+            if (!parent) {
+                if (attempt === 0 && hadCachedPath) {
+                    this.clearDirectoryCache();
+                    continue;
+                }
+                return null;
+            }
+            try {
+                const response = await this.graph(`/me/drive/items/${encodeURIComponent(parent)}:/${encodeURIComponent(name)}`, fresh ? { cache: 'no-store' } : {});
+                item = await response.json();
+                break;
+            }
+            catch (error) {
+                if (!(error instanceof GraphError && error.status === 404))
+                    throw error;
+                if (attempt === 0 && hadCachedPath) {
+                    this.clearDirectoryCache();
+                    continue;
+                }
+                return null;
+            }
+        }
+        if (typeof item?.id !== 'string' || !item.id || typeof item.eTag !== 'string' || !item.eTag)
+            throw new Error('OneDriveの更新情報を取得できません。');
+        return item;
+    }
+    async readNamedFile(parts, name, maxBytes, fresh = false) {
         const key = JSON.stringify([parts, name, maxBytes]);
         const epoch = this.encryptedReadEpoch;
         const waiting = this.encryptedReadJobs.get(key);
-        if (waiting)
+        if (waiting && !fresh)
             return waiting;
         const job = (async () => {
-            // A cached directory ID may become stale when a folder is moved outside
-            // Finance. Resolve its path again once, then fail closed on an actual miss.
-            let item = null;
-            for (let attempt = 0; attempt < 2; attempt++) {
-                const hadCachedPath = parts.some((_, i) => this.directoryIds.has(`/${parts.slice(0, i + 1).join('/')}`));
-                const parent = await this.folderPath(parts, false);
-                if (!parent) {
-                    if (attempt === 0 && hadCachedPath) {
-                        this.clearDirectoryCache();
-                        continue;
-                    }
-                    if (epoch === this.encryptedReadEpoch)
-                        this.encryptedReadCache.delete(key);
-                    return null;
-                }
-                try {
-                    const response = await this.graph(`/me/drive/items/${encodeURIComponent(parent)}:/${encodeURIComponent(name)}`);
-                    item = await response.json();
-                    break;
-                }
-                catch (error) {
-                    if (!(error instanceof GraphError && error.status === 404))
-                        throw error;
-                    if (attempt === 0 && hadCachedPath) {
-                        this.clearDirectoryCache();
-                        continue;
-                    }
-                    if (epoch === this.encryptedReadEpoch)
-                        this.encryptedReadCache.delete(key);
-                    return null;
-                }
+            const item = await this.findNamedFile(parts, name);
+            if (!item) {
+                if (epoch === this.encryptedReadEpoch)
+                    this.encryptedReadCache.delete(key);
+                return null;
             }
-            if (!item?.id || !item.eTag)
-                throw new Error('OneDriveの更新情報を取得できません。');
             const useCache = !parts.includes('originals') && name.endsWith('.enc') && maxBytes <= 25_000_000;
             const cached = useCache && epoch === this.encryptedReadEpoch ? this.encryptedReadCache.get(key) : undefined;
             if (cached && cached.id === item.id && cached.etag === item.eTag) {
@@ -616,7 +715,8 @@ export class OneDriveTestClient {
             }
             return { ...value };
         })();
-        this.encryptedReadJobs.set(key, job);
+        if (!fresh)
+            this.encryptedReadJobs.set(key, job);
         try {
             return await job;
         }
@@ -667,8 +767,8 @@ export class OneDriveTestClient {
         return this.writeNamedFile(this.financeDataPath('rules'), 'merchants.enc', text, existing, 2_000_000);
     }
     /** Independent encrypted asset settings, never stored in the statement index. */
-    async readAssetSettings() {
-        return this.readNamedFile(this.financeDataPath('settings'), 'assets.enc', 2_000_000);
+    async readAssetSettings(fresh = false) {
+        return this.readNamedFile(this.financeDataPath('settings'), 'assets.enc', 2_000_000, fresh);
     }
     async writeAssetSettings(text, existing) {
         return this.writeNamedFile(this.financeDataPath('settings'), 'assets.enc', text, existing, 2_000_000);
@@ -775,11 +875,9 @@ export class OneDriveTestClient {
             throw new Error('指定年月に暗号化PDF原本が見つかりません。');
         return file.text;
     }
-    /** Finance may READ Payroll's published income data, never mutate its namespace. */
-    async readPayrollPublishedFile(folder, name, maxBytes) {
+    payrollPublishedPath(folder, name) {
         if (folder.length > 4 || folder.some(part => !(/^[a-z0-9-]{1,64}$/i.test(part))) ||
-            !(['index.enc'].includes(name) || /^(19|20|21)\d{2}\.enc$/.test(name)) ||
-            !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 30_000_000)
+            !(['index.enc'].includes(name) || /^(19|20|21)\d{2}\.enc$/.test(name)))
             throw new Error('Payroll参照パスが不正です。');
         if (folder.length === 0 && name !== 'index.enc')
             throw new Error('Payroll参照パスが不正です。');
@@ -788,7 +886,18 @@ export class OneDriveTestClient {
         if (folder.length > 0 && !(folder.length === 1 && folder[0] === 'income') &&
             !(folder.length === 3 && folder[0] === 'versions' && folder[2] === 'income' && /^[0-9a-f-]{36}$/i.test(folder[1])))
             throw new Error('Payroll参照先は収入公開ファイルに限定されています。');
-        return this.readNamedFile([PAYROLL_DIR, ...folder], name, maxBytes);
+        return [PAYROLL_DIR, ...folder];
+    }
+    /** Finance may READ Payroll's published income data, never mutate its namespace. */
+    async readPayrollPublishedFile(folder, name, maxBytes) {
+        if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 30_000_000)
+            throw new Error('Payroll参照パスが不正です。');
+        return this.readNamedFile(this.payrollPublishedPath(folder, name), name, maxBytes);
+    }
+    /** Revalidate identity/version without downloading encrypted income again. */
+    async readPayrollPublishedMetadata(folder, name) {
+        const item = await this.findNamedFile(this.payrollPublishedPath(folder, name), name, true);
+        return item ? { id: item.id, etag: item.eTag } : null;
     }
     /** Pre-create the namespace reserved for Payroll, without writing any payroll data. */
     async ensurePayrollNamespace() { await this.folderPath([PAYROLL_DIR], true); }

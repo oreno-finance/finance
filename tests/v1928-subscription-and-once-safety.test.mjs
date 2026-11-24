@@ -71,19 +71,19 @@ test('all dismissal paths use the same changed-only guard and successful save by
   const code=readFileSync(new URL('../src/ui/assets-settings.ts',import.meta.url),'utf8');
   assert.match(code,/const onceHasChanges=\(\):boolean=>onceSnapshot\(\)!==onceBaseline/);
   assert.match(code,/onceBaseline=onceSnapshot\(\);\s*onceDialog\.showModal\(\)/);
-  assert.match(code,/if\(onceHasChanges\(\)&&!window\.confirm\('編集中の入力を破棄して閉じますか？'\)\)return/);
+  assert.match(code,/if\(onceHasChanges\(\)\)\{[\s\S]*?if\(!await requestConfirmation\(\{owner:confirmationOwner,parent:onceDialog,[\s\S]*?destructive:true\}\)\)return/);
   assert.match(code,/\('assets-once-close'\)\.addEventListener\('click',closeOnce\)/);
   assert.match(code,/\('assets-once-cancel'\)\.addEventListener\('click',closeOnce\)/);
-  assert.match(code,/onceDialog\.addEventListener\('cancel',event=>\{event\.preventDefault\(\);closeOnce\(\);\}\)/);
+  assert.match(code,/bindModalDismiss\(onceDialog,\(\)=>\{void closeOnce\(\);\}\)/);
   assert.match(code,/await requireVault\(\)\.upsertOneTime\(entry\);\s*onceDialog\.close\(\);resetOnceForm\(\)/);
   assert.match(code,/isDirty:\(\)=>onceHasChanges\(\)\|\|recurringHasChanges\(\)/);
 });
 
-test('registered UI labels estimate and latest charge separately without mutating source',()=>{
+test('registered UI labels current contract amount and latest charge separately without mutating source',()=>{
   const code=readFileSync(new URL('../src/ui/subscriptions.ts',import.meta.url),'utf8');
   assert.match(code,/latestRegisteredCardCharges\(source\)/);
-  assert.match(code,/登録時の推定額/);
-  assert.match(code,/最新の確認済み明細/);
-  assert.match(code,/登録時との差額/);
+  assert.match(code,/現在の契約額/);
+  assert.match(code,/最新の請求実績/);
+  assert.match(code,/現在の契約額との差額/);
   assert.doesNotMatch(code,/setCardRecurringDecision\(key,\s*latest/);
 });

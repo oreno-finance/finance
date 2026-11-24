@@ -10,8 +10,8 @@ const css=readFileSync(new URL('public/styles/ui-v167.css',root),'utf8');
 
 test('reconnect button remains available with a cached account and allows account selection',()=>{
   assert.match(cloud,/cloud-login'\)\.toggleAttribute\('disabled',busy\)/);
-  assert.match(cloud,/通信を再試行/);
-  assert.match(html,/id="cloud-reauth"[^>]*>Microsoft認証をやり直す/);
+  assert.match(cloud,/通信再試行/);
+  assert.match(html,/id="cloud-reauth"[^>]*>再認証/);
   const handler=cloud.split("$('cloud-login').addEventListener('click'")[1]?.split("$('cloud-reauth').addEventListener('click'")[0]??'';
   assert.match(handler,/await graphClientWithoutRedirect\(\)/);
   assert.match(handler,/loginRedirect\(\{scopes:SCOPES,\.\.\./);
@@ -32,8 +32,8 @@ test('refresh never offers new vault creation when remote data is missing',()=>{
 test('new vault creation is a separate guarded explicit action',()=>{
   assert.match(html,/id="cloud-new-vault"[^>]*class="secondary-action hidden"/);
   assert.match(main,/cloud-new-vault'\)\.classList\.toggle\('hidden',/);
-  assert.match(main,/const nowExists=await liveVault\.discover\(\)/);
-  assert.match(main,/if\(answer\)await askVault\('create'\)/);
+  assert.match(main,/const nowExists=await vault\.discover\(\)/);
+  assert.match(main,/if\(!answer\|\|!valid\(\)[\s\S]*const exists=await vault\.discover\(\);[\s\S]*if\(!valid\(\)[\s\S]*else await askVault\('create'\)/);
 });
 
 test('desktop manager fills full available horizontal width while mobile remains untouched',()=>{

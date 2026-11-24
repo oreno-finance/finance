@@ -58,7 +58,9 @@ test('PDF.js cleanup is on loading task and covers both successful and unsuccess
   const source=readFileSync(new URL('../src/importers/pdf-reader.ts',import.meta.url),'utf8');
   assert.match(source,/const task\s*=\s*lib\.getDocument\(/);
   assert.match(source,/try\s*\{\s*const pdf\s*=\s*await task\.promise;/);
-  assert.match(source,/finally\s*\{\s*await task\.destroy\(\);\s*\}/);
+  assert.match(source,/finally\s*\{\s*signal\?\.removeEventListener\(\x27abort\x27,abort\);await destroy\(\);\s*\}/);
+  assert.match(source,/destruction\?\?=task\.destroy\(\)/);
+  assert.match(source,/addEventListener\('abort',abort,\{once:true\}\)/);
   assert.doesNotMatch(source,/pdf\.destroy\(/);
 });
 
@@ -75,4 +77,10 @@ test('single-read PDF import retains original bytes after PDF.js worker cleanup'
   assert.equal(original[0],pdf[0]);
   await assert.rejects(parsePdfFile(file,original.subarray(1)),/バイト長/);
   assert.equal(reads,1,'mismatched caller bytes must be rejected without a hidden Blob read');
+});
+
+test('Phase 6C: PDF読込の取消後は解析結果を返さない',async()=>{
+ const bytes=syntheticPdf(),controller=new AbortController();let entered,release;const started=new Promise(r=>{entered=r;});
+ const file={name:'cancelled.pdf',size:bytes.length,arrayBuffer:()=>{entered();return new Promise(r=>{release=r;});}};
+ const pending=parsePdfFile(file,undefined,controller.signal);const rejected=assert.rejects(pending,e=>e.name==='AbortError');await started;controller.abort();release(bytes.buffer);await rejected;
 });

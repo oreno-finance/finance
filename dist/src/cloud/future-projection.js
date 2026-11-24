@@ -1,3 +1,4 @@
+import { recurringForCalculation } from '../fixed-costs/payment-history.js';
 /** Long-term savings outlook. Scenario changes are read-only and never written to assets.enc.
  * Existing balance snapshots remain the financial baseline; card/recurring inputs
  * are *scheduled*, not bank-confirmed. No actual NISA returns are inferred. */
@@ -68,15 +69,16 @@ export function futureProjection(doc, records, options, nisaMatches) {
     // Any remaining events in the current month retain their original amounts.
     const currentPeriod = today.slice(0, 7);
     let current = currentPeriod;
+    const recurring = recurringForCalculation(doc);
     for (let i = 0; i <= months; i++) {
         const replacingCash = cashScenarioMonthly !== null && current >= changeMonth && current > currentPeriod;
         const replacingNisa = nisaScenarioMonthly !== null && current >= changeMonth && current > currentPeriod;
-        const events = recurringInMonth(current, doc.recurring);
+        const events = recurringInMonth(current, recurring);
         for (const event of events) {
             if (event.date <= today)
                 continue;
             const e = event.entry;
-            if (recurringCoveredByOneTime(e, event.date, doc.oneTime))
+            if (recurringCoveredByOneTime(e, event.date, doc.oneTime, undefined, recurring))
                 continue;
             const cashDelta = (e.toAccountId === 'cash-savings' ? e.amount : 0) - (e.fromAccountId === 'cash-savings' ? e.amount : 0);
             // Legacy single-rule scenario remains supported for prior saved/test integrations.

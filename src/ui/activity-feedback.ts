@@ -9,6 +9,11 @@ function hideToast():void {
   if(dismissal){clearTimeout(dismissal);dismissal=undefined;}
   if(typeof document!=='undefined')document.getElementById('toast')?.classList.remove('visible');
 }
+export function clearActivity():void {
+  hideToast();previousMessage='';previousKind='';previousAt=0;
+  const panel=document.getElementById('toast');
+  const label=panel?.querySelector<HTMLElement>('.activity-message');if(label)label.textContent='';
+}
 function bindDismiss(panel:HTMLElement):void {
   if(dismissBound)return;
   const button=panel.querySelector<HTMLButtonElement>('.activity-dismiss');

@@ -48,7 +48,7 @@ test('明細管理は手動保存のみ。下書きを切り替えても自動�
  assert.doesNotMatch(dirty,/saveEditedStatement|saveBatch|setTimeout/);
  assert.doesNotMatch(main,/autoSaveTimer/);
  assert.match(main,/\$\('manage-save'\)\.addEventListener\('click',[\s\S]*saveEditedStatement\(s,true\)/);
- assert.match(main,/if\(pending\(\)\.length\|\|failedImports\.length\)unsaved\.push/);
+ assert.match(main,/if\(pending\(\)\.length\|\|failedImports\.length\|\|[^\n]*paste-input[^\n]*\)unsaved\.push/);
  assert.match(html,/id="manage-points"/);
  assert.match(css,/td\[data-label="利用日"\] input\{width:116px/);
 });

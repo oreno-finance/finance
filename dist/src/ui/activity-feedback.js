@@ -11,6 +11,16 @@ function hideToast() {
     if (typeof document !== 'undefined')
         document.getElementById('toast')?.classList.remove('visible');
 }
+export function clearActivity() {
+    hideToast();
+    previousMessage = '';
+    previousKind = '';
+    previousAt = 0;
+    const panel = document.getElementById('toast');
+    const label = panel?.querySelector('.activity-message');
+    if (label)
+        label.textContent = '';
+}
 function bindDismiss(panel) {
     if (dismissBound)
         return;

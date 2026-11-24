@@ -7,7 +7,7 @@ import {forecastBankBalances} from '../dist/src/cloud/salary-projection.js';
 import {bankTimeline} from '../dist/src/summary/bank-timeline.js';
 import {monthlyReport} from '../dist/src/summary/monthly-summary.js';
 import {mizuhoTransferForBill} from '../dist/src/cloud/mizuho-transfer.js';
-import {LiveVault} from '../dist/src/cloud/live-vault.js';
+import {LiveVault} from './helpers/coordinated-vault.mjs';
 import {GraphError} from '../dist/src/cloud/onedrive-api.js';
 import {encryptAssets,decryptAssets,freshSalt,deriveCloudKey} from '../dist/src/cloud/cloud-crypto.js';
 import {readFileSync} from 'node:fs';
@@ -17,7 +17,7 @@ const once=(id='once-1',extra={})=>({id,date:'2026-11-20',name:'現金で支払�
 const snap=(id,account,balance,date='2026-11-16T10:00:00+09:00')=>({id,accountId:account,balance,observedAt:date});
 const entry=(id='rec-1')=>({id,name:'定期保険',amount:6000,kind:'expense',fromAccountId:'rakuten-bank',toAccountId:null,frequency:'monthly',dayOfMonth:20,monthOfYear:null,weekday:null,startOn:'2026-01-01',endOn:null,categoryId:null,enabled:true});
 const doc=()=>({...emptyAssets(),snapshots:[snap('bank-r','rakuten-bank',100000),snap('bank-m','mizuho-bank',0),snap('bank-n','nisa',10000)]});
-const source=(assets,records=[])=>({assets,records,rules:[],categories:[],payroll:{ready:true,syncedAt:1,entries:[{id:'pay-1',employerId:'main',kind:'salary',paidOn:'2026-11-27',payPeriod:'2026-11',netPay:200000,grossPay:null,taxablePay:null,currency:'JPY',revision:1}]},currentPeriod:'2026-11'});
+const source=(assets,records=[])=>({assets:records.length?assets:{...assets,cardNoUseMonths:['2026-11']},records,rules:[],categories:[],payroll:{ready:true,syncedAt:1,entries:[{id:'pay-1',employerId:'main',kind:'salary',paidOn:'2026-11-27',payPeriod:'2026-11',netPay:200000,grossPay:null,taxablePay:null,currency:'JPY',revision:1}]},currentPeriod:'2026-11'});
 class Graph {
   constructor(data){this.data=data;this.fail=false;}
   read(k){const x=this.data.get(k);return x?{text:x.text,id:k,etag:`"${x.rev}"`}:null;}

@@ -4,12 +4,33 @@
  * No raw income documents or decryption keys are persisted by this module.
  */
 export const PAYROLL_INCOME_FORMAT = 'payroll-income-v1' as const;
+export type PayrollJob = 'main' | 'side';
+/** Stable employer identity is not a work role. Legacy entries have no job. */
+export function payrollRole(item: Pick<PayrollIncomeEntry,'job'|'employerId'>):PayrollJob|null {
+  return item.job??(item.employerId==='main'?'main':item.employerId==='side'?'side':null);
+}
+export function payrollRoleLabel(role:PayrollJob|null):string {
+  return role==='main'?'本業':role==='side'?'副業':'勤務区分不明';
+}
+/** Existing salary-name convention: explicit side-job schedules stay separate. */
+export function recurringSalaryRole(entry:{kind:string;name:string}):PayrollJob|null {
+  if(entry.kind!=='income'||!/給与|給料|salary|payroll/i.test(entry.name))return null;
+  return /副業|兼業|side[ -]?job/i.test(entry.name)?'side':'main';
+}
+/** Actual regular pay replaces a same-role, same-payment-month manual schedule
+ * on the explicitly assigned account. A bonus or side job never hides main pay. */
+export function payrollCoversRecurringSalary(entry:{kind:string;name:string;toAccountId:string|null},day:string,
+  entries:readonly PayrollIncomeEntry[],depositAccount:string|null|undefined):boolean {
+  const role=recurringSalaryRole(entry);
+  return !!role&&!!depositAccount&&entry.toAccountId===depositAccount&&entries.some(item=>
+    payrollRole(item)===role&&item.kind==='salary'&&item.paidOn.slice(0,7)===day.slice(0,7));
+}
 export type IncomeKind = 'salary' | 'bonus' | 'adjustment';
 export interface PayrollIncomeEntry {
   id: string;
   employerId: string;
   /** Optional stable work role: employerId is no longer synonymous with main/side. */
-  job?: 'main' | 'side';
+  job?: PayrollJob;
   payPeriod: string; // YYYY-MM of work, may differ from paidOn month
   paidOn: string; // YYYY-MM-DD of actual bank deposit
   grossPay: number | null; // null when Payroll only published its net amount

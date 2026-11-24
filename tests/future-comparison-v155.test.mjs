@@ -72,5 +72,5 @@ test('settings fields fill cards and copy button aligns',()=>{
   assert.match(css,/cloud-dev-test \.cloud-password-control input/);
   assert.match(css,/cloud-troubleshooting #cloud-diagnostic-secret/);
   assert.match(css,/#cloud-diagnostic-copy\{margin-top:0!important/);
-  assert.match(css,/assets-payroll-layout>form \.rules-field\{margin:0!important/);
+  assert.match(readFileSync(new URL('../public/styles/settings-v194.css',import.meta.url),'utf8'),/settings-payroll-fields>\.rules-field\{margin:0;min-width:0/);
 });

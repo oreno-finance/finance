@@ -13,7 +13,7 @@ const handleFilesSource=source.slice(source.indexOf('function importBatchIsClean
 function createHarness({accept=()=>true,decode=()=>'',parse=()=>({}),pdf=()=>({})}={}){
   const events={accepted:[],closed:0,rendered:0,feedback:0,notices:[]};
   const env={
-    filesBusy:false,batchBusy:false,revisionBusy:false,importUploadFeedback:'',failedImports:[],currentUploadFailures:[],
+    filesBusy:false,batchBusy:false,revisionBusy:false,lockSequence:0,importAbort:null,AbortController,importUploadFeedback:'',failedImports:[],currentUploadFailures:[],
     updateImportUploadFeedback:()=>events.feedback++,updateBatchStatus:()=>{},
     showActivity:()=>{},finishActivity:()=>{},render:()=>events.rendered++,
     closeImportAddDialog:()=>events.closed++,
@@ -90,4 +90,11 @@ test('input change snapshots FileList before clearing input; compact presentatio
   assert.match(sourceTs,/\$\('import-compact-empty'\)\.classList\.toggle\('hidden',!compact\|\|hasDrafts\)/);
   assert.match(sourceTs,/hasImportedInThisSession=true;activeIndex=index;render/);
   assert.match(sourceTs,/statements\.unshift\(s\);activeIndex=0;hasImportedInThisSession=true/);
+});
+
+test('Phase 6C: ロック中にCSV読込が終了しても明細やファイル名を再登録しない',async()=>{
+ const {context,events,run}=createHarness();let release,entered;const started=new Promise(r=>{entered=r;});let later=0;
+ const pending=run([{name:'old.csv',size:2,arrayBuffer:()=>{entered();return new Promise(r=>{release=r;});}},{name:'later.csv',size:2,arrayBuffer:async()=>{later++;return new Uint8Array([1,2]).buffer;}}]);
+ await started;context.lockSequence++;context.importAbort.abort();release(new Uint8Array([1,2]).buffer);await pending;
+ assert.equal(later,0);assert.equal(events.accepted.length,0);assert.equal(events.closed,0);assert.equal(context.failedImports.length,0);assert.equal(events.notices.length,0);
 });

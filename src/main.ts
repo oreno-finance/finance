@@ -1,3 +1,6 @@
+import {bindModalDismiss,requestConfirmation,confirmationPending,cancelAllConfirmations} from './ui/modal.js';
+import {formatYen,formatDate,formatMonth,formatPoints,formatNumber} from './ui/formatters.js';
+import {bindMonthNavigator,localMonth,monthInRange} from './ui/period-navigator.js';
 import { CARDS, calculatedTotal, getCard, type ParsedStatement, type ImportRow } from './models/types.js';
 import { parseStatementText } from './importers/statement-parser.js';
 import { parsePdfFile, assertPdfLimits } from './importers/pdf-reader.js';
@@ -16,7 +19,7 @@ import type { CloudRecord } from './cloud/merge.js';
 import { displayMerchant, matchingRule, sortedRules, normalizeMerchant, PALETTE, type CategoryDefinition, type MerchantRule, type MatchMode, type CategoryId, type PaletteId } from './cloud/merchant-rules.js';
 import { importErrors, importDisplayErrors, cardSelectionPending, duplicateMonths } from './importers/batch-policy.js';
 import { prioritizedIndices, orderedPreviewRows, type PreviewSort } from './ui/preview-order.js';
-import { availableYears, availableMonths, calendarBillingPeriod, filteredStatementIndices } from './ui/manage-filter.js';
+import { calendarBillingPeriod, filteredStatementIndices } from './ui/manage-filter.js';
 import { recentMerchants } from './ui/recent-merchants.js';
 import { planCategoryBatch, categoryBatchChanged } from './ui/category-draft.js';
 import { initAssetsSettings, type AssetsUi } from './ui/assets-settings.js';
@@ -33,7 +36,7 @@ import {monthlyReport,prepareMonthlyReports,type MonthlySource} from './summary/
 import { initMonthlyReports, type MonthlyReportsUi } from './ui/monthly-reports.js';
 import { initSubscriptions, type SubscriptionsUi } from './ui/subscriptions.js';
 import { initCardSettings, type CardSettingsUi } from './ui/card-settings.js';
-import { showActivity, simpleActivity, finishActivity } from './ui/activity-feedback.js';
+import { showActivity, simpleActivity, finishActivity, clearActivity } from './ui/activity-feedback.js';
 import { statementPoints } from './summary/point-benefits.js';
 import { hasInterruptionRisk, shouldRefreshOnFocus, type InterruptionSnapshot } from './ui/safety-policy.js';
 
@@ -42,7 +45,7 @@ const $ = <T extends HTMLElement>(id: string): T => {
   if (!node) throw new Error(`Missing element #${id}`);
   return node as T;
 };
-const yen = (n: number | null): string => n === null ? '未取得' : `${n.toLocaleString('ja-JP')}円`;
+const yen=(n:number|null)=>formatYen(n,0,'未取得');
 const statements: ParsedStatement[] = [];
 const failedImports: string[] = [];
 // Errors attached to the active uploader attempt only. Historical failures stay
@@ -79,6 +82,7 @@ let activeIndex = -1;
 let clipboardHtml = '';
 let batchBusy = false;
 let filesBusy = false;
+let importAbort:AbortController|null=null;
 let importUploadFeedback = '';
 let hasImportedInThisSession = false;
 let revisionBusy = false;
@@ -98,18 +102,20 @@ let returnToHome: 'import'|'manage'|'assets'|null = null;
 let homeNavigationPending=false;
 let summaryReturnPageY = 0;
 let summaryReturnContentY = 0;
-let lastSavedAt: string | null = null;
 let editingRuleId: string | null = null;
 let rulesBusy = false;
 let categoryDraft: CategoryDefinition[] | null = null;
 let categoryBaseline: CategoryDefinition[] = [];
 let categorySaving = false;
+const ordinaryConfirmationOwner={};
 let cloudRefreshing = false;
 let lastCloudCheckAt = 0;
 
 /** A single source of truth for operations that must not be interrupted. */
 function interruptionState():InterruptionSnapshot {
   const busy:string[]=[];const unsaved:string[]=[];
+  if(confirmationPending())busy.push('操作の確認');
+  if(homeUi?.isBusy()||summaryUi?.isBusy())busy.push('月次確認の保存');
   if(batchBusy)busy.push('カード明細の保存');
   if(filesBusy)busy.push('ファイルの解析');
   if(revisionBusy)busy.push('明細の差し替え確認');
@@ -123,12 +129,12 @@ function interruptionState():InterruptionSnapshot {
   if(liveVault?.hasPendingYearBatch)busy.push('明細の保存結果の確認');
   if(cloudRefreshing)busy.push('OneDriveの更新');
   if(cloudStartupRunning&&liveVault?.unlocked)busy.push('OneDriveの接続確認');
-  if(pending().length||failedImports.length)unsaved.push('カード明細');
+  if(pending().length||failedImports.length||$<HTMLTextAreaElement>('paste-input').value.trim())unsaved.push('カード明細');
   if(assetsUi?.isDirty())unsaved.push('口座設定');
   if(cardSettingsUi?.isDirty())unsaved.push('カード設定');
   if(reportsUi?.isDirty())unsaved.push('月次レポートのメモ');
   if(subscriptionsUi?.isDirty())unsaved.push('固定費の編集');
-  if(categoryDraft){try{if(categoryBatchChanged(categoryPlan()))unsaved.push('カテゴリー編集');}
+  if(categoryDraft){try{if(categoryBatchChanged(categoryPlan())||$<HTMLInputElement>('rules-category-name').value.trim())unsaved.push('カテゴリー編集');}
     catch{unsaved.push('カテゴリー編集');}}
   if(ruleFormHasChanges())unsaved.push('利用先ルール');
   return {busy,unsaved};
@@ -138,10 +144,28 @@ function assertRefreshSafe():void {
   if(state.busy.length)throw new Error(`${state.busy.join('・')}が完了してから更新してください。`);
   if(state.unsaved.length)throw new Error(`未保存の${state.unsaved.join('・')}があります。保存または破棄してから更新してください。`);
 }
-function confirmInterruption(label:string):boolean {
+const securityConfirmationOwner={};
+/** Bind authorization to the same local vault, lock epoch and account. No credentials are displayed or persisted. */
+function confirmationContext():()=>boolean {
+  const epoch=lockSequence,vault=liveVault,unlocked=vault?.unlocked,account=activeMicrosoftAccountId(),client=clientIdForTab();
+  return ()=>epoch===lockSequence&&vault===liveVault&&unlocked===vault?.unlocked&&account===activeMicrosoftAccountId()&&client===clientIdForTab();
+}
+let draftInputRevision=0;
+function interruptionDraftFingerprint():string {
+  return JSON.stringify([draftInputRevision,pending(),failedImports,categoryDraft,categoryBaseline,ruleFormFingerprint(),
+    $<HTMLTextAreaElement>('paste-input').value,clipboardHtml]);
+}
+async function confirmInterruption(label:string):Promise<boolean> {
   const state=interruptionState();
-  if(state.busy.length){operationResult(`${state.busy.join('・')}が進行中です。${label}はできません。`,'warn');return false;}
-  return !state.unsaved.length||window.confirm(`未保存の${state.unsaved.join('・')}があります。破棄して${label}しますか？`);
+  if(currentModal!==null||$<HTMLDialogElement>('legacy-cleanup-dialog').open||state.busy.length){operationResult(`${state.busy.join('・')||'保管庫の操作'}が進行中です。${label}はできません。`,'warn');return false;}
+  if(!state.unsaved.length)return true;
+  const valid=confirmationContext(),baseline=interruptionDraftFingerprint();
+  if(!await requestConfirmation({owner:securityConfirmationOwner,title:`未保存の変更を破棄して${label}しますか？`,message:`未保存の${state.unsaved.join('・')}があります。保存していない内容は失われます。`,acceptLabel:`破棄して${label}`,cancelLabel:'編集を続ける',destructive:true}))return false;
+  const next=interruptionState();
+  if(!valid()||next.busy.length||currentModal!==null||$<HTMLDialogElement>('legacy-cleanup-dialog').open||JSON.stringify(next.unsaved)!==JSON.stringify(state.unsaved)||baseline!==interruptionDraftFingerprint()){
+    operationResult('確認中に状態が変更されました。再度操作してください。','warn');return false;
+  }
+  return true;
 }
 
 const ruleModes:Record<MatchMode,string>={exact:'完全一致',prefix:'前方一致',contains:'部分一致'};
@@ -203,7 +227,7 @@ function markManagerInlineDirty(s: ParsedStatement): void {
   if ($('manage-view').classList.contains('hidden') || active() !== s) return;
   updateManagerEditState(s);
 }
-function dateDisplay(value: string | null | undefined): string { return value ? value.replace(/-/g, '/') : '未取得'; }
+function dateDisplay(value:string|null|undefined):string {return formatDate(value,'未取得');}
 function validDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const d = new Date(`${value}T00:00:00Z`);
@@ -245,7 +269,6 @@ function importActive(): ParsedStatement | undefined {
 
 function toast(text: string): void { simpleActivity(text); }
 function operationResult(message: string, kind: 'good' | 'working' | 'bad' | 'warn' = 'good'): void {
-  if (kind === 'good') lastSavedAt = new Date().toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
   showActivity(message,kind);
 }
 function sessionStorageSafe(): Storage | null {
@@ -279,13 +302,44 @@ function broadcastVaultLock():void {
 /** Force-close sensitive views on a lock from this tab or another one. */
 function clearUnlockedFinanceViews():void {
   lockSequence++;
-  activeAnalysisDrilldown=null;drilldownRows.clear();liveVault?.lock();
+  $<HTMLButtonElement>('manage-clear-changes').disabled=true;
+  importAbort?.abort();clearActivity();
+  cancelAllConfirmations();
+  const legacyDialog=document.getElementById('legacy-cleanup-dialog') as HTMLDialogElement|null;
+  if(legacyDialog?.open)legacyDialog.close();
+  const revisionDialog=document.getElementById('import-revision-dialog') as HTMLDialogElement|null;
+  if(revisionDialog?.open)revisionDialog.close();
+  for(const id of ['import-revision-details','import-revision-stats','import-revision-summary'])$(id).replaceChildren();
+  $<HTMLInputElement>('import-revision-override-accept').checked=false;
+  activeAnalysisDrilldown=null;analysisDrilldownSeed=null;drilldownRows.clear();liveVault?.lock();
   if(currentModal!==null)modalClose(false);
+  closeImportAddDialog();
+  $<HTMLTextAreaElement>('paste-input').value='';clipboardHtml='';lockVault();
+  for(const id of ['cloud-passphrase','cloud-current-secret','cloud-next-secret','cloud-next-confirm','legacy-cleanup-secret'])clearPasswordField(id);
   resetRuleEditor();categoryDraft=null;categoryBaseline=[];
+  const recentDialog=$<HTMLDialogElement>('recent-merchants-dialog');
+  if(recentDialog.open)recentDialog.close();
+  $('recent-merchants-list').replaceChildren();$('recent-merchants-count').textContent='';
+  $<HTMLInputElement>('recent-merchants-search').value='';
+  currentUploadFailures.splice(0);importUploadFeedback='';
+  $('rules-list').replaceChildren();$('rules-list-count').textContent='';
+  $('rules-category-list').replaceChildren();
+  $<HTMLInputElement>('rules-category-name').value='';$('rules-category-status').textContent='';
   const categoriesDialog=document.getElementById('categories-dialog') as HTMLDialogElement|null;
   if(categoriesDialog?.open)categoriesDialog.close();
   summaryUi?.reset();futureUi?.reset();homeUi?.reset();analysisUi?.reset();reportsUi?.reset();subscriptionsUi?.reset();
   statements.splice(0);failedImports.splice(0);activeIndex=-1;
+  hasImportedInThisSession=false;
+  // Hidden views and the import render deferral must not retain financial DOM.
+  for(const id of ['statement-list','transaction-rows','notice-list','manage-list','manage-rows','manage-drilldown-breakdown','manage-drilldown-title','manage-validation'])$(id).replaceChildren();
+  for(const id of ['card-display','detail-month','detail-date','detail-count','amount-stated','amount-calculated','amount-diff','manage-month','manage-payment','manage-status'])$(id).textContent='—';
+  $('manage-points').querySelector('strong')!.textContent='—';
+  $<HTMLSelectElement>('manage-card').replaceChildren();
+  fillRuleCategoryOptions();refreshCardOptionLabels();
+  for(const choice of ['import-rakuten-choice','import-smbc-choice']){
+    const field=$(choice);field.classList.add('hidden');field.querySelectorAll<HTMLInputElement>('input').forEach(x=>x.checked=false);
+  }
+  buildStatementList();renderSummary();renderRows();updateBatchStatus();renderManager();
   render();renderRules();assetsUi?.reset();cardSettingsUi?.reset();updateCloudStatus();
   void updateBrowserRememberStatus();
 }
@@ -312,10 +366,10 @@ async function updateBrowserRememberStatus():Promise<void> {
         : '記憶済み。次回からパスフレーズを入力せずに開けます。';
       forget.classList.remove('hidden');forget.disabled=false;
     }else if(liveVault?.unlocked&&!liveVault.isRotating){
-      status.textContent='未設定。次回はパスフレーズの入力が必要です。';
+      status.textContent='毎回入力';
       register.classList.remove('hidden');register.disabled=false;
     }else{
-      status.textContent='未設定。保管庫の解除時に「このブラウザを記憶する」を選べます。';
+      status.textContent='毎回入力（解除時に変更可能）';
     }
   }catch(error){
     status.textContent=error instanceof InvalidRememberedBrowserKeyError
@@ -482,7 +536,7 @@ function discardImportDraft(index: number, announce = true): void {
 }
 
 async function deleteStatement(index: number): Promise<void> {
-  if (batchBusy || filesBusy) return;
+  if (batchBusy || filesBusy || revisionBusy || confirmationPending()) return;
   const statement = statements[index];
   if (!statement) return;
   const name = cardDisplayName(statement.cardId) ?? providerLabel(statement.provider);
@@ -494,16 +548,24 @@ async function deleteStatement(index: number): Promise<void> {
   // Stored records always require confirmation, even when validation currently fails.
   // Only unreviewable, never-saved import drafts may be discarded in one click.
   const mustConfirm = !!storedId || !needsReview(statement);
-  if (mustConfirm && !window.confirm(message)) return;
+  const vault=liveVault,epoch=lockSequence,baseline=JSON.stringify(statement);
+  if(storedId&&!vault?.unlocked)return;
+  if (mustConfirm && !await requestConfirmation({owner:ordinaryConfirmationOwner,title:storedId?'明細を削除しますか？':'下書きを破棄しますか？',
+    message,acceptLabel:storedId?'削除する':'破棄する',destructive:true})) return;
+  if(epoch!==lockSequence||liveVault!==vault||batchBusy||filesBusy||revisionBusy)return;
+  if(!statements.includes(statement)||JSON.stringify(statement)!==baseline||savedIds.get(statement)!==storedId||storedId&&!vault?.unlocked){
+    toast('明細が更新されました。最新情報から確認してください。');return;
+  }
   batchBusy = true;
   operationResult(storedId ? `${name}の明細をOneDriveから削除中…` : `${name}の下書きを破棄しています…`, 'working');
   render();
   try {
     if (storedId) {
-      if (!liveVault?.unlocked) throw new Error('OneDrive保管庫を解除してください。');
-      await liveVault.delete(storedId);
+      if (!vault?.unlocked) throw new Error('OneDrive保管庫を解除してください。');
+      await vault.delete(storedId);
     }
-    const mutationWarning=storedId?liveVault?.takeMutationWarning():null;
+    if(epoch!==lockSequence||liveVault!==vault)return;
+    const mutationWarning=storedId?vault?.takeMutationWarning():null;
     const current = statements.indexOf(statement);
     if (current < 0) return;
     statements.splice(current, 1);
@@ -579,7 +641,6 @@ function renderSummary(): void {
   else if (cardSelectionPending(s)) setBadgeState('pill info', 'カード選択待ち');
   else if (s.confirmation === 'provisional') setBadgeState('pill info', '暫定明細・照合OK');
   else setBadgeState('pill good', '照合OK');
-  $('verification-ok').classList.toggle('hidden', !balanced(s));
   const notices = $('notice-list'); notices.replaceChildren();
   if (!balanced(s) && s.rows.length && s.statedTotal !== null) notices.append(notice(`差額が${yen(diff)}あります。金額や未抽出の行を確認してください。`, 'bad'));
   if (s.confirmation === 'provisional') notices.append(notice('請求確定前の明細です。確定後に請求額が変わる場合があります。', 'info'));
@@ -655,16 +716,17 @@ function initCloudActionControls(): void {
   })();});
 }
 
+function renderStatementSortControl(id:string,label:string,direction:'asc'|'desc'|null):void {
+  const button=$<HTMLButtonElement>(id);
+  button.querySelector('.sort-arrow')!.textContent=direction==='asc'?'↑':direction==='desc'?'↓':'↕';
+  button.classList.toggle('active',direction!==null);
+  button.setAttribute('aria-label',`${label}を${direction==='asc'?'降順':'昇順'}に並べ替え`);
+  button.title=direction==='asc'?'昇順（クリックで降順）':direction==='desc'?'降順（クリックで昇順）':'クリックで昇順';
+  button.closest('th')!.setAttribute('aria-sort',direction==='asc'?'ascending':direction==='desc'?'descending':'none');
+}
 function renderSortControls(): void {
-  for (const [key, id] of [['usedOn', 'sort-date'], ['amount', 'sort-amount']] as const) {
-    const button = $<HTMLButtonElement>(id);
-    const direction = previewSort?.key === key ? previewSort.direction : null;
-    button.querySelector('.sort-arrow')!.textContent = direction === 'asc' ? '↑' : direction === 'desc' ? '↓' : '↕';
-    button.classList.toggle('active', direction !== null);
-    button.setAttribute('aria-label', `${key === 'usedOn' ? '利用日' : '当月請求額'}を${direction === 'asc' ? '降順' : '昇順'}に並べ替え`);
-    button.title = direction === 'asc' ? '昇順（クリックで降順）' : direction === 'desc' ? '降順（クリックで昇順）' : 'クリックで昇順';
-    button.closest('th')!.setAttribute('aria-sort', direction === 'asc' ? 'ascending' : direction === 'desc' ? 'descending' : 'none');
-  }
+  for (const [key,id,label] of [['usedOn','sort-date','利用日'],['amount','sort-amount','当月請求額']] as const)
+    renderStatementSortControl(id,label,previewSort?.key===key?previewSort.direction:null);
 }
 
 function renderRows(): void {
@@ -678,7 +740,7 @@ function renderRows(): void {
   }
   for (const row of orderedPreviewRows(s.rows, previewSort)) {
     const tr = document.createElement('tr');
-    for (const value of [dateDisplay(row.usedOn), merchantFor(row,s), row.amount.toLocaleString('ja-JP'), row.description || '—']) {
+    for (const value of [dateDisplay(row.usedOn), merchantFor(row,s), formatNumber(row.amount), row.description || '—']) {
       const td = document.createElement('td'); td.textContent = value; td.title = value; tr.append(td);
     }
     // Keep the category badge beside the merchant instead of adding a second line.
@@ -710,15 +772,15 @@ function updateBatchStatus(): void {
   paymentAction.classList.toggle('hidden',missingPaymentCards.length===0);
   button.disabled = !drafts.length || errorCount > 0 || batchBusy || filesBusy || revisionBusy;
   $('clear-all').classList.toggle('hidden', importQueue().length + failedImports.length === 0);
-  button.textContent = batchBusy ? 'OneDriveに保存中…' : drafts.length ? `明細 ${drafts.length}件を一括取り込む` : '明細を一括取り込む';
+  button.textContent = batchBusy ? '保存中…' : '保存';
   const otherErrors=errors.filter(s=>!(s.sourceKind==='csv'&&!s.paymentDate&&issues(s).every(e=>e==='支払日が不明または不正です'))).length+failedImports.length;
   $('batch-status').textContent = otherErrors
     ? `${otherErrors}件に不備があります`
     : missingPaymentCards.length ? `${missingPaymentCards.length}枚のカードの引落日が未設定`
       : selectionOnly.length ? `${selectionOnly.length}件のカード選択待ち`
         : errorCount ? `${errorCount}件に不備があります`
-          : drafts.length ? `${drafts.length}件をまとめて取り込み` : '取込対象はありません';
-  $('batch-description').textContent = otherErrors ? '不備がある明細は保存できません。' : '';
+          : drafts.length ? `${drafts.length}件の明細` : '保存対象はありません';
+  $('batch-description').textContent = '';
 }
 
 /** One adapter supplies the state and actions; every gated page uses the same UI. */
@@ -807,7 +869,7 @@ function updateCloudStatus(message?:string):void {
   }
   const label=$('cloud-live-status');
   const bar=$('cloud-live-bar');
-  const state=!liveVault?'未接続':liveVault.unlocked?'接続済み':!vaultDiscoveryCompleted?'確認中':liveVault.exists?'ロック中':'保管庫なし';
+  const state=!liveVault?'未確認':liveVault.unlocked?'解除済み':!vaultDiscoveryCompleted?'確認中':liveVault.exists?'ロック中':'保管庫なし';
   // New vault creation is an explicit action, never a side effect of refresh.
   $('cloud-new-vault').classList.toggle('hidden',!liveVault||!vaultDiscoveryCompleted||liveVault.exists||liveVault.unlocked);
   const connectionIssue=message
@@ -819,7 +881,10 @@ function updateCloudStatus(message?:string):void {
     : null;
   const cloudIssue=cloudConnectionNotice();
   label.textContent=!liveVault?.unlocked&&['network','reauth','restore','mismatch','unknown'].includes(cloudIssue.kind)
-    ?cloudIssue.message:connectionIssue??state;
+    ?state:connectionIssue??state;
+  if(connectionIssue==='OneDriveへのアクセス権限がありません')label.textContent=connectionIssue;
+  $('cloud-live-lock').classList.toggle('hidden',!liveVault?.unlocked);
+  $('cloud-live-refresh').textContent=liveVault?.exists&&!liveVault.unlocked&&vaultDiscoveryCompleted?'保管庫を解除':'最新データ取得';
   // Keep the global bar quiet when connected. Only missing access or an error needs attention.
   const failure=message && /失敗|エラー|不備|接続してください|未保存|更新確認/.test(message);
   bar.textContent='';
@@ -844,12 +909,12 @@ function collisionValue(value:unknown):string {
   if(typeof value==='string')return value.slice(0,75);
   return JSON.stringify(value).slice(0,90);
 }
-function confirmCloudConflicts(title:string,rows:readonly {label:string;field:string;local:string;remote:string}[]):boolean {
-  const details=rows.slice(0,5).map(item=>
+async function confirmCloudConflicts(title:string,rows:readonly {label:string;field:string;local:string;remote:string}[]):Promise<boolean> {
+  if(!liveVault?.unlocked||rows.length>50)return false;
+  const valid=confirmationContext();
+  const details=rows.map(item=>
     `・${item.label} / ${collisionLabel[item.field]??item.field}\n  この端末：${item.local}\n  OneDrive：${item.remote}`).join('\n');
-  const suffix=rows.length>5?`\nほか${rows.length-5}項目`:'',
-    info=`${title}（${rows.length}件）\n${details}${suffix}\n\n［OK］この端末の変更を採用して保存\n［キャンセル］保存せずOneDriveの値を保持`;
-  return window.confirm(info);
+  return await requestConfirmation({owner:securityConfirmationOwner,title:`${title}（${rows.length}件）`,message:details+'\n\nこの端末の変更を採用すると、表示された競合項目が上書きされます。',acceptLabel:'この端末の変更を保存',cancelLabel:'保存しない',destructive:true})&&valid();
 }
 
 let cloudConnectDismissed=false;
@@ -883,13 +948,14 @@ async function startCloud():Promise<void> {
     liveVault=new LiveVault(client);
     const authAccountId=activeMicrosoftAccountId();
     liveVaultRememberContext=authAccountId?{clientId:clientIdForTab(),homeAccountId:authAccountId}:null;
-    liveVault.setAssetConflictResolver((collisions,details=[])=>confirmCloudConflicts('資産設定に同時編集があります',
+    const resolverVault=liveVault;
+    liveVault.setAssetConflictResolver((collisions,details=[])=>resolverVault===liveVault&&confirmCloudConflicts('資産設定に同時編集があります',
       collisions.map((item,i)=>({label:details[i]?.label??item.itemId,field:item.field,
         local:details[i]?.localValue??'変更あり',remote:details[i]?.remoteValue??'別端末で変更あり'}))));
-    liveVault.setStatementConflictResolver(collisions=>confirmCloudConflicts('カード明細に同時編集があります',
+    liveVault.setStatementConflictResolver(collisions=>resolverVault===liveVault&&confirmCloudConflicts('カード明細に同時編集があります',
       collisions.map(item=>({label:`明細 ${item.recordId.slice(0,12)} / ${item.path.replace(/^record\.statement\./,'')}`,
         field:item.path.split('.').at(-1)??item.path,local:collisionValue(item.local),remote:collisionValue(item.remote)}))));
-    liveVault.setRuleConflictResolver(collisions=>confirmCloudConflicts('利用先ルール・カテゴリーに同時編集があります',
+    liveVault.setRuleConflictResolver(collisions=>resolverVault===liveVault&&confirmCloudConflicts('利用先ルール・カテゴリーに同時編集があります',
       collisions.map(item=>({label:item.ruleId.startsWith('category:')?`カテゴリー ${item.ruleId.slice(9)}`:`利用先ルール ${item.ruleId.slice(0,16)}`,
         field:item.field,local:collisionValue(item.local),remote:collisionValue(item.remote)}))));
     assetsUi?.render();futureUi?.render();cardSettingsUi?.render();
@@ -977,7 +1043,9 @@ async function migrateLegacy():Promise<void> {
   if(liveVault.exists&&!liveVault.unlocked) {
     if(!await askVault('unlock'))return;
   }
-  if(!window.confirm('旧IndexedDBの明細とPDFを暗号化してOneDriveへ移行します。旧データは削除しません。すでに移行済みの明細IDは上書きしません。続行しますか？'))return;
+  const valid=confirmationContext();
+  if(!await requestConfirmation({owner:securityConfirmationOwner,title:'旧データを移行しますか？',message:'旧IndexedDBの明細とPDFを暗号化してOneDriveへ移行します。旧データは削除しません。すでに移行済みの明細IDは上書きしません。',acceptLabel:'移行する'})||!valid())return;
+  assertRefreshSafe();
   await askVault('migrate');
 }
 
@@ -1016,6 +1084,7 @@ function initLegacyCleanup():void {
       id=>liveVault!.original(id));
   };
   $('cloud-legacy-cleanup').addEventListener('click',()=>{
+    if(busy||confirmationPending()||dialog.open)return;
     reset();dialog.showModal();
   });
   $('legacy-cleanup-close').addEventListener('click',()=>{if(!busy)dialog.close();});
@@ -1052,16 +1121,20 @@ function initLegacyCleanup():void {
   });});
   deleteButton.addEventListener('click',()=>{void execute(async()=>{
     if(!verified||!backup)throw new Error('バックアップの確認が必要です。');
-    // Refresh and compare once more immediately before deletion.
+    const valid=confirmationContext(),approvedBackup=backup;
+    if(!await requestConfirmation({owner:securityConfirmationOwner,parent:dialog,title:'この端末の旧データを削除しますか？',message:'確認済みバックアップとOneDriveの移行済み明細を再照合し、この端末の旧IndexedDBだけを削除します。',acceptLabel:'削除する',destructive:true})||!valid()||!verified||backup!==approvedBackup)return;
+    // Refresh and compare once more immediately after approval, before deletion.
     await compare();
+    if(!valid()||!verified||backup!==approvedBackup||!dialog.open)return;
     // An old tab may have updated IndexedDB after the download. Never delete
     // records unless the selected backup still covers the exact latest ciphertext.
-    const exported=JSON.parse(await backup.text()) as Record<string,unknown>;
+    const exported=JSON.parse(await approvedBackup.text()) as Record<string,unknown>;
     const current=JSON.parse(await (await exportEncryptedBackup()).text()) as Record<string,unknown>;
     delete exported.createdAt;delete current.createdAt;
     if(JSON.stringify(exported)!==JSON.stringify(current))
       throw new Error('旧データが更新されています。もう一度照合とバックアップを行ってください。');
-    if(!window.confirm('この端末の旧データを削除します。よろしいですか？'))return;
+    if(!valid()||!verified||backup!==approvedBackup||!dialog.open)return;
+    assertSafe();
     await deleteLegacyVault();
     verified=false;backup=null;dialog.close();
     toast('旧データを削除しました。');
@@ -1268,19 +1341,6 @@ function selectVisibleManagerStatement(): void {
   if (!indices.includes(activeIndex)) activeIndex = indices[0] ?? -1;
 }
 
-function setOptions(select: HTMLSelectElement, choices: Array<[string, string]>, selected: string): void {
-  // Reuse the existing option nodes where possible: changes should not reset focus.
-  const current = choices.map(([value]) => value).join('|');
-  const previous = Array.from(select.options).map(option => option.value).join('|');
-  if (current !== previous) {
-    select.replaceChildren(...choices.map(([value, label]) => {
-      const option = document.createElement('option'); option.value = value; option.textContent = label;
-      return option;
-    }));
-  }
-  select.value = selected;
-}
-
 function renderManagerFilters(context?:AnalysisReportContext|null): number[] { /* finance-v149 / P2 payment-month drill-down */
   const drilldown=activeAnalysisDrilldown;
   $('manage-drilldown').classList.toggle('hidden',!drilldown);
@@ -1289,32 +1349,33 @@ function renderManagerFilters(context?:AnalysisReportContext|null): number[] { /
     $('manage-drilldown-title').textContent=`${drilldown.label} · ${drilldownPeriodLabel(drilldown.periods)}`;
     $('manage-drilldown-description').textContent='支払月で絞り込み中 · 該当する取引行のみ表示';
   }
-  const picker=$<HTMLInputElement>('manage-period');
-  picker.value=manageYear==='all'||manageMonth==='all'?'':`${manageYear}-${manageMonth}`;
-  $('manage-show-all').classList.toggle('active',manageYear==='all'&&manageMonth==='all');
+  syncManagerPeriod?.();
   return managerIndices(context);
 }
+let syncManagerPeriod:(()=>void)|undefined;
+const managerPeriodOptions=()=>({label:'請求月',today:localMonth(),all:()=>{manageYear='all';manageMonth='all';selectVisibleManagerStatement();renderManager();}});
 function manageChangePeriod(period:string):void {
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))return;
+  if (!monthInRange(period,managerPeriodOptions()))return;
   manageYear=period.slice(0,4);manageMonth=period.slice(5);
   selectVisibleManagerStatement();renderManager();
-}
-function manageShiftMonth(offset:number):void {
-  const current=manageYear!=='all'&&manageMonth!=='all'?`${manageYear}-${manageMonth}`:
-    `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
-  const year=Number(current.slice(0,4)),month=Number(current.slice(5,7));
-  const target=new Date(Date.UTC(year,month-1+offset,1));
-  manageChangePeriod(`${target.getUTCFullYear()}-${String(target.getUTCMonth()+1).padStart(2,'0')}`);
 }
 
 function openRecurringForReview(entryId:string):void {
   const vault=liveVault;
   if(!vault?.unlocked){toast('OneDrive保管庫を解除してください。');return;}
-  if(!vault.assetSettings().recurring.some(item=>item.id===entryId)){
+  if(entryId.startsWith('cash:')){
+    const id=entryId.slice(5);
+    if(!vault.assetSettings().fixedCosts?.some(item=>item.id===id)&&!vault.assetSettings().recurring.some(item=>item.id===id&&item.kind==='expense')){toast('固定費が見つかりません。OneDriveを更新してください。');return;}
+    showView('subscriptions');subscriptionsUi?.openFixedCost(id);return;
+  }
+  const entry=vault.assetSettings().recurring.find(item=>item.id===entryId);
+  if(!entry&&vault.assetSettings().fixedCosts?.some(item=>item.id===entryId)){showView('subscriptions');subscriptionsUi?.openFixedCost(entryId);return;}
+  if(!entry){
     toast('定期入出金が見つかりません。OneDriveを更新してください。');return;
   }
+  if(entry.kind==='expense'){showView('subscriptions');subscriptionsUi?.openFixedCost(entryId);return;}
   showView('assets');
-  if(!assetsUi?.openRecurring(entryId))toast('定期入出金の編集画面を開けませんでした。');
+  void assetsUi?.openRecurring(entryId);
 }
 
 function renderManagerDrilldownBreakdown(context?:AnalysisReportContext|null):void {
@@ -1328,10 +1389,10 @@ function renderManagerDrilldownBreakdown(context?:AnalysisReportContext|null):vo
     const data=analysisDrilldownBreakdown(source,request,context?.reports);
     const heading=document.createElement('h2');heading.textContent='対象金額の内訳';block.append(heading);
     const summary=div('manage-breakdown-totals');
-    for(const [label,amount] of [['カード取引',data.cardAmount],['銀行の定期支出予定',data.recurringAmount],['単発支出（実行済み）',data.oneTimeAmount],['分析の合計',data.total]] as const){
+    for(const [label,amount] of [['カード取引',data.cardAmount],['銀行・現金の固定支出予定',data.recurringAmount],['単発支出（実行済み）',data.oneTimeAmount],['分析の合計',data.total]] as const){
       const item=div('manage-breakdown-total');
       const name=document.createElement('span');name.textContent=label;
-      const value=document.createElement('strong');value.textContent=`${amount.toLocaleString('ja-JP')}円`;
+      const value=document.createElement('strong');value.textContent=yen(amount);
       item.append(name,value);summary.append(item);
     }
     block.append(summary);
@@ -1340,8 +1401,8 @@ function renderManagerDrilldownBreakdown(context?:AnalysisReportContext|null):vo
       const title=document.createElement('h3');title.textContent='年別の内訳';compare.append(title);
       for(const row of data.byYear){
         const item=div('manage-breakdown-total');
-        const year=document.createElement('span');year.textContent=`${row.year}年（カード${row.cardAmount.toLocaleString('ja-JP')}円／定期${row.recurringAmount.toLocaleString('ja-JP')}円／単発${row.oneTimeAmount.toLocaleString('ja-JP')}円）`;
-        const total=document.createElement('strong');total.textContent=`${row.total.toLocaleString('ja-JP')}円`;
+        const year=document.createElement('span');year.textContent=`${row.year}年（カード${yen(row.cardAmount)}／定期${yen(row.recurringAmount)}／単発${yen(row.oneTimeAmount)}）`;
+        const total=document.createElement('strong');total.textContent=yen(row.total);
         item.append(year,total);compare.append(item);
       }
       block.append(compare);
@@ -1353,7 +1414,7 @@ function renderManagerDrilldownBreakdown(context?:AnalysisReportContext|null):vo
         const line=div('manage-breakdown-recurring-item');
         const label=div('manage-breakdown-recurring-name');
         const name=document.createElement('strong');name.textContent=entry.name;
-        const detail=document.createElement('small');detail.textContent=`${entry.date} · ${entry.amount.toLocaleString('ja-JP')}円`;
+        const detail=document.createElement('small');detail.textContent=`${formatDate(entry.date)} · ${yen(entry.amount)}`;
         label.append(name,detail);
         const button=document.createElement('button');button.type='button';button.className='secondary-action';
         button.textContent='口座管理で確認';button.addEventListener('click',()=>showView('assets'));
@@ -1363,17 +1424,17 @@ function renderManagerDrilldownBreakdown(context?:AnalysisReportContext|null):vo
     }
     if(data.recurring.length){
       const note=document.createElement('p');note.className='manage-breakdown-note';
-      note.textContent='銀行の定期支出は予定として計上しています。カード取引とは別に、以下から確認・修正できます。';
+      note.textContent='銀行・現金の固定支出は予定として計上しています。カード取引とは別に、以下から確認・修正できます。';
       block.append(note);
       const list=div('manage-breakdown-recurring');
       for(const entry of data.recurring){
         const row=div('manage-breakdown-recurring-item');
         const name=div('manage-breakdown-recurring-name');
         const title=document.createElement('strong');title.textContent=entry.name;
-        const detail=document.createElement('small');detail.textContent=`${entry.date} · ${entry.amount.toLocaleString('ja-JP')}円${entry.cardOverlap?' · カードと重複の可能性':''}`;
+        const detail=document.createElement('small');detail.textContent=`${formatDate(entry.date)} · ${yen(entry.amount)}${entry.cardOverlap?' · カードと重複の可能性':''}`;
         name.append(title,detail);
         const button=document.createElement('button');button.type='button';button.className='secondary-action';
-        button.textContent='口座管理で確認';button.addEventListener('click',()=>openRecurringForReview(entry.entryId));
+        button.textContent='固定費管理で確認';button.addEventListener('click',()=>openRecurringForReview(entry.entryId));
         row.append(name,button);list.append(row);
       }
       block.append(list);
@@ -1388,7 +1449,8 @@ function renderManagerDrilldownBreakdown(context?:AnalysisReportContext|null):vo
 /** Update editing feedback without replacing inputs, rows or action buttons. */
 function updateManagerEditState(s:ParsedStatement):void {
   $('manage-status').textContent=hasUnsavedChanges(s)?'未保存の変更':'保存済み';
-  $('manage-points').querySelector('strong')!.textContent=`${statementPoints(s,liveVault?.unlocked?liveVault.assetSettings().cardPreferences:undefined).toLocaleString('ja-JP')} pt`;
+  $<HTMLButtonElement>('manage-clear-changes').disabled=batchBusy||filesBusy||cloudRefreshing||!savedIds.has(s)||importStaged.has(s)||!hasUnsavedChanges(s)||!liveVault?.unlocked;
+  $('manage-points').querySelector('strong')!.textContent=s.cardId&&!displayIssues(s).length?formatPoints(statementPoints(s,liveVault?.unlocked?liveVault.assetSettings().cardPreferences:undefined)):'—';
   $<HTMLButtonElement>('manage-save').disabled=batchBusy||filesBusy||!hasUnsavedChanges(s);
   const errors=displayIssues(s);
   $('manage-validation').textContent=errors.length?`要修正：${errors.join(' / ')}`:cardSelectionPending(s)?'カード選択待ち':hasUnsavedChanges(s)?'変更は保存ボタンを押すまで反映されません。':'検証OK。';
@@ -1444,30 +1506,27 @@ function renderManager(): void {
   empty.classList.toggle('hidden', !!s);
   empty.querySelector('h3')!.textContent = indices.length ? '編集する明細を選択してください' : '該当する明細がありません';
   $('manage-content').classList.toggle('hidden', !s);
-  if (!s) return;
+  if (!s) { $<HTMLButtonElement>('manage-clear-changes').disabled=true; return; }
   renderCardOptions(s);
-  $('manage-month').textContent = s.billingMonth ? `${s.billingMonth.slice(0,4)}年${Number(s.billingMonth.slice(5))}月` : '未取得';
+  $('manage-month').textContent = formatMonth(s.billingMonth,'未取得');
   $('manage-payment').textContent = dateDisplay(s.paymentDate);
   const originalButton=$<HTMLButtonElement>('manage-original-download');
   const savedId=savedIds.get(s);
-  originalButton.disabled=batchBusy||filesBusy||!liveVault?.unlocked||!savedId||
-    !liveVault.readonlyRecords().some(record=>record.id===savedId&&!!record.originalId);
-  originalButton.title=s.sourceKind==='pdf'?'復号したPDFが端末のダウンロード先に保存されます。':'CSV・テキスト貼り付け明細にPDF原本はありません。';
+  const hasOriginal=!!savedId&&!!liveVault?.unlocked&&liveVault.readonlyRecords().some(record=>record.id===savedId&&!!record.originalId);
+  originalButton.classList.toggle('hidden',!hasOriginal);
+  originalButton.disabled=batchBusy||filesBusy||!hasOriginal;
+  originalButton.title=hasOriginal?'復号したPDFが端末のダウンロード先に保存されます。':'';
   $<HTMLButtonElement>('manage-add-row').disabled=!!activeAnalysisDrilldown;
   $<HTMLButtonElement>('manage-delete').disabled = batchBusy || filesBusy;
   updateManagerEditState(s);
-  for (const [key,id,label] of [['usedOn','manage-sort-date','利用日'],['amount','manage-sort-amount','金額']] as const) {
-    const button=$<HTMLButtonElement>(id);
-    const active=manageSort?.key===key;
-    button.textContent=`${label} ${active?(manageSort!.direction==='asc'?'▲':'▼'):'↕'}`;
-    button.closest('th')?.setAttribute('aria-sort',active?(manageSort!.direction==='asc'?'ascending':'descending'):'none');
-  }
+  for (const [key,id,label] of [['usedOn','manage-sort-date','利用日'],['amount','manage-sort-amount','当月請求額']] as const)
+    renderStatementSortControl(id,label,manageSort?.key===key?manageSort.direction:null);
   const body = $('manage-rows'); body.replaceChildren();
   // Sorting is display-only: deletions must continue to address original row indices.
   const matchingRows=activeAnalysisDrilldown?drilldownRows.get(savedIds.get(s)??''):null;
   const visibleRows=s.rows.map((row,index)=>({row,index,usedOn:row.usedOn,amount:row.amount}))
     .filter(item=>!activeAnalysisDrilldown||matchingRows?.has(item.row.id));
-  for (const {index,row} of orderedPreviewRows(visibleRows,manageSort)) {
+  for (const {row} of orderedPreviewRows(visibleRows,manageSort)) {
     const tr = document.createElement('tr');
     const fields: Array<[string,string,(v:string,input:HTMLInputElement)=>void]> = [
       [row.usedOn, '利用日', (value,input) => {
@@ -1513,8 +1572,15 @@ function renderManager(): void {
       if (aria === '金額') td.classList.add('amount-cell');
     }
     const td = document.createElement('td');td.dataset.label='操作';
-    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'manage-row-delete'; remove.textContent = '削除';
-    remove.addEventListener('click', () => { s.rows.splice(index, 1); markDirty(s); });
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'manage-row-delete danger-action'; remove.textContent = '×';
+    remove.setAttribute('aria-label','この取引を削除');remove.title='この取引を削除';
+    remove.disabled=batchBusy||filesBusy||cloudRefreshing;
+    remove.addEventListener('click', () => {
+      if(batchBusy||filesBusy||cloudRefreshing||active()!==s||!liveVault?.unlocked)return;
+      const index=s.rows.findIndex(entry=>entry.id===row.id);if(index<0)return;
+      s.rows.splice(index,1);markDirty(s);
+      $('manage-clear-changes').focus();
+    });
     td.append(remove); tr.append(td); body.append(tr);
   }
 }
@@ -1591,6 +1657,17 @@ function resetRuleEditor():void {
   ruleEditorBaseline=ruleFormFingerprint();
 
 }
+async function allowRuleReplacement():Promise<boolean> {
+  const epoch=lockSequence,vault=liveVault,baseline=ruleFormFingerprint(),editor=editingRuleId;
+  if(!vault?.unlocked||rulesBusy||confirmationPending())return false;
+  if(ruleFormHasChanges()&&!await requestConfirmation({owner:ordinaryConfirmationOwner,title:'未保存のルールを破棄しますか？',message:'入力した内容は保存されません。',acceptLabel:'破棄する',cancelLabel:'編集を続ける',destructive:true}))return false;
+  return epoch===lockSequence&&liveVault===vault&&vault.unlocked&&!rulesBusy&&editingRuleId===editor&&ruleFormFingerprint()===baseline;
+}
+async function editRuleWithGuard(rule:MerchantRule):Promise<void>{
+  if(!await allowRuleReplacement())return;
+  if(JSON.stringify(rules().find(x=>x.id===rule.id))!==JSON.stringify(rule))return;
+  populateRuleEditor(rule);
+}
 function populateRuleEditor(rule:MerchantRule):void {
   editingRuleId=rule.id;
   $('rules-editor-title').textContent='ルールの編集';
@@ -1610,19 +1687,6 @@ function populateRuleEditor(rule:MerchantRule):void {
 
   $<HTMLInputElement>('rule-pattern').focus();
   $('rules-form').scrollIntoView({behavior:'smooth',block:'nearest'});
-}
-function openRuleForRow(row:ImportRow,s:ParsedStatement):void {
-  resetRuleEditor();
-  showView('rules');
-  $<HTMLInputElement>('rule-pattern').value=row.merchant;
-  $<HTMLSelectElement>('rule-mode').value='exact';
-  syncRuleModeRadios();
-  $<HTMLInputElement>('rule-display-name').value=row.merchantOverride??matchingRule(row.merchant,s.cardId,rules())?.displayName??'';
-  $<HTMLSelectElement>('rule-card').value='';
-  $<HTMLSelectElement>('rule-category').value=matchingRule(row.merchant,s.cardId,rules())?.categoryId??'';
-  updateRuleCategoryVisual();
-
-  $<HTMLInputElement>('rule-display-name').focus();
 }
 function proposedRule():MerchantRule | null {
   const patterns=[$<HTMLInputElement>('rule-pattern').value,...rulePatternInputs().map(input=>input.value)].map(p=>p.trim()).filter(Boolean); /* finance-v147 */
@@ -1645,7 +1709,7 @@ function renderRules():void {
   const current=sortedRules(rules());
   $('rules-list-count').textContent=`${current.length}件`;
   const list=$('rules-list');list.replaceChildren();
-  if(!current.length)list.append(div('empty-list','利用先ルールはまだありません。左のフォームから登録できます。'));
+  if(!current.length)list.append(div('empty-list','利用先ルールはまだありません。'));
   for(const rule of current){
     const item=div(`rules-item${rule.enabled?'':' rules-disabled'}`);
     const top=div('rules-item-top'),main=div('rules-item-main');
@@ -1655,17 +1719,17 @@ function renderRules():void {
     heading.append(name,source);main.append(heading);
     const card=rule.cardId?cardDisplayName(rule.cardId)??rule.cardId:'全カード';
     const metaLine=div('rules-item-meta-line');
-    metaLine.append(div('rules-item-meta',`${card} · 優先 ${rule.priority}`));
+    metaLine.append(div('rules-item-meta',rule.priority===100?card:`${card} · 優先 ${rule.priority}`));
     const category=categoryById(rule.categoryId);
     if(category)metaLine.append(categoryChip(category));
     main.append(metaLine);
     top.append(main,div('rules-tag',rule.enabled?'有効':'無効'));item.append(top);
     const buttons=div('rules-item-actions');
     const edit=document.createElement('button');edit.type='button';edit.textContent='編集';edit.disabled=rulesBusy;
-    edit.addEventListener('click',()=>populateRuleEditor(rule));
+    edit.addEventListener('click',()=>{void editRuleWithGuard(rule);});
     const toggle=document.createElement('button');toggle.type='button';toggle.disabled=rulesBusy;toggle.textContent=rule.enabled?'無効にする':'有効にする';
     toggle.addEventListener('click',()=>{void saveRule({...rule,enabled:!rule.enabled});});
-    const remove=document.createElement('button');remove.type='button';remove.className='rules-remove';remove.textContent='削除';remove.disabled=rulesBusy;
+    const remove=document.createElement('button');remove.type='button';remove.className='rules-remove danger-action';remove.textContent='削除';remove.disabled=rulesBusy;
     remove.addEventListener('click',()=>{void deleteRule(rule);});
     buttons.append(edit,toggle,remove);item.append(buttons);list.append(item);
   }
@@ -1689,7 +1753,7 @@ function updateCategoryDraftStatus():void {
   try {
     const changes=categoryPlan();
     const n=changes.upserts.length+changes.removeIds.length;
-    status.textContent=n?`${n}件の変更があります。保存するとOneDriveへまとめて反映されます。`:'変更はありません。';
+    status.textContent=n?`未保存の変更：${n}件`:'';
     status.classList.remove('bad');
     $<HTMLButtonElement>('categories-dialog-save').disabled=categorySaving || !categoryBatchChanged(changes);
   } catch(error){
@@ -1713,7 +1777,7 @@ function renderCategoryDraft():void {
     for(const color of PALETTE)select.add(new Option(color.name,color.id));
     select.value=item.color;
     select.addEventListener('change',()=>{item.color=select.value as PaletteId;paint();updateCategoryDraftStatus();});
-    const remove=document.createElement('button');remove.type='button';remove.className='category-delete';remove.textContent='削除';
+    const remove=document.createElement('button');remove.type='button';remove.className='category-delete danger-action';remove.textContent='削除';
     remove.setAttribute('aria-label',`${item.name}を削除予定にする`);
     remove.addEventListener('click',()=>{categoryDraft=categoryDraft!.filter(c=>c.id!==item.id);renderCategoryDraft();});
     name.disabled=select.disabled=remove.disabled=categorySaving;
@@ -1737,18 +1801,26 @@ function addDraftCategory():void {
   renderCategoryDraft();
   input.focus();
 }
-function closeCategoryDialog():void {
-  if(categorySaving)return;
+async function closeCategoryDialog():Promise<void> {
+  const dialog=$<HTMLDialogElement>('categories-dialog');
+  if(categorySaving||confirmationPending()||!dialog.open)return;
+  const vault=liveVault,epoch=lockSequence,draft=categoryDraft;
+  const snapshot=()=>JSON.stringify([categoryDraft,categoryBaseline,$<HTMLInputElement>('rules-category-name').value,$<HTMLSelectElement>('rules-category-color').value]);
+  const baseline=snapshot();
   if(categoryDraft){
     let changed=true;
     try {changed=categoryBatchChanged(categoryPlan());}catch {changed=true;}
-    if(changed&&!window.confirm('保存していないカテゴリーの変更を破棄しますか？'))return;
+    if(changed||$<HTMLInputElement>('rules-category-name').value.trim()){
+      if(!await requestConfirmation({owner:ordinaryConfirmationOwner,parent:dialog,title:'未保存の変更を破棄しますか？',
+        message:'保存していないカテゴリーの変更を破棄します。',acceptLabel:'破棄する',cancelLabel:'編集を続ける',destructive:true}))return;
+      if(epoch!==lockSequence||liveVault!==vault||!vault?.unlocked||categorySaving||!dialog.open||categoryDraft!==draft||snapshot()!==baseline)return;
+    }
   }
   categoryDraft=null;categoryBaseline=[];
   $<HTMLDialogElement>('categories-dialog').close();
 }
 async function saveCategoryDialog():Promise<void> {
-  if(categorySaving||rulesBusy||!liveVault?.unlocked||!categoryDraft)return;
+  if(categorySaving||rulesBusy||confirmationPending()||!liveVault?.unlocked||!categoryDraft)return;
   let changes;
   try {changes=categoryPlan();} catch(error){updateCategoryDraftStatus();return;}
   if(!categoryBatchChanged(changes))return;
@@ -1781,17 +1853,18 @@ async function saveCategoryDialog():Promise<void> {
 }
 /** Picker is read-only: selecting a merchant fills the predicate field only. */
 function renderRecentMerchants():void {
+  if(!liveVault?.unlocked){$('recent-merchants-list').replaceChildren();$('recent-merchants-count').textContent='';return;}
   const candidates=recentMerchants(statements.filter(s=>savedIds.has(s)&&!importStaged.has(s)));
   const card=$<HTMLSelectElement>('recent-merchants-card').value;
   const search=normalizeMerchant($<HTMLInputElement>('recent-merchants-search').value);
   const filtered=candidates.filter(item=>(!card||item.cardId===card)&&(!search||normalizeMerchant(item.merchant).includes(search)));
   const list=$('recent-merchants-list');list.replaceChildren();
-  $('recent-merchants-count').textContent=`該当 ${filtered.length}件（最新60件を表示）`;
+  $('recent-merchants-count').textContent=filtered.length>60?`${filtered.length}件（最新60件）`:filtered.length?`${filtered.length}件`:'';
   for(const item of filtered.slice(0,60)) {
     const button=document.createElement('button');button.type='button';button.className='recent-merchant-item';
     const name=document.createElement('strong');name.textContent=item.merchant;
     const detail=document.createElement('small');
-    detail.textContent=`${cardDisplayName(item.cardId)??'カード不明'} · 最終利用 ${item.lastDate||'不明'} · ${item.count}回`;
+    detail.textContent=`${cardDisplayName(item.cardId)??'カード不明'} · 最終利用 ${formatDate(item.lastDate,'不明')} · ${item.count}回`;
     button.append(name,detail);
     button.addEventListener('click',()=>{
       $<HTMLInputElement>('rule-pattern').value=item.merchant;
@@ -1800,9 +1873,10 @@ function renderRecentMerchants():void {
     });
     list.append(button);
   }
-  if(!filtered.length)list.append(div('empty-list','該当する利用先がありません。過去の保存済み明細を確認してください。'));
+  if(!filtered.length)list.append(div('empty-list','該当する利用先がありません。'));
 }
 function openRecentMerchants():void {
+  if(!liveVault?.unlocked||rulesBusy||confirmationPending())return;
   const picker=$<HTMLSelectElement>('recent-merchants-card');
   picker.value=$<HTMLSelectElement>('rule-card').value;
   $<HTMLInputElement>('recent-merchants-search').value='';
@@ -1829,12 +1903,20 @@ async function saveRule(rule:MerchantRule):Promise<void> {
   } finally{rulesBusy=false;$<HTMLButtonElement>('rule-save').disabled=false;renderRules();}
 }
 async function deleteRule(rule:MerchantRule):Promise<void> {
-  if(rulesBusy||!liveVault?.unlocked)return;
-  if(!window.confirm(`利用先ルール「${rule.pattern} → ${rule.displayName}」を削除しますか？\n元のカード明細は変更されません。`))return;
+  const vault=liveVault,epoch=lockSequence;
+  if(rulesBusy||confirmationPending()||!vault?.unlocked)return;
+  const unchanged=()=>JSON.stringify(vault.merchantRules().find(x=>x.id===rule.id))===JSON.stringify(rule);
+  if(!unchanged())return;
+  const editor=editingRuleId,form=ruleFormFingerprint();
+  if(!await requestConfirmation({owner:ordinaryConfirmationOwner,title:'利用先ルールを削除しますか？',
+    message:`「${rule.pattern} → ${rule.displayName}」を削除します。\n元のカード明細は変更されません。${editor===rule.id&&ruleFormHasChanges()?'\n編集中の入力も破棄されます。':''}`,acceptLabel:'削除する',destructive:true}))return;
+  if(epoch!==lockSequence||liveVault!==vault||!vault.unlocked||rulesBusy)return;
+  if(!unchanged()||editingRuleId!==editor||ruleFormFingerprint()!==form){toast('ルールまたは入力が更新されました。再確認してください。');return;}
   rulesBusy=true;
   try {
     $('rules-sync-status').textContent='';showActivity('利用先ルールを削除中…','working');
-    await liveVault.removeMerchantRule(rule.id);
+    await vault.removeMerchantRule(rule.id);
+    if(epoch!==lockSequence||liveVault!==vault)return;
     if(editingRuleId===rule.id)resetRuleEditor();
     $('rules-sync-status').textContent='';
     operationResult('利用先ルールを削除しました。');render();
@@ -1859,7 +1941,7 @@ function modalClose(success:boolean):void {
 }
 function askVault(mode:'create'|'unlock'|'migrate'):Promise<boolean> {
   // A hidden dialog can still have an in-flight unlock; never replace its resolver.
-  if(currentModal!==null||$<HTMLDialogElement>('vault-dialog').open)return Promise.resolve(false);
+  if(confirmationPending()||currentModal!==null||$<HTMLDialogElement>('vault-dialog').open)return Promise.resolve(false);
   return new Promise(resolve=>{
     modalResolve=resolve;currentModal=mode;
     $('vault-error').textContent='';
@@ -1896,13 +1978,32 @@ async function downloadManagedOriginal():Promise<void> {
   const button=$<HTMLButtonElement>('manage-original-download');
   if(button.disabled||filesBusy||cloudRefreshing)return;
   filesBusy=true;button.disabled=true;
+  const vault=liveVault,epoch=lockSequence;
   try {
-    const bytes=await liveVault.original(id);
+    const bytes=await vault.original(id);
+    if(epoch!==lockSequence||liveVault!==vault||!vault.unlocked)return;
     if(!bytes)throw new Error('この明細のPDF原本は保存されていません。');
     downloadFile(new Uint8Array(bytes).buffer,'application/pdf',canonicalStatementFilename(s,id));
     toast('暗号化PDF原本を復号し、統一ファイル名でダウンロードしました。');
-  }catch(error){toast(`PDF原本の取得に失敗しました：${error instanceof Error?error.message:'不明なエラー'}`);}
+  }catch(error){if(epoch===lockSequence&&liveVault===vault&&vault.unlocked)toast(`PDF原本の取得に失敗しました：${error instanceof Error?error.message:'不明なエラー'}`);}
   finally{button.disabled=false;filesBusy=false;}
+}
+
+/** Restore only the selected saved statement, without writing to OneDrive. */
+async function clearManagerChanges():Promise<void>{
+  const s=active(),vault=liveVault,epoch=lockSequence;
+  if(!s||!vault?.unlocked||batchBusy||filesBusy||cloudRefreshing||revisionBusy||confirmationPending()||importStaged.has(s)||!hasUnsavedChanges(s))return;
+  const id=savedIds.get(s);if(!id)return;
+  const canonical=vault.readonlyRecords().find(record=>record.id===id);if(!canonical)return;
+  const approved=JSON.stringify(s),saved=JSON.stringify(canonical.statement);
+  if(!await requestConfirmation({owner:ordinaryConfirmationOwner,title:'明細の変更をクリアしますか？',message:'追加・削除・名称・利用日など、この明細の未保存の変更をすべて破棄します。OneDriveの保存済み明細は変更しません。',acceptLabel:'変更をクリア',cancelLabel:'編集を続ける',destructive:true}))return;
+  if(epoch!==lockSequence||liveVault!==vault||!vault.unlocked||active()!==s||savedIds.get(s)!==id||batchBusy||filesBusy||cloudRefreshing||revisionBusy||importStaged.has(s)||JSON.stringify(s)!==approved)return;
+  const current=vault.readonlyRecords().find(record=>record.id===id);
+  if(!current||JSON.stringify(current.statement)!==saved){toast('保存済み明細が更新されました。再確認してください。');return;}
+  const restored=structuredClone(current.statement);
+  savedIds.set(restored,id);savedFingerprints.set(restored,statementWorkingFingerprint(restored));
+  importedSignatures.set(restored,statementSignature(restored));if(current.originalId)originalSaved.add(restored);
+  statements.splice(activeIndex,1,restored);render();$('manage-add-row').focus();
 }
 
 async function saveEditedStatement(s:ParsedStatement, manual=false):Promise<void> {
@@ -1989,6 +2090,7 @@ function confirmStatementRevision(old:ParsedStatement,newStatement:ParsedStateme
     const dialog=$<HTMLDialogElement>('import-revision-dialog');
     const ok=$<HTMLButtonElement>('import-revision-accept');
     const cancel=$<HTMLButtonElement>('import-revision-cancel');
+    const close=$<HTMLButtonElement>('import-revision-close');
     const warning=$('import-revision-override-warning');
     const acknowledged=$<HTMLInputElement>('import-revision-override-accept');
     const details=$('import-revision-details');details.replaceChildren();
@@ -2032,21 +2134,26 @@ function confirmStatementRevision(old:ParsedStatement,newStatement:ParsedStateme
     if(!details.children.length){const neutral=document.createElement('section');neutral.textContent='取引金額・利用先・日付に差分はありません。取り込み元を更新します。';details.append(neutral);}
     // The checkbox label stays stable across repeated imports; counts are shown above.
 
+    let settled=false;
     const finish=(accepted:boolean)=>{
-      dialog.removeEventListener('cancel',onCancel);
+      if(settled)return;settled=true;
+      unbindDismiss();
+      dialog.removeEventListener('close',onClosed);
+      close.removeEventListener('click',onCancelClick);
       ok.removeEventListener('click',onOk);
       cancel.removeEventListener('click',onCancelClick);
       acknowledged.removeEventListener('change',onChange);
       if(dialog.open)dialog.close();
       resolve(accepted);
     };
-    const onCancel=(event:Event)=>{event.preventDefault();finish(false);};
+    const onClosed=()=>{if(!dialog.open)finish(false);};
     const onCancelClick=()=>finish(false);
-    const onOk=()=>{if(needsAck&&!acknowledged.checked)return;finish(true);};
+    const onOk=()=>{if(!dialog.open||needsAck&&!acknowledged.checked)return;finish(true);};
     const onChange=()=>{ok.disabled=needsAck&&!acknowledged.checked;};
-    dialog.addEventListener('cancel',onCancel);cancel.addEventListener('click',onCancelClick);
+    const unbindDismiss=bindModalDismiss(dialog,onCancelClick);
+    dialog.addEventListener('close',onClosed);close.addEventListener('click',onCancelClick);cancel.addEventListener('click',onCancelClick);
     ok.addEventListener('click',onOk);acknowledged.addEventListener('change',onChange);
-    dialog.showModal();
+    try{dialog.showModal();cancel.focus();}catch{finish(false);}
   });
 }
 /** CSV is structurally valid even when its payment configuration is missing.
@@ -2091,14 +2198,15 @@ async function acceptStatement(s: ParsedStatement, source?: LocalSource): Promis
       toast('同じ月に未保存の編集があります。先に明細の管理で保存してください。');return false;
     }
     const prepared=prepareStatementRevision(existing,s);
-    const baseline=statementWorkingFingerprint(existing);
+    const baseline=JSON.stringify(existing),epoch=lockSequence,vault=liveVault;
     revisionBusy=true;render();
     try{
       if(!await confirmStatementRevision(existing,prepared.statement,prepared.diff)){
+        if(epoch!==lockSequence||liveVault!==vault)return false;
         toast('差し替えを取り消しました。保存済みの明細はそのままです。');return false;
       }
       // A cloud refresh or local edit while the dialog was open must not retarget the replacement.
-      if(statements[index]!==existing||statementWorkingFingerprint(existing)!==baseline)
+      if(epoch!==lockSequence||liveVault!==vault||statements[index]!==existing||JSON.stringify(existing)!==baseline)
         throw new Error('差し替え対象が更新されました。CSVを読み直してください。');
       const revised=prepared.statement;
       statements[index]=revised;
@@ -2135,12 +2243,15 @@ function importBatchIsClean(accepted:number,rejected:number,failed:number):boole
 async function handleFiles(files: FileList | File[]): Promise<void> {
   if(filesBusy||batchBusy||revisionBusy){toast('別の取込処理が完了してから追加してください。');return;}
   const chosen=Array.from(files);if(!chosen.length)return;
+  const epoch=lockSequence,controller=new AbortController();importAbort=controller;
+  const current=()=>epoch===lockSequence&&!controller.signal.aborted;
   filesBusy=true;importUploadFeedback='';currentUploadFailures.splice(0);updateImportUploadFeedback();updateBatchStatus();
   showActivity('明細を読み込み中…','working');
   let accepted=0,rejected=0,failed=0;
   try{
     let processed=0;
     for(const file of chosen){
+      if(!current())return;
       processed++;
       showActivity(`明細を読み込み中… (${processed}/${chosen.length})`,'working');
       const name=file.name.toLowerCase();
@@ -2153,7 +2264,8 @@ async function handleFiles(files: FileList | File[]): Promise<void> {
         let result=false;
         if(name.endsWith('.csv')){
           if(file.size===0||file.size>2_000_000)throw new Error('CSVのサイズが不正です（上限2MB）。');
-          const text=decodeCardCsv(await file.arrayBuffer());
+          const bytes=await file.arrayBuffer();if(!current())return;
+          const text=decodeCardCsv(bytes);
           const meta=identifyCardCsv(text,file.name);
           const date=csvPaymentDate(meta.cardId,meta.billingMonth);
           result=await acceptStatement(parseCardCsv(text,file.name,date));
@@ -2163,17 +2275,22 @@ async function handleFiles(files: FileList | File[]): Promise<void> {
           // Read the Blob once. PDF.js receives its own copy because its
           // worker may transfer (detach) the buffer during extraction.
           const originalBytes=new Uint8Array(await file.arrayBuffer());
-          const parsed=await parsePdfFile(file,originalBytes);
+          if(!current())return;
+          const parsed=await parsePdfFile(file,originalBytes,controller.signal);if(!current())return;
           result=await acceptStatement(parsed,{bytes:originalBytes,mime:'application/pdf'});
         }
+        if(!current())return;
         if(result)accepted++;else rejected++;
       }catch(error){
+        if(!current())return;
         const reason=`${file.name}: ${error instanceof Error?error.message:'読み込みに失敗しました。'}`;
         failedImports.push(reason);currentUploadFailures.push(reason);failed++;toast(reason);render();
       }
     }
   }finally{
+    if(importAbort===controller)importAbort=null;
     filesBusy=false;finishActivity('明細を読み込み中');render();
+    if(!current())return;
     // A clean successful batch returns to the review list. Failed/duplicate
     // batches remain open so the user can see what happened and retry.
     if(importBatchIsClean(accepted,rejected,failed))closeImportAddDialog();
@@ -2243,6 +2360,8 @@ function init(): void {
     clearUnlockedFinanceViews();
     operationResult('別のFinanceタブで保管庫がロック・切り替えされました。このタブもロックしました。未保存の作業は破棄されています。','warn');
   });
+  document.addEventListener('input',()=>{draftInputRevision++;},true);
+  document.addEventListener('change',()=>{draftInputRevision++;},true);
   initPasswordFields();
   initTheme();
   let sidebarCollapsed=false;
@@ -2321,7 +2440,7 @@ function init(): void {
     // showView() always renders the destination on entry. Update only the
     // currently visible view rather than rebuilding four hidden pages.
     render();
-  },()=>{render();});
+  },()=>{render();},id=>{showView('subscriptions');if(id)subscriptionsUi?.openFixedCost(id);});
   const homeSource=()=>{
     if(!liveVault?.unlocked)return null;
     return {records:liveVault.readonlyRecords(),rules:liveVault.merchantRules(),
@@ -2329,7 +2448,8 @@ function init(): void {
       payroll:assetsUi?.payrollSnapshot()??{ready:false,syncedAt:null,entries:[]}};
   };
   analysisSourceProvider=homeSource;
-  homeUi=initHome({source:homeSource,navigate:(destination,recordId,drilldown)=>{
+  const openCardSettings=()=>{showView('settings');const panel=document.getElementById('settings-card-disclosure') as HTMLDetailsElement|null;if(panel){panel.open=true;panel.scrollIntoView({block:'start'});}};
+  homeUi=initHome({source:homeSource,openCardSettings,navigate:(destination,recordId,drilldown)=>{
     activeAnalysisDrilldown=drilldown??null;
     if(destination==='manage'&&recordId){
       const index=statements.findIndex(item=>savedIds.get(item)===recordId);
@@ -2366,6 +2486,7 @@ function init(): void {
   reportsUi=initMonthlyReports({source:homeSource,vault:()=>liveVault,openMonth:(period)=>{summaryUi?.setPeriod(period);showView('summary');}});
   summaryUi=initMonthlySummary({
     source:homeSource,
+    openCardSettings,
     saveCardNoUseMonth:async(period,confirmed)=>{if(!liveVault?.unlocked)throw new Error('保管庫を解除してください。');await liveVault.setCardNoUseMonth(period,confirmed);homeUi?.render();},
     openReport:(period)=>{reportsUi?.openPeriod(period);showView('reports');},
     openRecurring:openRecurringForReview,
@@ -2398,8 +2519,10 @@ function init(): void {
   });
   $('cloud-new-vault').addEventListener('click',()=>{void (async()=>{
     try {
-      if(cloudStartupRunning||!liveVault||!vaultDiscoveryCompleted)throw new Error('先に接続先の保管庫を確認してください。');
-      const nowExists=await liveVault.discover();
+      if(cloudStartupRunning||confirmationPending()||currentModal!==null||!liveVault||!vaultDiscoveryCompleted)throw new Error('先に接続先の保管庫を確認してください。');
+      const vault=liveVault,valid=confirmationContext();
+      const nowExists=await vault.discover();
+      if(!valid())return;
       vaultDiscoveryCompleted=true;
       updateCloudStatus();
       if(nowExists){
@@ -2407,8 +2530,13 @@ function init(): void {
         await askVault('unlock');
         return;
       }
-      const answer=window.confirm('現在接続しているMicrosoftアカウントのアプリ領域にFinance保管庫が見つかりません。\n\n既存のFinanceデータを探している場合は、新規作成せずアカウントとClient IDを確認してください。\n\nこのアカウントに新しい保管庫を作成しますか？');
-      if(answer)await askVault('create');
+      const answer=await requestConfirmation({owner:securityConfirmationOwner,title:'新しい保管庫を作成しますか？',message:'現在接続しているMicrosoftアカウントのアプリ領域にFinance保管庫が見つかりません。\n\n既存のFinanceデータを探している場合は、新規作成せずアカウントとClient IDを確認してください。',acceptLabel:'新規作成へ進む'});
+      if(!answer||!valid()||cloudStartupRunning||currentModal!==null)return;
+      const exists=await vault.discover();
+      if(!valid()||currentModal!==null)return;
+      updateCloudStatus();
+      if(exists){operationResult('既存の保管庫が見つかりました。新規作成せずに解除してください。');await askVault('unlock');}
+      else await askVault('create');
     }catch(error){operationResult(`保管庫の確認に失敗しました：${error instanceof Error?error.message:'通信エラー'}`,'bad');}
   })();});
   initLegacyCleanup();
@@ -2436,11 +2564,15 @@ function init(): void {
   initCloudSettings({
     hasUnsavedChanges:()=>{const state=interruptionState();return !!(state.busy.length||state.unsaved.length);},
     canNavigate:()=>confirmInterruption('認証画面へ移動'),
+    confirmationContext,
     onChangePassphrase: async (current,next,onProgress) => {
       if(!liveVault?.unlocked)throw new Error('先にOneDrive保管庫をロック解除してください。');
       assertRefreshSafe();
       const rememberedContext=browserKeyContext();
-      await liveVault.changePassphrase(current,next,onProgress);
+      const vault=liveVault,started=lockSequence;
+      try{await vault.changePassphrase(current,next,onProgress);}
+      catch(error){if(vault===liveVault&&started===lockSequence&&!vault.unlocked)clearUnlockedFinanceViews();throw error;}
+      if(vault!==liveVault||started!==lockSequence||!vault.unlocked)throw new Error('保管庫が変更されました。最新の状態を確認してください。');
       // Other open tabs retain the old in-memory key until explicitly notified.
       try{broadcastVaultLock();}catch{operationResult('パスフレーズは変更済みですが、他のタブへロックを通知できません。すべてのFinanceタブを閉じてください。','warn');}
       // Only after an acknowledged generation switch: never delete on a
@@ -2450,8 +2582,9 @@ function init(): void {
         catch{showActivity('新しいパスフレーズへの変更は完了しましたが、旧ブラウザ鍵を削除できませんでした。ブラウザのサイトデータを確認してください。','bad');}
       }
 
+      if(vault!==liveVault||started!==lockSequence||!vault.unlocked)throw new Error('保管庫が変更されました。最新の状態を確認してください。');
       void updateBrowserRememberStatus();
-      replaceCloudRecords(liveVault.records());lastCloudCheckAt=Date.now();
+      replaceCloudRecords(vault.records());lastCloudCheckAt=Date.now();
       renderRules();assetsUi?.render();futureUi?.render();cardSettingsUi?.render();
       updateCloudStatus('OneDrive：新しい暗号化パスフレーズに更新しました。');
       operationResult('暗号化パスフレーズを変更しました。すべての有効データを新しい鍵で再暗号化しました。');
@@ -2468,15 +2601,17 @@ function init(): void {
       try{
         // Lock other open tabs before deleting a previewed generation/orphan.
         broadcastVaultLock();
-        const result=await liveVault.deletePreviewedCleanup(which,onProgress);
+        const vault=liveVault,started=lockSequence;
+        const result=await vault.deletePreviewedCleanup(which,onProgress);
+        if(vault!==liveVault||started!==lockSequence||!vault.unlocked)throw new Error('整理中に保管庫が変更されました。最新の状態を確認してください。');
         operationResult(`${result}件の暗号化ファイルを整理しました。`);
         return result;
       }finally{cleanupBusy=false;}
     },
     onRefresh:refreshCloud,
     onMigration:migrateLegacy,
-    onLock:()=>{
-      if(!confirmInterruption('ロック'))return false;
+    onLock:async()=>{
+      if(!await confirmInterruption('ロック'))return false;
       try{broadcastVaultLock();}
       catch{
         // Even without localStorage, this tab must always be lockable.
@@ -2515,15 +2650,9 @@ function init(): void {
       renderManager();
     });
   }
-  $('manage-prev-month').addEventListener('click',()=>manageShiftMonth(-1));
-  $('manage-next-month').addEventListener('click',()=>manageShiftMonth(1));
-  $('manage-current-month').addEventListener('click',()=>manageChangePeriod(
-    `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`));
-  $('manage-show-all').addEventListener('click',()=>{
-    manageYear='all';manageMonth='all';selectVisibleManagerStatement();renderManager();
-  });
-  $<HTMLInputElement>('manage-period').addEventListener('change',event=>manageChangePeriod(
-    (event.target as HTMLInputElement).value));
+  syncManagerPeriod=bindMonthNavigator($('manage-period-controls'),{
+    previous:$<HTMLButtonElement>('manage-prev-month'),picker:$<HTMLInputElement>('manage-period'),next:$<HTMLButtonElement>('manage-next-month'),current:$<HTMLButtonElement>('manage-current-month'),all:$<HTMLButtonElement>('manage-show-all')
+  },()=>manageYear==='all'||manageMonth==='all'?'':`${manageYear}-${manageMonth}`,manageChangePeriod,managerPeriodOptions);
   for(const card of CARDS){
     const opt=document.createElement('option');opt.value=card.id;opt.textContent=card.name;
     $<HTMLSelectElement>('rule-card').append(opt);
@@ -2538,15 +2667,13 @@ function init(): void {
   $('categories-dialog-close').addEventListener('click',closeCategoryDialog);
   $('categories-dialog-cancel').addEventListener('click',closeCategoryDialog);
   $('categories-dialog-save').addEventListener('click',()=>{void saveCategoryDialog();});
-  $('categories-dialog').addEventListener('cancel',event=>{event.preventDefault();closeCategoryDialog();});
+  bindModalDismiss($<HTMLDialogElement>('categories-dialog'),()=>{void closeCategoryDialog();});
   $('recent-merchants-close').addEventListener('click',()=>$<HTMLDialogElement>('recent-merchants-dialog').close());
-  $('recent-merchants-dialog').addEventListener('click',event=>{
-    if(event.target===$('recent-merchants-dialog'))$<HTMLDialogElement>('recent-merchants-dialog').close();
-  });
+  bindModalDismiss($<HTMLDialogElement>('recent-merchants-dialog'),()=>$<HTMLDialogElement>('recent-merchants-dialog').close());
   $<HTMLSelectElement>('recent-merchants-card').addEventListener('change',renderRecentMerchants);
   $<HTMLInputElement>('recent-merchants-search').addEventListener('input',renderRecentMerchants);
   $<HTMLSelectElement>('rule-category').addEventListener('change',updateRuleCategoryVisual);
-  $('rule-reset').addEventListener('click',resetRuleEditor);
+  $('rule-reset').addEventListener('click',()=>{void (async()=>{if(await allowRuleReplacement())resetRuleEditor();})();});
   document.querySelectorAll<HTMLInputElement>('input[name="rule-mode-choice"]').forEach(radio=>radio.addEventListener('change',()=>{
     if(radio.checked)$<HTMLSelectElement>('rule-mode').value=radio.value;
   }));
@@ -2566,19 +2693,28 @@ function init(): void {
     })();
   });
   $('import-add-open').addEventListener('click',openImportAddDialog);
-  $('import-add-close').addEventListener('click',()=>{if(!filesBusy&&!revisionBusy)closeImportAddDialog();});
-  $('import-add-dialog').addEventListener('cancel',event=>{if(filesBusy||revisionBusy)event.preventDefault();});
+  const dismissImportAdd=async()=>{
+    const dialog=$<HTMLDialogElement>('import-add-dialog');
+    if(filesBusy||revisionBusy||batchBusy||confirmationPending()||!dialog.open)return;
+    const epoch=lockSequence,vault=liveVault,input=$<HTMLTextAreaElement>('paste-input'),text=input.value,html=clipboardHtml;
+    if(text.trim()){
+      if(!await requestConfirmation({owner:ordinaryConfirmationOwner,parent:dialog,title:'未解析の明細を破棄しますか？',
+        message:'貼り付けた内容は解析されていません。',acceptLabel:'破棄する',cancelLabel:'編集を続ける',destructive:true}))return;
+      if(epoch!==lockSequence||liveVault!==vault||filesBusy||revisionBusy||batchBusy||!dialog.open||input.value!==text||clipboardHtml!==html)return;
+    }
+    closeImportAddDialog();
+  };
+  $('import-add-close').addEventListener('click',dismissImportAdd);
+  bindModalDismiss($<HTMLDialogElement>('import-add-dialog'),dismissImportAdd);
   $('import-add-dialog').addEventListener('close',()=>{
     if(!$<HTMLDialogElement>('import-add-dialog').open)releaseImportAddDialog();
-  });
-  $('import-add-dialog').addEventListener('click',event=>{
-    if(event.target===$('import-add-dialog')&&!filesBusy&&!revisionBusy)closeImportAddDialog();
   });
   $('import-clear-errors').addEventListener('click',()=>{
     if(filesBusy)return;
     failedImports.splice(0);currentUploadFailures.splice(0);importUploadFeedback='';render();
   });
   $('batch-import').addEventListener('click', () => { void saveAllPending(); });
+  $('manage-clear-changes').addEventListener('click',()=>{void clearManagerChanges();});
   $('manage-save').addEventListener('click',()=>{const s=active();if(s){if(savedIds.has(s)){void saveEditedStatement(s,true);}else void saveAllPending();}});
   $('manage-delete').addEventListener('click', () => { if (activeIndex >= 0) void deleteStatement(activeIndex); });
   $('manage-add-row').addEventListener('click', () => { const s = active(); if (!s) return; s.rows.push({id: crypto.randomUUID(), usedOn: new Date().toISOString().slice(0,10),merchant:'',amount:0}); markDirty(s); });
@@ -2623,9 +2759,12 @@ function init(): void {
     importUploadFeedback='';currentUploadFailures.splice(0);updateImportUploadFeedback();
     try{
       const s=parseStatementText(pasteInput.value,'paste','Web明細の貼り付け',clipboardHtml);
+      const epoch=lockSequence;
       void acceptStatement(s).then(added=>{
+        if(epoch!==lockSequence)return;
         if(added && importBatchIsClean(1,0,0))closeImportAddDialog();
       }).catch(error=>{
+        if(epoch!==lockSequence)return;
         importUploadFeedback=error instanceof Error?error.message:'解析できませんでした。';
         updateImportUploadFeedback();toast(importUploadFeedback);
       });
@@ -2644,10 +2783,16 @@ function init(): void {
     // An account/month collision is shown as an error and blocks the batch.
     markDirty(s);
   });
-  $('clear-all').addEventListener('click', () => {
+  $('clear-all').addEventListener('click', async () => {
+    if(batchBusy||filesBusy||revisionBusy||confirmationPending())return;
     const drafts = importQueue();
     if (!drafts.length && !failedImports.length) { toast('破棄できる取込待ちの明細はありません。'); return; }
-    if (!window.confirm(`取込待ちの明細${drafts.length}件と解析失敗${failedImports.length}件を破棄しますか？\nOneDriveに保存済みの明細は削除されません。`)) return;
+    const epoch=lockSequence,vault=liveVault,baseline=JSON.stringify([drafts,failedImports]);
+    if (!await requestConfirmation({owner:ordinaryConfirmationOwner,title:'取込待ちの明細を破棄しますか？',
+      message:`取込待ちの明細${drafts.length}件と解析失敗${failedImports.length}件を破棄します。\nOneDriveに保存済みの明細は削除されません。`,acceptLabel:'破棄する',destructive:true})) return;
+    if(epoch!==lockSequence||liveVault!==vault||batchBusy||filesBusy||revisionBusy)return;
+    const current=importQueue();
+    if(current.length!==drafts.length||current.some((draft,i)=>draft!==drafts[i])||JSON.stringify([current,failedImports])!==baseline){toast('取込待ちの明細が変更されました。再確認してください。');return;}
     for (const draft of drafts) discardImportDraft(statements.indexOf(draft), false);
     failedImports.splice(0);currentUploadFailures.splice(0);importUploadFeedback='';
     activeIndex = -1;

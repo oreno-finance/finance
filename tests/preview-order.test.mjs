@@ -37,12 +37,15 @@ test('STEP 03: sorts numerically and preserves source ordering for tied amounts'
   assert.deepEqual(orderedPreviewRows(rows,null).map(x=>x.id), ['one','two','three']);
 });
 
-test('STEP 03: success banner is below card metadata, while error notices keep their old position', async () => {
+test('STEP 03: redundant success banner is absent, while discrepancy and error notices remain', async () => {
   const { readFileSync } = await import('node:fs');
   const html = readFileSync(new URL('../public/index.html', import.meta.url),'utf8');
-  const successPos = html.indexOf('id="verification-ok"');
-  assert.ok(successPos > html.indexOf('id="detail-count"'));
-  assert.ok(successPos < html.indexOf('id="notice-list"'));
+  assert.doesNotMatch(html, /id="verification-ok"/);
+  assert.ok(html.indexOf('id="notice-list"') > html.indexOf('id="detail-count"'));
+  assert.match(html, /id="amount-diff"/);
+  const main=readFileSync(new URL('../src/main.ts',import.meta.url),'utf8');
+  assert.match(main,/setBadgeState\('pill good', '照合OK'\)/);
+  assert.match(main,/差額が\$\{yen\(diff\)\}あります/);
   assert.match(html, /id="sort-date"/);
   assert.match(html, /id="sort-amount"/);
 });

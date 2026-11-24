@@ -50,7 +50,7 @@ test('account-card bank forecast also applies mapped card debits, without changi
  assert.equal(result.accounts['cash-savings'].balance,null);
 });
 test('encrypted vault persists birth month and debit settings without leaking names or values',async()=>{
- const {LiveVault}=await import('../dist/src/cloud/live-vault.js');
+ const {LiveVault}=await import('./helpers/coordinated-vault.mjs');
  const {GraphError}=await import('../dist/src/cloud/onedrive-api.js');
  class Storage {
   constructor(){this.rows=new Map();}

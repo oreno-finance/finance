@@ -30,24 +30,24 @@ export async function encryptDocument(document, key, salt) {
     const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: DOMAIN }, key, enc.encode(JSON.stringify(document)));
     return JSON.stringify({ format: 'finance-cloud-envelope-v1', salt, iterations: ITERATIONS, iv: b64(iv), data: b64(new Uint8Array(data)) });
 }
-export async function encryptIndex(index, key, salt, dataSetId = null) {
+export async function encryptIndex(index, key, salt, dataSetId = null, coordinated = false) {
     if (dataSetId !== null && !validDataSetId(dataSetId))
         throw new Error('保管庫世代IDが不正です。');
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: INDEX_DOMAIN }, key, enc.encode(JSON.stringify(validateIndex(index))));
-    return JSON.stringify({ format: dataSetId ? 'finance-cloud-index-envelope-v2' : 'finance-cloud-index-envelope-v1', salt, iterations: ITERATIONS, iv: b64(iv), data: b64(new Uint8Array(data)), ...(dataSetId ? { dataSetId } : {}) });
+    const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: coordinated ? enc.encode(`Finance OneDrive index v3:${dataSetId ?? 'root'}`) : INDEX_DOMAIN }, key, enc.encode(JSON.stringify(validateIndex(index))));
+    return JSON.stringify({ format: coordinated ? 'finance-cloud-index-envelope-v3' : dataSetId ? 'finance-cloud-index-envelope-v2' : 'finance-cloud-index-envelope-v1', salt, iterations: ITERATIONS, iv: b64(iv), data: b64(new Uint8Array(data)), ...(dataSetId ? { dataSetId } : {}) });
 }
 export function parseIndexEnvelope(text) {
     if (text.length > 1_000_000)
         throw new Error('クラウド索引がサイズ上限を超えています。');
     const result = JSON.parse(text);
-    if ((result?.format !== 'finance-cloud-index-envelope-v1' && result?.format !== 'finance-cloud-index-envelope-v2') || result.iterations !== ITERATIONS || un64(result.salt).length !== 16 || un64(result.iv).length !== 12 || (result.format === 'finance-cloud-index-envelope-v2' ? !validDataSetId(result.dataSetId) : result.dataSetId !== undefined))
+    if ((result?.format !== 'finance-cloud-index-envelope-v1' && result?.format !== 'finance-cloud-index-envelope-v2' && result?.format !== 'finance-cloud-index-envelope-v3') || result.iterations !== ITERATIONS || un64(result.salt).length !== 16 || un64(result.iv).length !== 12 || (result.format === 'finance-cloud-index-envelope-v2' ? !validDataSetId(result.dataSetId) : result.format === 'finance-cloud-index-envelope-v3' ? (result.dataSetId !== undefined && !validDataSetId(result.dataSetId)) : result.dataSetId !== undefined))
         throw new Error('対応していないクラウド索引形式です。');
     return result;
 }
 export async function decryptIndex(env, key) {
     try {
-        const data = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: un64(env.iv), additionalData: INDEX_DOMAIN }, key, un64(env.data));
+        const data = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: un64(env.iv), additionalData: env.format === 'finance-cloud-index-envelope-v3' ? enc.encode(`Finance OneDrive index v3:${env.dataSetId ?? 'root'}`) : INDEX_DOMAIN }, key, un64(env.data));
         return validateIndex(JSON.parse(dec.decode(data)));
     }
     catch {

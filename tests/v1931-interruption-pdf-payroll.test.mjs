@@ -31,7 +31,7 @@ test('lock, refresh, sign-in, and beforeunload share the interruption state',()=
     'assetsUi?.isBusy()','subscriptionsUi?.isBusy()','cardSettingsUi?.isBusy()',
     'reportsUi?.isBusy()','liveVault?.isRotating','liveVault?.hasPendingYearBatch'])
     assert.ok(main.includes(reason),`Missing operation ${reason}`);
-  assert.match(main,/onLock:\(\)=>\{\s*if\(!confirmInterruption\('ロック'\)\)return false/);
+  assert.match(main,/onLock:async\(\)=>\{\s*if\(!await confirmInterruption\('ロック'\)\)return false/);
   assert.match(main,/hasUnsavedChanges:\(\)=>\{const state=interruptionState\(\)/);
   assert.match(main,/canNavigate:\(\)=>confirmInterruption\('認証画面へ移動'\)/);
   assert.match(main,/window\.addEventListener\('beforeunload',[\s\S]*?hasInterruptionRisk\(state\)/);
@@ -48,8 +48,8 @@ test('oversized and excessive-page PDFs are rejected before extraction',async()=
   await assert.rejects(parsePdfFile({size:MAX_PDF_BYTES+1}),/15MB/);
   const code=readFileSync(new URL('../src/importers/pdf-reader.ts',import.meta.url),'utf8');
   assert.ok(code.indexOf('assertPdfLimits(file.size)')<code.indexOf('file.arrayBuffer()'));
-  assert.match(code,/try \{\s*const pdf\s*=\s*await task.promise;\s*assertPdfLimits\(file.size,pdf.numPages\)/);
-  assert.match(code,/finally \{ await task.destroy\(\); \}/);
+  assert.match(code,/try \{\s*const pdf\s*=\s*await task.promise;\s*signal\?\.throwIfAborted\(\);\s*assertPdfLimits\(file.size,pdf.numPages\)/);
+  assert.match(code,/finally \{ signal\?\.removeEventListener\(\x27abort\x27,abort\);await destroy\(\); \}/);
 });
 
 test('stale Payroll data are retained in memory but excluded until explicit opt-in',()=>{
