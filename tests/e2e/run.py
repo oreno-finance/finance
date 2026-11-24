@@ -230,5 +230,128 @@ class FinanceBrowserTests(unittest.TestCase):
             context.close()
 
 
+    def test_cloud_gate_all_ten_views_full_width_with_consistent_headings(self):
+        # Real production CSS + compiled gate component in headless Chromium.
+        # No account, token, Microsoft network or app startup is involved.
+        for mobile, width in ((False, 1100), (True, 390)):
+            with self.subTest(mobile=mobile):
+                page, context, errors = self.create_page(mobile=mobile, width=width)
+                try:
+                    result = page.evaluate('''async()=>{
+                      const {FINANCE_CLOUD_GATE_PAGES,syncFinanceCloudGates}=await import('/dist/src/ui/cloud-gate.js');
+                      const host=document.createElement('div');host.style.cssText='width:100%;max-width:100%;min-width:0';
+                      host.id='cloud-e2e-canvas';document.querySelector('.e2e-panel').prepend(host);
+                      for(const meta of FINANCE_CLOUD_GATE_PAGES){
+                        const view=document.createElement('section');view.id=meta.id;
+                        // The assets heading is nested in production. Others differ in lead structure.
+                        const legacy=document.createElement('div');legacy.className='legacy-heading';
+                        legacy.innerHTML=meta.id==='assets-page'?'<section><header><h1>Old assets heading</h1></header></section>':'<h1>Old page heading</h1>';
+                        view.append(legacy);host.append(view);
+                      }
+                      const calls=[];
+                      const gated={blocked:true,locked:false,checking:false,
+                        notice:{kind:'network',message:'Microsoftに接続できません。通信状態を確認してください'},
+                        onRetry:()=>calls.push('retry'),onReauthenticate:()=>calls.push('reauth'),
+                        onUnlock:()=>calls.push('unlock'),onSettings:()=>calls.push('settings')};
+                      syncFinanceCloudGates(gated);
+                      const metrics=FINANCE_CLOUD_GATE_PAGES.map(meta=>{
+                        const view=document.getElementById(meta.id);
+                        const gate=view.querySelector(':scope > .finance-cloud-gate');
+                        const panel=gate?.querySelector('.finance-cloud-gate-panel');
+                        const heading=gate?.querySelector('.finance-cloud-gate-heading');
+                        return {id:meta.id,title:heading?.querySelector('h1')?.textContent,
+                          subtitle:heading?.querySelector('p.lead')?.textContent,
+                          eyebrow:heading?.querySelector('.eyebrow')?.textContent,
+                          originalHidden:getComputedStyle(view.querySelector('.legacy-heading')).display==='none',
+                          viewWidth:view.getBoundingClientRect().width,
+                          panelWidth:panel?.getBoundingClientRect().width,
+                          actionCount:panel?.querySelectorAll('button').length,
+                          visible:getComputedStyle(gate).display!=='none'};
+                      });
+                      const first=document.getElementById(FINANCE_CLOUD_GATE_PAGES[0].id);
+                      for(const button of first.querySelectorAll('.finance-cloud-gate-panel button'))button.click();
+                      syncFinanceCloudGates({...gated,blocked:false});
+                      return {metrics,calls,restored:FINANCE_CLOUD_GATE_PAGES.every(meta=>{
+                        const view=document.getElementById(meta.id);
+                        return !view.classList.contains('finance-cloud-gated')&&
+                          !view.querySelector('.finance-cloud-gate')&&
+                          getComputedStyle(view.querySelector('.legacy-heading')).display!=='none';
+                      })};
+                    }''')
+                    self.assertEqual(len(result['metrics']), 10)
+                    for row in result['metrics']:
+                        self.assertTrue(row['title'], row)
+                        self.assertTrue(row['subtitle'], row)
+                        self.assertTrue(row['eyebrow'], row)
+                        self.assertTrue(row['originalHidden'], row)
+                        self.assertTrue(row['visible'], row)
+                        self.assertEqual(row['actionCount'], 3, row)
+                        self.assertGreater(row['panelWidth'], 260, row)
+                        self.assertLess(abs(row['panelWidth'] - row['viewWidth']), 2, row)
+                    self.assertEqual(result['calls'], ['retry', 'reauth', 'settings'])
+                    self.assertTrue(result['restored'])
+                    self.assertFalse(errors, errors)
+                finally:
+                    context.close()
+
+
+    def test_disconnected_manager_footer_is_not_pinned_and_unlocked_scroll_unchanged(self):
+        # Use the actual bundled production CSS in Chromium. No Microsoft login.
+        page, context, errors = self.create_page(width=1100)
+        try:
+            result = page.evaluate('''()=>{
+              const shell=document.createElement('div');shell.className='app-shell';
+              const workspace=document.createElement('main');workspace.className='workspace';
+              const topbar=document.createElement('div');topbar.className='topbar';topbar.textContent='Finance';
+              const content=document.createElement('div');content.className='content';
+              const manager=document.createElement('section');manager.id='manage-view';
+              manager.className='manage-view finance-cloud-gated';
+              manager.innerHTML=`
+                <div class="finance-cloud-gate">
+                  <header class="finance-cloud-gate-heading"><div class="eyebrow">MANAGE</div><h1>明細管理</h1><p class="lead">明細の確認</p></header>
+                  <section class="finance-cloud-gate-panel"><h2>OneDriveに接続できません</h2>
+                    <p>通信状態を確認してください</p>
+                    <div class="finance-cloud-gate-actions"><button>再試行</button><button>設定</button></div>
+                  </section>
+                </div>
+                <div class="manage-grid">
+                  <section class="manage-index panel"><div class="statement-list">明細一覧</div></section>
+                  <section class="manage-editor panel"><div id="manage-content"><div class="table-scroll">取引一覧</div></div></section>
+                </div>`;
+              const footer=document.createElement('footer');footer.textContent='FINANCE IMPORTER';
+              content.append(manager,footer);workspace.append(topbar,content);shell.append(workspace);
+              // Replace the E2E fixture, including its 1200px scroll spacer.
+              // Otherwise absolute viewport coordinates measure the spacer too.
+              document.body.replaceChildren(shell);
+              const gate=manager.querySelector('.finance-cloud-gate');
+              const locked={
+                footerGap:footer.getBoundingClientRect().top-gate.getBoundingClientRect().bottom,
+                flexGrow:getComputedStyle(manager).flexGrow,
+                contentOverflowY:getComputedStyle(content).overflowY,
+                footerBottom:footer.getBoundingClientRect().bottom
+              };
+              manager.classList.remove('finance-cloud-gated');gate.remove();
+              const unlocked={
+                flexGrow:getComputedStyle(manager).flexGrow,
+                contentOverflowY:getComputedStyle(content).overflowY,
+                listOverflowY:getComputedStyle(manager.querySelector('.statement-list')).overflowY,
+                rowsOverflowY:getComputedStyle(manager.querySelector('.table-scroll')).overflowY
+              };
+              return {locked,unlocked};
+            }''')
+            self.assertGreaterEqual(result['locked']['footerGap'], 15, result)
+            self.assertLess(result['locked']['footerGap'], 100, result)
+            self.assertLessEqual(result['locked']['footerBottom'], 850, result)
+            self.assertEqual(result['locked']['flexGrow'], '0', result)
+            self.assertEqual(result['locked']['contentOverflowY'], 'hidden', result)
+            self.assertEqual(result['unlocked']['flexGrow'], '1', result)
+            self.assertEqual(result['unlocked']['contentOverflowY'], 'hidden', result)
+            self.assertEqual(result['unlocked']['listOverflowY'], 'auto', result)
+            self.assertEqual(result['unlocked']['rowsOverflowY'], 'auto', result)
+            self.assertFalse(errors, errors)
+        finally:
+            context.close()
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -8,6 +8,7 @@ import { planStatementImport, statementSignature } from './importers/import-poli
 import { hasVault, unlockVault, readStatements, readOriginal, exportEncryptedBackup, deleteLegacyVault, lockVault } from './storage/encrypted-vault.js';
 import { verifyLegacyMigration, verifyDownloadedBackup } from './storage/legacy-cleanup.js';
 import { graphClientWithoutRedirect, initCloudSettings, cloudConnectPrompt, activeMicrosoftAccountId, cloudConnectionNotice, recordCloudConnectionFailure } from './cloud/cloud-settings.js';
+import { syncFinanceCloudGates } from './ui/cloud-gate.js';
 import { LiveVault, CloudWriteUncertainError, BrowserKeyGenerationChangedError } from './cloud/live-vault.js';
 import { GraphError } from './cloud/onedrive-api.js';
 import { readBrowserKey, rememberBrowserKey, forgetBrowserKey, applyBrowserRetentionChoice, isBrowserRemembered, InvalidRememberedBrowserKeyError, isManuallyLocked, setManualLock, clearManualLock, notifyOtherFinanceTabs, CROSS_TAB_LOCK_KEY } from './cloud/remembered-browser.js';
@@ -888,59 +889,19 @@ function updateBatchStatus() {
                     : drafts.length ? `${drafts.length}件をまとめて取り込み` : '取込対象はありません';
     $('batch-description').textContent = otherErrors ? '不備がある明細は保存できません。' : '';
 }
-/** Shared, read-only OneDrive gate. No page copies its own error classification. */
+/** One adapter supplies the state and actions; every gated page uses the same UI. */
 function syncCloudGate() {
-    const gateIds = ['home-view', 'import-view', 'manage-view', 'rules-view', 'assets-page', 'future-view',
-        'summary-view', 'analysis-view', 'reports-view', 'subscriptions-view'];
-    const blocked = !liveVault?.unlocked;
     const notice = cloudConnectionNotice();
-    const locked = !!liveVault?.exists && vaultDiscoveryCompleted && notice.kind === 'connected';
-    const checking = cloudStartupRunning || notice.kind === 'checking';
-    for (const id of gateIds) {
-        const view = document.getElementById(id);
-        if (!view)
-            continue;
-        view.classList.toggle('finance-cloud-gated', blocked);
-        const current = view.querySelector(':scope > .finance-cloud-gate');
-        if (!blocked) {
-            current?.remove();
-            continue;
-        }
-        let panel = current;
-        if (!panel) {
-            panel = document.createElement('section');
-            panel.className = 'finance-cloud-gate';
-            panel.setAttribute('aria-label', 'OneDriveの接続状態');
-            const heading = view.querySelector(':scope > .finance-page-heading');
-            if (heading)
-                heading.after(panel);
-            else
-                view.prepend(panel);
-        }
-        panel.replaceChildren();
-        const title = document.createElement('h2');
-        title.textContent = locked ? 'OneDrive保管庫はロックされています' :
-            checking ? 'OneDriveを確認中' : 'OneDriveに接続できません';
-        const description = document.createElement('p');
-        description.textContent = locked ? '保管庫を解除すると、このページのデータを表示できます。' : notice.message;
-        const actions = document.createElement('div');
-        actions.className = 'finance-cloud-gate-actions';
-        const add = (label, fn) => {
-            const b = document.createElement('button');
-            b.type = 'button';
-            b.textContent = label;
-            b.addEventListener('click', fn);
-            actions.append(b);
-        };
-        if (locked)
-            add('保管庫を解除', () => { void askVault('unlock'); });
-        else if (!checking) {
-            add(notice.kind === 'not-connected' ? 'Microsoftアカウントで接続' : '通信を再試行', () => { $('cloud-login').click(); });
-            add('Microsoft認証をやり直す', () => { $('cloud-reauth').click(); });
-        }
-        add('設定を開く', () => showView('settings'));
-        panel.append(title, description, actions);
-    }
+    syncFinanceCloudGates({
+        blocked: !liveVault?.unlocked,
+        locked: !!liveVault?.exists && vaultDiscoveryCompleted && notice.kind === 'connected',
+        checking: cloudStartupRunning || notice.kind === 'checking',
+        notice,
+        onRetry: () => { $('cloud-login').click(); },
+        onReauthenticate: () => { $('cloud-reauth').click(); },
+        onUnlock: () => { void askVault('unlock'); },
+        onSettings: () => showView('settings'),
+    });
 }
 function render() {
     // While parsing a batch, preserve draft state but defer expensive full
