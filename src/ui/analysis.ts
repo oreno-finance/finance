@@ -37,6 +37,24 @@ function metric(label:string,value:string,sub:string,tone=''):HTMLElement{
   const root=el('div',`analysis-metric ${tone}`);root.append(el('span','analysis-muted',label),el('strong',financialStatusClass(value),value));if(sub)root.append(el('small','analysis-muted',sub));return root;
 }
 function note(text:string):HTMLElement{return el('p','analysis-muted analysis-note',text);}
+/** Display coverage separately from the existing sums of known months. */
+function periodMetrics(data:PeriodAnalytics){
+  const totals=data.totals,count=data.months.length;
+  const balanceMonths=data.months.filter(month=>month.balance!==null).length;
+  const incompleteExpense=totals.knownExpenseMonths<count;
+  const incompleteBalance=balanceMonths<count;
+  const coverage=(known:number)=>`${known}/${count}か月`;
+  return {
+    income:{value:formatYen(totals.income),detail:coverage(totals.knownIncomeMonths)},
+    expense:{value:incompleteExpense?DATA_STATUS.unavailable:formatYen(totals.expense),detail:[incompleteExpense&&totals.expense!==null?`判明分 ${formatYen(totals.expense)}（一部未取得）`:'',coverage(totals.knownExpenseMonths)].filter(Boolean).join(' · ')},
+    balance:{value:incompleteBalance?DATA_STATUS.unavailable:sharedYen(totals.balance,0,DATA_STATUS.unavailable),detail:[incompleteBalance&&totals.balance!==null?`判明分 ${signedYen(totals.balance)}`:'',coverage(balanceMonths),totals.comparable?'':'欠測・暫定などを含む参考値'].filter(Boolean).join(' · '),tone:incompleteBalance||totals.balance===null?'':totals.balance<0?'cashflow-negative':'cashflow-positive'}
+  };
+}
+function periodMetricCell(value:string,detail:string):HTMLTableCellElement{
+  const cell=el('td','analysis-number');
+  cell.append(el('div',financialStatusClass(value),value),el('div','analysis-muted',detail));
+  return cell;
+}
 export function initAnalysis(deps:AnalysisDeps):AnalysisUi{
   const root=document.getElementById('analysis-content');
   if(!root)throw new Error('収支分析画面が見つかりません。');
@@ -73,10 +91,10 @@ export function initAnalysis(deps:AnalysisDeps):AnalysisUi{
   function summary(data:PeriodAnalytics):HTMLElement{
     const result=el('div','analysis-metrics');const totals=data.totals;
     const range=`${data.months[0]!.period}〜${data.months.at(-1)!.period}`;
-    const partial=data.months.some(m=>m.report.cardOutflow===null);
-    result.append(metric('収入',formatYen(totals.income),`${totals.knownIncomeMonths}/${data.months.length}か月 · ${range} · 実績・見込み`),
-      metric('支出',partial?DATA_STATUS.unavailable:formatYen(totals.expense),[partial&&totals.expense!==null?`判明分 ${formatYen(totals.expense)}（一部未取得）`:'',`${totals.knownExpenseMonths}/${data.months.length}か月 · NISAを含む`].filter(Boolean).join(' · ')),
-      metric('収支',sharedYen(totals.balance,0,DATA_STATUS.unavailable),totals.comparable?'':'欠測・暫定などを含む参考値',totals.balance===null?'':totals.balance<0?'cashflow-negative':'cashflow-positive'),
+    const {income,expense,balance}=periodMetrics(data);
+    result.append(metric('収入',income.value,`${income.detail} · ${range} · 実績・見込み`),
+      metric('支出',expense.value,`${expense.detail} · NISAを含む`),
+      metric('収支',balance.value,balance.detail,balance.tone),
       metric('平均支出',sharedYen(totals.avgExpense,0,DATA_STATUS.unavailable),`${totals.knownExpenseMonths}か月分の平均`));
     return result;
   }
@@ -206,9 +224,10 @@ export function initAnalysis(deps:AnalysisDeps):AnalysisUi{
     ['期間','収入・見込み','支出・予定','収支','明細登録月'].forEach(name=>tr.append(el('th','',name)));
     head.append(tr);table.append(head);const body=el('tbody');
     for(const item of years){
+      const {income,expense,balance}=periodMetrics(item);
       const line=el('tr');line.append(el('td','',`${item.months[0]!.period.slice(0,4)}年 1〜${item.months.length}月`),
-        el('td','analysis-number',formatYen(item.totals.income)),el('td','analysis-number',formatYen(item.totals.expense)),
-        el('td','analysis-number',formatYen(item.totals.balance)),el('td','',`${item.totals.knownExpenseMonths}/${item.months.length}か月`));body.append(line);
+        periodMetricCell(income.value,income.detail),periodMetricCell(expense.value,expense.detail),
+        periodMetricCell(balance.value,balance.detail),el('td','',`${item.totals.knownExpenseMonths}/${item.months.length}か月`));body.append(line);
     }
     table.append(body);yearTable.append(table);block.body.append(yearTable);
     const delta=comparableDelta(data,prior,'expense');

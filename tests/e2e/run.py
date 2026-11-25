@@ -1130,6 +1130,115 @@ window.financeImportTest={
                 finally:
                     context.close()
 
+    def test_analysis_partial_totals_match_annual_comparison(self):
+        from datetime import datetime, timezone
+        from playwright.sync_api import expect
+        html=self.offline_document()
+        for width,mobile in ((1100,False),(390,True)):
+            with self.subTest(width=width):
+                context=self.browser.new_context(viewport={'width':width,'height':850},is_mobile=mobile,has_touch=mobile,timezone_id='Asia/Tokyo')
+                try:
+                    page=context.new_page();errors=[]
+                    page.on('pageerror',lambda exc:errors.append(str(exc)))
+                    page.clock.set_fixed_time(datetime(2026,3,25,3,tzinfo=timezone.utc))
+                    page.route('**/*',lambda route:route.abort());page.set_content(html)
+                    page.evaluate('''async()=>{
+                      const {emptyAssets}=await import('finance-fixture/cloud/assets.js');
+                      const {initAnalysis}=await import('finance-fixture/ui/analysis.js');
+                      const pay=(p,amount=200000)=>({id:'pay-'+p,employerId:'main',job:'main',paidOn:p+'-10',payPeriod:p,netPay:amount,grossPay:null,taxablePay:null,currency:'JPY',kind:'salary',revision:1});
+                      const bill=(p,amount,confirmation='confirmed')=>({id:'bill-'+p,statement:{provider:'smbc',cardId:'smbc-nl',sourceKind:'paste',sourceName:'synthetic',billingMonth:p,paymentDate:p+'-20',statedTotal:amount,confirmation,warnings:[],rows:[{id:'row-'+p,usedOn:p+'-01',merchant:'SYNTHETIC SHOP',amount}]}});
+                      const periods=['2025-01','2025-02','2025-03','2026-01','2026-02','2026-03'];
+                      const source={records:[...periods.slice(0,3).map(p=>bill(p,200000)),bill('2026-01',150000),bill('2026-02',180000)],rules:[],categories:[],assets:emptyAssets(),payroll:{ready:true,syncedAt:1000,entries:periods.map(p=>pay(p))},currentPeriod:'2026-03'};
+                      for(const node of document.querySelectorAll('.workspace .content > :is(section,div)[id]'))node.classList.toggle('hidden',node.id!=='analysis-view');
+                      const ui=initAnalysis({source:()=>source,openMonth(){},openDrilldown(){},openSettings(){}});ui.render();
+                      window.coverageAnalysis={complete(){source.records.push(bill('2026-03',70000,'provisional'));ui.render();},missingIncome(){source.payroll.entries=source.payroll.entries.filter(p=>p.payPeriod!=='2026-01');ui.render();},empty(){source.records=[];source.payroll={ready:false,syncedAt:null,entries:[]};ui.render();}};
+                    }''')
+                    root=page.locator('#analysis-content')
+                    root.get_by_role('button',name='3か月',exact=True).click()
+                    metrics=root.locator('.analysis-metrics .analysis-metric')
+                    expect(metrics.nth(0).locator('strong')).to_have_text('600,000円')
+                    expect(metrics.nth(0)).to_contain_text('3/3か月')
+                    expect(metrics.nth(1).locator('strong')).to_have_text('算出不可')
+                    expect(metrics.nth(1)).to_contain_text('判明分 330,000円')
+                    expect(metrics.nth(2).locator('strong')).to_have_text('算出不可')
+                    expect(metrics.nth(2)).to_contain_text('判明分 +70,000円')
+                    expect(metrics.nth(2)).to_contain_text('2/3か月')
+                    root.get_by_role('button',name='年間',exact=True).click()
+                    comparison=root.locator('.analysis-panel').filter(has=page.get_by_role('heading',name='前年との比較',exact=True))
+                    current=comparison.locator('tbody tr').nth(0).locator('td')
+                    previous=comparison.locator('tbody tr').nth(1).locator('td')
+                    for cell,amount,detail in ((current.nth(1),'600,000円','3/3か月'),(current.nth(2),'算出不可','判明分 330,000円'),(current.nth(3),'算出不可','判明分 +70,000円'),(previous.nth(2),'600,000円','3/3か月'),(previous.nth(3),'0円','3/3か月')):
+                        expect(cell.locator('div').first).to_have_text(amount)
+                        expect(cell).to_contain_text(detail)
+                    expect(current.nth(3)).to_contain_text('2/3か月')
+                    expect(comparison).to_contain_text('比較できる明細が揃っていません')
+                    page.evaluate('coverageAnalysis.complete()')
+                    expect(metrics.nth(2).locator('strong')).to_have_text('200,000円')
+                    expect(metrics.nth(2)).to_contain_text('3/3か月')
+                    expect(metrics.nth(2)).to_contain_text('参考値')
+                    expect(current.nth(2).locator('div').first).to_have_text('400,000円')
+                    page.evaluate('coverageAnalysis.missingIncome()')
+                    expect(metrics.nth(2).locator('strong')).to_have_text('算出不可')
+                    expect(metrics.nth(2)).to_contain_text('2/3か月')
+                    expect(metrics.nth(1).locator('strong')).to_have_text('400,000円')
+                    page.evaluate('coverageAnalysis.empty()')
+                    expect(metrics.nth(2).locator('strong')).to_have_text('算出不可')
+                    expect(metrics.nth(2)).to_contain_text('0/3か月')
+                    expect(metrics.nth(2)).not_to_contain_text('判明分')
+                    self.assertFalse(errors,errors)
+                finally:
+                    context.close()
+
+    def test_future_nisa_schedule_and_card_rule_lifecycle(self):
+        from datetime import datetime, timezone
+        from playwright.sync_api import expect
+        html=self.offline_document()
+        for width,mobile in ((1100,False),(390,True)):
+            with self.subTest(width=width):
+                context=self.browser.new_context(viewport={'width':width,'height':850},is_mobile=mobile,has_touch=mobile,timezone_id='Asia/Tokyo')
+                try:
+                    page=context.new_page();errors=[]
+                    page.on('pageerror',lambda exc:errors.append(str(exc)))
+                    page.clock.set_fixed_time(datetime(2026,11,17,3,tzinfo=timezone.utc))
+                    page.route('**/*',lambda route:route.abort());page.set_content(html)
+                    page.evaluate('''async()=>{
+                      const {emptyAssets,withUpdatedNisaCardRule}=await import('finance-fixture/cloud/assets.js');
+                      const {initFutureProjection}=await import('finance-fixture/ui/future-projection.js');
+                      let assets=emptyAssets();assets.birthMonth='2001-01';
+                      assets.snapshots=[{id:'cash-test',accountId:'cash-savings',balance:100000,observedAt:'2026-11-01T12:00:00+09:00'},{id:'nisa-test',accountId:'nisa',balance:200000,observedAt:'2026-11-01T12:00:00+09:00'}];
+                      assets.nisaCardRule={cardId:'rakuten-mizuho',merchantContains:'Synthetic investment',enabled:true};
+                      assets.recurring=[{id:'cash-test-rule',name:'Synthetic savings',kind:'transfer',fromAccountId:'rakuten-bank',toAccountId:'cash-savings',amount:24000,frequency:'monthly',dayOfMonth:20,monthOfYear:null,weekday:null,startOn:'2026-01-01',endOn:null,categoryId:null,enabled:true,pricing:[{effectiveOn:'2026-01-01',amount:12000},{effectiveOn:'2026-12-01',amount:24000}]},
+                        {id:'nisa-test-rule',name:'Synthetic NISA',kind:'transfer',fromAccountId:'rakuten-bank',toAccountId:'nisa',amount:15000,frequency:'monthly',dayOfMonth:20,monthOfYear:null,weekday:null,startOn:'2026-01-01',endOn:'2026-10-31',categoryId:null,enabled:true}];
+                      assets.recurring.push({...assets.recurring[0],id:'cash-ended',name:'Synthetic ended savings',amount:20000,pricing:undefined,endOn:'2026-10-31'});
+                      const records=[{id:'sample-record',statement:{cardId:'rakuten-mizuho',rows:[{id:'sample-row',usedOn:'2026-11-10',merchant:'Synthetic investment',amount:20000}]}}];
+                      document.getElementById('future-view').classList.remove('hidden');
+                      const ui=initFutureProjection(()=>({assets,records}));ui.render();
+                      window.nisaLifecycle={remove(){assets=withUpdatedNisaCardRule(assets,null,'2026-11-17');ui.render();},
+                        schedule(){assets={...assets,recurring:assets.recurring.map(e=>e.toAccountId==='nisa'?{...e,startOn:'2027-01-01',endOn:null}:e)};ui.render();}};
+                      const age=document.getElementById('future-age');age.value='26';age.dispatchEvent(new Event('input'));
+                      const rate=document.getElementById('future-nisa-rate');rate.value='0';rate.dispatchEvent(new Event('input'));
+                    }''')
+                    hint=page.locator('#future-scenario-hint')
+                    target_nisa=page.locator('.future-table tbody tr').last.locator('td').nth(2)
+                    expect(page.locator('.future-chart-svg')).to_be_visible()
+                    expect(hint).to_have_text('現在の月額目安：現金 12,000円 · NISA 20,000円')
+                    expect(page.locator('#future-saving-amount')).to_have_value('20000')
+                    expect(page.locator('#future-scenario-nisa')).to_have_value('25000')
+                    expect(target_nisa).to_have_text('260,000円')
+                    expect(page.locator('.future-warning')).to_have_count(0)
+                    page.evaluate('nisaLifecycle.schedule()')
+                    expect(target_nisa).to_have_text('255,000円')
+                    expect(hint).to_have_text('現在の月額目安：現金 12,000円 · NISA 20,000円')
+                    expect(page.locator('.future-warning')).to_contain_text('重複')
+                    page.evaluate('nisaLifecycle.remove()')
+                    expect(hint).to_have_text('現在の月額目安：現金 12,000円 · NISA 0円')
+                    expect(target_nisa).to_have_text('235,000円')
+                    expect(page.locator('.future-table tbody tr').first.locator('td').nth(2)).to_have_text('220,000円')
+                    expect(page.locator('.future-warning')).to_have_count(0)
+                    self.assertFalse(errors,errors)
+                finally:
+                    context.close()
+
     def test_graph_pointer_drag_keyboard_zoom_desktop(self):
         page, context, errors = self.create_page()
         try:
