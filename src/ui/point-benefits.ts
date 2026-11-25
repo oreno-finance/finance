@@ -1,6 +1,6 @@
 /** Consistent point breakdown for Home, monthly summaries, analysis and reports. */
 import type { PointBenefits } from '../summary/point-benefits.js';
-import {formatYen,formatPoints,formatRate,formatRateList} from './formatters.js';
+import {DATA_STATUS,formatYen,formatPoints,formatRate,formatRateList} from './formatters.js';
 export type PointCoverage='missing'|'no-use'|'registered';
 /** No statement is evidence of zero usage only after explicit confirmation. */
 export function pointCoverage(reports:readonly {cardLines:readonly unknown[];cardNoUseConfirmed:boolean}[]):PointCoverage {
@@ -13,11 +13,12 @@ export function pointBenefitsSection(title:string,data:PointBenefits,coverage:Po
   const section=document.createElement('section');section.className='panel points-benefits';
   const heading=document.createElement('div');heading.className='points-benefits-heading';
   const name=document.createElement('h2');name.textContent=title;
-  const total=document.createElement('strong');total.textContent=coverage==='missing'?'—':formatPoints(data.total);
+  const total=document.createElement('strong');total.textContent=coverage==='missing'?`明細${DATA_STATUS.missing}`:formatPoints(data.total);
   heading.append(name,total);section.append(heading);
+  if(coverage==='missing'){section.classList.add('points-benefits-compact','points-benefits-missing');return section;}
   const list=document.createElement('div');list.className='points-benefits-list';
   if(!data.cards.length){
-    const empty=document.createElement('p');empty.className='points-benefits-empty';empty.textContent=coverage==='no-use'?'利用なし確認済み':coverage==='missing'?'明細未取得・算出不可':'算出対象の明細なし';list.append(empty);
+    const empty=document.createElement('p');empty.className='points-benefits-empty';empty.textContent=coverage==='no-use'?'利用なし確認済み':'算出対象の明細なし';list.append(empty);
   }
   for(const item of data.cards){
     const row=document.createElement('div');row.className='points-benefits-row';

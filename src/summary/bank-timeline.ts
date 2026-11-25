@@ -62,7 +62,7 @@ export function bankTimeline(period:string,source:MonthlySource,today:string,
     if(assets.cardDebitAccounts?.[bill.cardId]==='rakuten-bank')add({date:bill.paymentDate,title:bill.name,amount:-bill.amount,kind:'card',provisional:true});
   }
   for(const funding of estimatedMizuhoFunding(assets as AssetsDocument,source.records,today,end))
-    add({date:funding.date,title:'みずほ銀行へ送金（固定費から推定・未確定）',amount:-funding.amount,kind:'transfer',provisional:true});
+    add({date:funding.date,title:'みずほ銀行へ送金（見込み）',amount:-funding.amount,kind:'transfer',provisional:true});
   for(const entry of assets.oneTime??[]){
     const delta=(entry.toAccountId==='rakuten-bank'?entry.amount:0)-(entry.fromAccountId==='rakuten-bank'?entry.amount:0);
     if(delta)add({date:entry.date,title:`${entry.name}${entry.status==='planned'?'（予定）':''}`,amount:delta,kind:'one-time'});

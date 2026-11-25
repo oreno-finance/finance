@@ -61,7 +61,7 @@ select:not([multiple]){
   line-height:1.6;
   font-size:12px;
 }
-.rules-form-panel #rule-pattern-help{margin:6px 0 13px;color:var(--muted);font-size:11px;line-height:1.6}
+.rules-form-panel #rule-pattern-help{margin:6px 0 13px;line-height:1.6}
 
 /* Prioritize the editor: 70% for entry, 30% for review. */
 .assets-recurring-grid{
@@ -86,10 +86,9 @@ select:not([multiple]){
 }
 .assets-recurring-grid .recurring-account-row>.rules-field{
   flex:1 1 160px;
-  min-width:0;
+
 }
 .assets-recurring-grid .recurring-account-row>.rules-field:first-child{flex:0.8 1 135px}
-.assets-recurring-grid .recurring-account-row>.hidden{display:none!important}
 .assets-recurring-grid .recurring-schedule-row{
   display:grid;
   grid-template-columns:repeat(4,minmax(0,1fr));
@@ -113,7 +112,6 @@ select:not([multiple]){
 .assets-recurring-grid .recurring-frequency-extra select{width:100%;min-width:0}
 .assets-recurring-grid .assets-list-panel{padding:18px 16px}
 .assets-recurring-grid .assets-recurring-item{padding:13px 12px}
-.assets-recurring-grid .assets-recurring-top{flex-wrap:wrap}
 .assets-recurring-grid .assets-recurring-meta{font-size:10.5px;line-height:1.5}
 
 /* Three editable fields; the issuer's original total is kept as a verification value. */
@@ -122,7 +120,6 @@ select:not([multiple]){
   grid-template-columns:repeat(3,minmax(0,1fr));
   gap:12px;
 }
-.manage-editor .manage-fields>label{min-width:0}
 .manage-editor .manage-fields input,
 .manage-editor .manage-fields select{width:100%;min-width:0}
 

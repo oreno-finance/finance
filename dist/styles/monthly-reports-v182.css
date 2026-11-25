@@ -24,7 +24,7 @@
 .reports-memo{width:100%;min-height:85px;max-width:100%;background:var(--panel);color:var(--ink);font-size:13px}
 .reports-panel .save-action{width:auto;display:inline-flex;justify-content:center;margin:0}
 .reports-panel .secondary-action{width:fit-content}
-.reports-revision-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.reports-revision-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;}
 .reports-feedback{margin:0;font-size:12px;color:var(--accent)}
 .reports-locked{padding:24px}
 @media(max-width:600px){

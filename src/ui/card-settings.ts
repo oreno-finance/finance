@@ -96,7 +96,7 @@ export function initCardSettings(getVault:()=>LiveVault|null,onSaved:()=>void):C
       const today=new Date();effectiveOn.value=`${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
       effectiveOn.setAttribute('aria-label',`${card.name}の還元率の適用開始日`);
       effectiveOn.min=effectiveOn.value;
-      rateEdit.append(field('変更の適用開始日',effectiveOn));
+      rateEdit.append(field('適用日',effectiveOn));
       let rateMode:HTMLSelectElement|undefined,expectedFuture:string|undefined;
       if(vault?.unlocked){
         const day=effectiveOn.value,history=pref?.pointRateHistory??[];
@@ -111,7 +111,7 @@ export function initCardSettings(getVault:()=>LiveVault|null,onSaved:()=>void):C
         if(latest&&latest.effectiveOn>day&&history.length>1){
           expectedFuture=latest.effectiveOn;effectiveOn.value=latest.effectiveOn;rate.value=String(latest.ratePercent);
           rateEdit.querySelector('.card-setting-field>span')!.textContent='変更予定の還元率（%）';
-          rateMode=select([['replace','最新の変更予定を修正'],['cancel','最新の変更予定を取り消す'],['append','次の変更予定を追加']],'replace');
+          rateMode=select([['replace','最新の変更予定を修正'],['cancel','変更予定を取り消す'],['append','次の変更予定を追加']],'replace');
           const operation=rateMode;
           const adjustRate=()=>{
             const cancel=operation.value==='cancel';rate.disabled=cancel;effectiveOn.disabled=cancel;

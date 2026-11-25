@@ -39,11 +39,17 @@ jobs:
           node-version: '22'
       - name: Install dependencies from locked versions
         run: npm ci
-      - name: Inspect author, tracked files, PII, CSP and secrets
-        env:
-          FINANCE_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          FINANCE_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: node scripts/audit-publication.mjs --tree
+      - name: Inspect tracked source before building
+        if: github.event_name != 'schedule'
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            node scripts/audit-publication.mjs --source --history
+          else
+            node scripts/audit-publication.mjs --source
+          fi
+      - name: Periodic full tree and author history inspection
+        if: github.event_name == 'schedule'
+        run: npm run audit:tree
       - name: Audit every incoming commit for historical personal information
         if: github.event_name == 'pull_request' || github.event_name == 'push'
         env:
@@ -56,31 +62,41 @@ jobs:
           else
             node scripts/audit-publication.mjs --range "$FINANCE_PUSH_BEFORE_SHA" "$GITHUB_SHA"
           fi
-      - name: Gitleaks full history secret scan
+      - name: Gitleaks incoming history or scheduled full history scan
+        env:
+          FINANCE_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FINANCE_PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) range="-m --full-history $FINANCE_PR_BASE_SHA..$GITHUB_SHA" ;;
+            push) range="-m --full-history $FINANCE_PUSH_BEFORE_SHA..$GITHUB_SHA" ;;
+            *) range="--all" ;;
+          esac
           docker run --rm -v "$PWD:/repo:ro" -w /repo \
             ghcr.io/gitleaks/gitleaks@sha256:b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb \
-            git --redact --no-banner --log-opts="--all" .
+            git --redact --no-banner --log-opts="$range" .
       - name: Audit dependencies for high and critical vulnerabilities
         run: npm audit --audit-level=high
-      - name: Typecheck, build and exercise the tests before merging
-        env:
-          FINANCE_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          FINANCE_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      - name: Build once, typecheck and run regressions
+        if: github.event_name != 'schedule'
         run: |
-          npm run check
           npm test
           npm run verify:cloud
-          npm run audit:tree
       - name: Install pinned Playwright in an isolated Python environment
+        if: github.event_name != 'schedule'
         run: |
           python3 -m venv "$RUNNER_TEMP/finance-playwright"
           "$RUNNER_TEMP/finance-playwright/bin/python" -m pip install --disable-pip-version-check playwright==1.57.0
           "$RUNNER_TEMP/finance-playwright/bin/python" -m playwright install --with-deps chromium
       - name: Exercise real desktop and mobile interactions (headless Chromium)
+        if: github.event_name != 'schedule'
         run: |
           "$RUNNER_TEMP/finance-playwright/bin/python" tests/e2e/run.py
+      - name: Audit actual published files
+        if: github.event_name != 'schedule'
+        run: node scripts/audit-publication.mjs --dist
       - name: Gitleaks scan of actual published build
+        if: github.event_name != 'schedule'
         run: |
           docker run --rm -v "$PWD:/repo:ro" -w /repo \
             ghcr.io/gitleaks/gitleaks@sha256:b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb \

@@ -1,4 +1,4 @@
-import {formatYen as sharedYen,formatMonth,formatRate,formatNumber} from './formatters.js';
+import {DATA_STATUS,financialStatusClass,formatYen as sharedYen,formatMonth,formatRate,formatNumber} from './formatters.js';
 /** Long-term savings planner reads persisted settings; only comparison parameters are editable. */
 import type { AssetsDocument } from '../cloud/assets.js';
 import type { CloudRecord } from '../cloud/merge.js';
@@ -7,8 +7,8 @@ import {matchingNisaRows} from '../cloud/asset-projection.js';
 
 export interface FutureProjectionUi {render():void;reset():void}
 export interface FutureSource {assets:AssetsDocument;records:readonly CloudRecord[]}
-const yen=(value:number|null)=>sharedYen(value,0,'未登録');
-const short=(n:number|null)=>n===null?'—':Math.abs(n)>=10000?`${formatNumber(n/10000,1)}万円`:yen(n);
+const yen=(value:number|null)=>sharedYen(value,0,DATA_STATUS.unavailable);
+const short=(n:number|null)=>n===null?DATA_STATUS.unavailable:Math.abs(n)>=10000?`${formatNumber(n/10000,1)}万円`:yen(n);
 function el(tag:string,className='',text?:string):HTMLElement{
   const node=document.createElement(tag);node.className=className;if(text!==undefined)node.textContent=text;return node;
 }
@@ -259,7 +259,7 @@ export function initFutureProjection(getSource:()=>FutureSource|null):FutureProj
     const card=el('div',`future-metric future-metric-${style}`);
     const label=el('div','future-metric-label');
     label.append(el('span',`future-color-key future-color-key-${style}`),el('span','',title));
-    card.append(label,el('strong','',short(value)));
+    card.append(label,el('strong',financialStatusClass(short(value)),short(value)));
     if(sub)card.append(el('small','future-muted',sub));
     return card;
   }
@@ -284,7 +284,7 @@ export function initFutureProjection(getSource:()=>FutureSource|null):FutureProj
     }else target.value='';
     age.disabled=!bounds;
     birthSettings.hidden=!!birthMonth;
-    find('future-age-value').textContent=bounds?`${age.value}歳`:'—';
+    find('future-age-value').textContent=bounds?`${age.value}歳`:birthMonth?DATA_STATUS.unavailable:DATA_STATUS.unset;
     find('future-nisa-rate-value').textContent=formatRate(Number(nisaRate.value));
     find('future-target-label').textContent=bounds?`目標年月：${dateTitle(target.value)}`:'';
     if(!birthMonth){hint.textContent='生年月を設定してください。';return;}

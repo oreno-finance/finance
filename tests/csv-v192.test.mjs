@@ -71,7 +71,7 @@ test('revision retains unique manual display name, not a positional row number',
   const old=parse('架空,****1234,三井住友カードＶＩＳＡ（ＮＬ）,,,\n2026/10/4,A,100,1,1,100\n2026/10/3,B,200,1,1,200\n,,,,,300');
   old.sourceKind='paste';old.rows[1].merchantOverride='手動の名前';
   const fresh=parse('架空,****1234,三井住友カードＶＩＳＡ（ＮＬ）,,,\n2026/10/3,B,200,1,1,200\n2026/10/4,A,100,1,1,100\n,,,,,300');
-  assert.equal(planStatementImport([old],fresh).kind,'duplicate'); // same content despite reordered rows; CSV source promotion is handled by main.ts
+  assert.equal(planStatementImport([old],fresh).kind,'revision'); // same content, but CSV promotion is decided by the shared import policy
   const {statement,diff}=prepareStatementRevision(old,fresh);
   assert.equal(statement.rows[0].merchantOverride,'手動の名前');
   assert.equal(statement.rows[1].merchantOverride,undefined);

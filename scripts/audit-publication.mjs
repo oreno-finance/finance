@@ -1,12 +1,58 @@
 /** Finance publication gate. Never prints the contents of suspected secrets. */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, lstatSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateFinanceCsp, validateFinanceAuthCsp } from './finance-csp.mjs';
 
 const mode=process.argv[2];
+// Only the history actually sent to this remote belongs to the push gate.
+// Remote-tracking refs may be stale or belong to another remote, so never use --remotes as an exclusion.
+if(mode==='--push'){
+  try{
+    const git=(...args)=>execFileSync('git',args,{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+    const sha=/^[0-9a-f]{40}$/i, zero='0'.repeat(40);
+    const heads=new Set(), bases=new Set();
+    let newBranch=false;
+    for(const line of readFileSync(0,'utf8').trim().split(/\r?\n/).filter(Boolean)){
+      const fields=line.split(/\s+/), [,local,,remote]=fields;
+      if(fields.length!==4||!sha.test(local)||!sha.test(remote))throw new Error('invalid ref');
+      if(local===zero)continue;
+      git('cat-file','-e',`${local}^{commit}`);heads.add(local);
+      if(remote===zero)newBranch=true;
+      else {git('cat-file','-e',`${remote}^{commit}`);bases.add(remote);}
+    }
+    if(!heads.size)process.exit(0);
+    if(git('rev-parse','--is-shallow-repository')!=='false')throw new Error('shallow history');
+    if(newBranch){
+      const remoteUrl=process.argv[3];
+      if(!remoteUrl)throw new Error('missing remote');
+      for(const line of git('ls-remote','--heads','--',remoteUrl).split('\n').filter(Boolean)){
+        const [id,ref]=line.split('\t');
+        if(!sha.test(id)||!ref?.startsWith('refs/heads/'))throw new Error('invalid remote ref');
+        // Unknown remote objects cannot be proven locally: scan more, not less.
+        if(spawnSync('git',['cat-file','-e',`${id}^{commit}`],{stdio:'ignore'}).status===0)bases.add(id);
+      }
+    }
+    const range=[...heads,...[...bases].map(id=>`^${id}`)];
+    const commits=git('rev-list','--reverse',...range).split('\n').filter(Boolean);
+    console.log(`[FINANCE] push対象: ${commits.length}コミット`);
+    for(const id of commits){
+      const r=spawnSync(process.execPath,[fileURLToPath(import.meta.url),'--commit',id],{stdio:'inherit'});
+      if(r.error||r.status!==0)process.exit(r.status||1);
+    }
+    if(commits.length){
+      // Scan the same range, including merge-parent differences; no unrelated local history.
+      const r=spawnSync('gitleaks',['git','--redact','--no-banner',`--log-opts=-m --full-history ${range.join(' ')}` ,'.'],{stdio:'inherit'});
+      if(r.error||r.status!==0)process.exit(r.status||1);
+    }
+    process.exit(0);
+  }catch{
+    console.error('[FINANCE] push対象の履歴を確認できません。送信先・ブランチ・取得済み履歴を確認してください。');
+    process.exit(1);
+  }
+}
 // CI must inspect EACH incoming commit, not only the final clean working tree.
 // Run the same --commit publication policy that the local pre-push hook uses.
 if(mode==='--range'){
@@ -35,8 +81,8 @@ if(mode==='--range'){
   process.exit(0);
 }
 const commitSha=process.argv[3];
-if(!['--staged','--tree','--commit'].includes(mode) || (mode==='--commit'&&!/^[0-9a-f]{40,64}$/i.test(commitSha??''))){
-  console.error('Usage: node scripts/audit-publication.mjs --staged|--tree|--commit SHA');
+if(!['--staged','--tree','--commit','--source','--dist'].includes(mode) || (mode==='--commit'&&!/^[0-9a-f]{40,64}$/i.test(commitSha??''))){
+  console.error('Usage: node scripts/audit-publication.mjs --staged|--tree|--commit SHA|--source [--history]|--dist');
   process.exit(2);
 }
 const policy=JSON.parse(readFileSync(new URL('./publication-policy.json',import.meta.url),'utf8'));
@@ -50,7 +96,11 @@ const checkIdentity=(name,email,kind)=>{
 };
 try {
   if(mode==='--staged'){
-    checkIdentity(str('config','user.name'),str('config','user.email'),'現在のGit作成者');
+    for(const kind of ['AUTHOR','COMMITTER']){
+      const identity=/^(.*) <([^<>]+)> \d+ [+-]\d{4}$/.exec(str('var',`GIT_${kind}_IDENT`));
+      if(!identity)throw new Error('invalid identity');
+      checkIdentity(identity[1],identity[2],`現在のGit ${kind}`);
+    }
   }
   // The pull_request checkout checks out GitHub's *synthetic* test-merge.
   // Trust only the exact CI-provided SHA with the expected base/head parents;
@@ -65,7 +115,9 @@ try {
     parents.length===2 &&
     parents[0]===process.env.FINANCE_PR_BASE_SHA &&
     parents[1]===process.env.FINANCE_PR_HEAD_SHA;
-  for(const line of str('log','--all','--format=%H%x09%an%x09%ae%x09%cn%x09%ce%x09%P%x09%s').split('\n').filter(Boolean)){
+  // --tree is the explicit worktree / history diagnostic and remains compatible with CI.
+  const history=mode==='--staged'||mode==='--dist'||(mode==='--source'&&process.argv[3]!=='--history')?[]:str('log',...(mode==='--commit'?['-1',commitSha]:['--all']),'--format=%H%x09%an%x09%ae%x09%cn%x09%ce%x09%P%x09%s').split('\n').filter(Boolean);
+  for(const line of history){
     const [sha,name,email,committer,committerEmail,parentField,subject]=line.split('\t');
     const parents=parentField.split(' ').filter(Boolean);
     if(syntheticPrMerge(sha,parents))continue;
@@ -84,7 +136,18 @@ try {
     if(!githubMergeCommitter)checkIdentity(committer,committerEmail,'コミット履歴のCommitter');
   }
 }catch(error){errors.push('Git作成者・履歴を取得できません');}
-const names=mode==='--staged'
+// Inspect every file that will be published, including ignored/generated files.
+// Refuse links rather than following them outside the artifact.
+function artifactFiles(path){
+  const stat=lstatSync(path);
+  if(stat.isSymbolicLink()||(!stat.isDirectory()&&!stat.isFile())){
+    errors.push(`${path}: 公開成果物に通常ファイル以外が存在します`);return [];
+  }
+  return stat.isFile()?[path]:readdirSync(path).flatMap(name=>artifactFiles(`${path}/${name}`));
+}
+const names=mode==='--dist'?artifactFiles('dist')
+  :mode==='--source'?splitNul(git('ls-files','--cached','-z')).filter(path=>!path.startsWith('dist/'))
+  :mode==='--staged'
   ?splitNul(git('diff','--cached','--name-only','--diff-filter=ACMR','-z'))
   :mode==='--commit'?splitNul(git('diff-tree','--root','--no-commit-id','-m','-r','--diff-filter=ACMR','--name-only','-z',commitSha))
   :[...new Set(splitNul(git('ls-files','--cached','--others','--exclude-standard','-z')))].filter(existsSync);
@@ -92,7 +155,7 @@ const names=mode==='--staged'
 const pinnedFaviconSha256 = '97167321d1dcd34af3b45b4803e7abe85cd0647469581e45d1c39b57e6ed1195';
 const pinnedMsalBundleSha256 = '148f7091b42d0ff43a50262325d48322596c582f859b2eed1f291ac62584b484';
 const pinnedMsalPath = 'dist/vendor/msal/msal-browser.bundle.js';
-if (((mode==='--staged'||mode==='--commit') && names.includes(pinnedMsalPath)) || (mode==='--tree' && existsSync(pinnedMsalPath))) {
+if (((mode==='--staged'||mode==='--commit') && names.includes(pinnedMsalPath)) || (['--tree','--dist'].includes(mode) && existsSync(pinnedMsalPath))) {
   const data = mode==='--staged' ? git('show', `:${pinnedMsalPath}`)
     : mode==='--commit'?git('show',`${commitSha}:${pinnedMsalPath}`):readFileSync(pinnedMsalPath);
   if (createHash('sha256').update(data).digest('hex') !== pinnedMsalBundleSha256) {
@@ -122,16 +185,22 @@ const secrets=[
 /** PDF.js ships its worker verbatim from the installed, lockfile-verified package.
  * Third-party contributor addresses must not be mistaken for app-owner PII.
  * Only the email-address rule can be exempted, and only for an unchanged copy.
- * CI runs npm ci before this scan, so the source is checked against the
- * package-lock integrity rather than an unverified directory exception. */
-function trustedPdfWorker(path,bytes){
-  if(path!=='dist/vendor/pdfjs/pdf.worker.mjs')return false;
+ * Copied binary assets must also match the installed package byte for byte.
+ * CI installs with npm ci; local dependency updates must do the same. */
+let pdfPackageVerified;
+function trustedPdfAsset(path,bytes){
+  if(!path.startsWith('dist/vendor/pdfjs/'))return false;
   try {
-    const installed=JSON.parse(readFileSync('node_modules/pdfjs-dist/package.json','utf8'));
-    const lock=JSON.parse(readFileSync('package-lock.json','utf8'));
-    const locked=lock.packages?.['node_modules/pdfjs-dist'];
-    if(!locked||installed.version!==locked.version||!/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(locked.integrity??''))return false;
-    return bytes.equals(readFileSync('node_modules/pdfjs-dist/build/pdf.worker.mjs'));
+    if(pdfPackageVerified===undefined){
+      const installed=JSON.parse(readFileSync('node_modules/pdfjs-dist/package.json','utf8'));
+      const lock=JSON.parse(mode==='--staged'?git('show',':package-lock.json').toString('utf8'):mode==='--commit'?git('show',`${commitSha}:package-lock.json`).toString('utf8'):readFileSync('package-lock.json','utf8'));
+      const locked=lock.packages?.['node_modules/pdfjs-dist'];
+      pdfPackageVerified=!!locked&&installed.version===locked.version&&/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(locked.integrity??'');
+    }
+    if(!pdfPackageVerified)return false;
+    const relative=path.slice('dist/vendor/pdfjs/'.length);
+    const upstream=/^pdf(?:\.worker)?\.mjs$/.test(relative)?`build/${relative}`:relative;
+    return bytes.equals(readFileSync(`node_modules/pdfjs-dist/${upstream}`));
   }catch{return false;}
 }
 const isPotentialPaymentCard=(content)=>{
@@ -185,7 +254,14 @@ const disallowedFilename=(path)=>{
   }
   return !allowedText.has(ext);
 };
+// Commit message privacy is checked before any outgoing commit can be published.
+if(mode==='--commit'){
+  const message=str('show','-s','--format=%B',commitSha);
+  for(const [label,pattern] of secrets)if(pattern.test(message))errors.push(`コミットメッセージ: ${label}の疑い`);
+  if(isPotentialPaymentCard(message))errors.push('コミットメッセージ: クレジットカード番号の疑い');
+}
 for(const path of names){
+  if(['--source','--dist'].includes(mode)&&(!existsSync(path)||!lstatSync(path).isFile()||lstatSync(path).isSymbolicLink())){errors.push(`${path}: 通常ファイルではありません`);continue;}
   if(disallowedFilename(path)||!approvedVendor(path)){
     errors.push(`${path}: 公開禁止または未承認のファイル形式`);
     continue;
@@ -204,7 +280,7 @@ for(const path of names){
   const binaryVendor=path.startsWith('dist/vendor/pdfjs/')&&['.bcmap','.pfb','.ttf','.wasm'].includes(ext);
   if(binaryVendor){
     // Only approved decoder/font formats can bypass text scanning, not whole directories.
-    if(bytes.length>4*1024*1024)errors.push(`${path}: バイナリ資産が大きすぎます`);
+    if(bytes.length>4*1024*1024||!trustedPdfAsset(path,bytes))errors.push(`${path}: ロック済みPDF.jsの正規バイナリと一致しません`);
     continue;
   }
   if(bytes.includes(0)){
@@ -231,7 +307,7 @@ for(const path of names){
       errors.push('.gitleaksignore: 承認済みの3件以外を除外しようとしています');
     }
   }
-  const officialPdfWorker=trustedPdfWorker(path,bytes);
+  const officialPdfWorker=path==='dist/vendor/pdfjs/pdf.worker.mjs'&&trustedPdfAsset(path,bytes);
   for(const [label,pattern] of secrets){
     if(label==='個人メールアドレス' && officialPdfWorker)continue;
     if(pattern.test(content))errors.push(`${path}: ${label}の疑い`);
@@ -243,4 +319,4 @@ if(errors.length){
   console.error(`[FINANCE] 公開監査に失敗 (${errors.length}件)。コミット・デプロイを中止してください。`);
   process.exit(1);
 }
-console.log(`[FINANCE] 公開監査OK (${names.length}ファイル、Git作成者・履歴・個人情報・秘密情報)`);
+console.log(`[FINANCE] 公開監査OK (${names.length}ファイル、${mode}、作成者・個人情報・秘密情報)`);

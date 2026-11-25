@@ -15,9 +15,11 @@ test('startup always opens Home, including when OneDrive is unavailable',()=>{
 });
 test('unlock hides modal while loading and returns it on failure without replacing promise',()=>{
   assert.match(main,/if\(confirmationPending\(\)\|\|currentModal!==null\|\|\$<HTMLDialogElement>\('vault-dialog'\)\.open\)return Promise\.resolve\(false\)/);
-  assert.match(main,/if\(vaultDialog\.open\)vaultDialog\.close\(\);\s*try \{/);
+  assert.match(main,/if\(vaultDialog\.open\)vaultDialog\.close\(\);\s*showActivity\('OneDriveの保管庫を開いています…','working'\);\s*try \{/);
   assert.match(main,/if\(currentModal===mode&&!vaultDialog\.open\)\{vaultDialog\.showModal\(\);/);
   assert.match(main,/modalClose\(true\);/);
+  assert.match(main,/if\(cloudStartupRunning&&!fromStartup\)return Promise\.resolve\(false\)/);
+  assert.match(main,/if\(!restored\)\{updateCloudStatus\(\);await askVault\('unlock',true\);\}/);
 });
 test('mobile menu uses remaining viewport, not 78% or fixed 680px',()=>{
   assert.match(css,/max-height:max\(0px,calc\(100dvh - var\(--finance-mobile-header-height,64px\)/);

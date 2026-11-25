@@ -1,6 +1,6 @@
 import { statementPeriod } from '../models/types.js';
 import { requestConfirmation, confirmationPending, cancelConfirmation } from './modal.js';
-import { formatYen as sharedYen, formatSignedYen, formatMonth, formatDate, formatShortDate, formatDateTime } from './formatters.js';
+import { DATA_STATUS, financialStatusClass, formatYen as sharedYen, formatSignedYen, formatMonth, formatDate, formatShortDate, formatDateTime } from './formatters.js';
 import { bindMonthNavigator, localMonth, monthInRange } from './period-navigator.js';
 /** Monthly summary view. DOM updates only; all financial figures are computed from vault snapshots. */
 import { monthlyReport, prepareMonthlyReports, changePeriod } from '../summary/monthly-summary.js';
@@ -19,7 +19,7 @@ function element(tag, cls = '', text) {
         node.textContent = text;
     return node;
 }
-const yen = (value) => sharedYen(value, 0, '未取得');
+const yen = (value) => sharedYen(value, 0, DATA_STATUS.missing);
 const localPeriod = localMonth;
 const periodDisplay = formatMonth;
 const kindName = (kind) => kind === 'bonus' ? '賞与' : kind === 'salary' ? '給与' : kind === 'adjustment' ? '調整' : kind;
@@ -33,7 +33,7 @@ function line(parent, name, value, action) {
         title.type = 'button';
         title.addEventListener('click', action);
     }
-    const sum = element('strong', '', value);
+    const sum = element('strong', financialStatusClass(value), value);
     title.title = name;
     holder.append(title, sum);
     parent.append(holder);
@@ -69,7 +69,7 @@ function statusText(report) {
 /** Interactive, read-only projection. No bank event or snapshot is modified here. */
 function bankEventType(item) {
     if (item.provisional)
-        return '暫定';
+        return DATA_STATUS.provisional;
     switch (item.kind) {
         case 'card': return 'カード引落';
         case 'salary': return 'Payroll登録';
@@ -221,7 +221,7 @@ export function initMonthlySummary(deps) {
     const syncPeriod = bindMonthNavigator($('monthly-period-controls'), { picker, previous: $('monthly-prev'), next: $('monthly-next'), current: $('monthly-today') }, () => period, go, options);
     function metric(grid, title, value, detail, tone = '') {
         const box = element('section', `monthly-metric ${tone}`);
-        box.append(element('span', 'monthly-metric-label', title), element('strong', 'monthly-metric-value', value));
+        box.append(element('span', 'monthly-metric-label', title), element('strong', `monthly-metric-value ${financialStatusClass(value)}`, value));
         if (detail)
             box.append(element('small', 'monthly-muted', detail));
         grid.append(box);
@@ -259,13 +259,13 @@ export function initMonthlySummary(deps) {
         metric(grid, 'カード引落予定額', yen(report.cardOutflow), report.cardNoUseConfirmed ? '利用なし確認済み' : report.provisional.length ? '暫定明細を含む' : report.cardOutflow === null ? (report.cardLines.length ? '一部カードのみ確認済み' : '明細未取得') : '');
         metric(grid, '定期・単発支出', yen(report.recurringExpense + report.oneTimeExpense), [report.recurringExpense ? `定期予定 ${yen(report.recurringExpense)}` : '', report.oneTimeExpense ? `単発実行済み ${yen(report.oneTimeExpense)}` : ''].filter(Boolean).join(' · '));
         const delta = report.monthlyBalance === null || prev.monthlyBalance === null ? null : report.monthlyBalance - prev.monthlyBalance;
-        metric(grid, '月間収支', report.monthlyBalance === null ? '算出不可' : yen(report.monthlyBalance), `前月比：${delta === null ? '比較不可' : formatSignedYen(delta)}`, report.monthlyBalance !== null ? (report.monthlyBalance >= 0 ? 'monthly-positive' : 'monthly-negative') : '');
+        metric(grid, '月間収支', report.monthlyBalance === null ? DATA_STATUS.unavailable : yen(report.monthlyBalance), `前月比：${delta === null ? '比較不可' : formatSignedYen(delta)}`, report.monthlyBalance !== null ? (report.monthlyBalance >= 0 ? 'monthly-positive' : 'monthly-negative') : '');
         const alert = element('div', 'monthly-alert');
         const status = statusText(report);
         if (status)
             alert.append(element('p', '', status));
         if (report.cardOutflow === null)
-            alert.append(element('p', '', report.cardLines.length ? '利用なしを確認したカードがあります。他カードの明細は未取得のため、月の支出総額は確定していません。' : 'カード明細が未取得です。登録済みの銀行定期支出・単発支出は別に確認できますが、月の支出総額は確定していません。'));
+            alert.append(element('p', '', report.cardLines.length ? '一部カードの明細が未取得のため、支出総額は算出できません。' : 'カード明細未取得。登録済みの銀行・現金支出は内訳で確認できます。'));
         if (report.pastUnconfirmedOneTime) {
             const warning = element('p', 'monthly-overlap-warning', `過去の未実行予定が${report.pastUnconfirmedOneTime}件あります。実績には含めていません。単発入出金の記録を確認してください。`);
             warning.setAttribute('role', 'alert');
@@ -356,7 +356,7 @@ export function initMonthlySummary(deps) {
                 line(planned.body, '入金予定', yen(report.oneTimePlannedIncome));
             if (report.oneTimePlannedExpense)
                 line(planned.body, '支出予定', yen(report.oneTimePlannedExpense));
-            line(planned.body, '予定反映後の収支', report.monthlyBalance === null ? '算出不可' : yen(report.monthlyBalance + report.oneTimePlannedIncome - report.oneTimePlannedExpense));
+            line(planned.body, '予定反映後の収支', report.monthlyBalance === null ? DATA_STATUS.unavailable : yen(report.monthlyBalance + report.oneTimePlannedIncome - report.oneTimePlannedExpense));
         }
         main.append(pointBenefitsSection('推定ポイント', pointBenefitsFromMonthlyReport(report, source), pointCoverage([report])));
         // Bank cash flow is separate from whole-household monthly income/expense.
@@ -429,7 +429,7 @@ export function initMonthlySummary(deps) {
         if (!report.payrollReady)
             empty(incomes, 'Payroll未同期。設定から連携状態を確認してください。');
         else if (!report.incomeLines.length && !report.incomeEstimates.length)
-            empty(incomes, 'この月の公開済み給与実績はありません。');
+            empty(incomes, '給与実績なし');
         else
             for (const row of [...report.incomeLines].sort((a, b) => a.date.localeCompare(b.date))) {
                 line(incomes, `${payrollRoleLabel(row.job)} · ${kindName(row.kind)} · ${formatDate(row.date)}`, yen(row.amount));

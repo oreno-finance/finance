@@ -29,7 +29,7 @@ const nextPayment=(item:Item,day:string,source?:MonthlySource|null):string=>{
   return `${formatDate(next)}${changes.length?`
 変更予定：${changes.join(' · ')}`:''}`;
 };
-const priceLabel=(item:Item)=>item.decision&&!item.contract?'登録済みの推定額':item.status==='scheduled'?'開始時の契約額':item.priceKind==='variable'?'現在の登録予算':'現在の契約額';
+const priceLabel=(item:Item)=>item.decision&&!item.contract?'登録済みの推定額':item.status==='scheduled'?'開始時の契約額':item.priceKind==='variable'?'登録予算':'現在の契約額';
 const yen=(value:number|null)=>sharedYen(value,0,'—');
 const localDate=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 function el<K extends keyof HTMLElementTagNameMap>(name:K,cls='',text?:string):HTMLElementTagNameMap[K]{const node=document.createElement(name);if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node;}
@@ -78,14 +78,14 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
   form.append(priceChoices);
   field('frequency','支払周期','select',[['monthly','毎月'],['yearly','毎年'],['weekly','毎週']]);
   field('startOn','契約開始日','date');
-  field('paymentDate','変更の適用開始日','date');
-  field('priceAction','将来の料金変更予定','select',[['append','新しい変更を追加'],['revise','最新の変更予定を修正'],['cancel','最新の変更予定を取り消す']]);
-  field('paymentAction','将来の支払条件の変更予定','select',[['append','新しい変更を追加'],['revise','最新の変更予定を修正'],['cancel','最新の変更予定を取り消す']]);
+  field('paymentDate','適用日','date');
+  field('priceAction','将来の料金変更予定','select',[['append','新しい変更を追加'],['revise','最新の変更予定を修正'],['cancel','変更予定を取り消す']]);
+  field('paymentAction','将来の支払条件の変更予定','select',[['append','新しい変更を追加'],['revise','最新の変更予定を修正'],['cancel','変更予定を取り消す']]);
   field('month','支払月（毎年の場合）','select',Array.from({length:12},(_,i)=>[String(i+1),`${i+1}月`] as [string,string]));
   field('day','支払日','select',[['0','末日'],...Array.from({length:31},(_,i)=>[String(i+1),`${i+1}日`] as [string,string])]);
   field('weekday','支払曜日','select',[['0','日曜日'],['1','月曜日'],['2','火曜日'],['3','水曜日'],['4','木曜日'],['5','金曜日'],['6','土曜日']]);
   field('status','契約状態の変更','select',[['','変更しない'],['active','再開'],['paused','一時停止'],['ended','契約終了']]);
-  field('statusDate','停止・終了・再開の適用日','date');
+  field('statusDate','適用日','date');
   field('note','メモ','textarea');
   const context=el('p','fixed-cost-equivalent');header.after(context);
   const equivalent=el('p','fixed-cost-equivalent');form.append(equivalent);
@@ -387,7 +387,7 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
         const card=el('article','panel fixed-cost-item');const left=el('div','fixed-cost-item-info');
         left.append(el('strong','',candidate.merchant),el('small','',`${candidate.cardName} · ${freqName(candidate.frequency)}の候補 · ${candidate.months.length}回の請求`));
         const right=el('div','fixed-cost-item-price');right.append(el('strong','',yen(candidate.amount)));
-        const actions=el('div','fixed-cost-item-actions');actions.append(btn('内容を確認して登録',()=>{void markCandidate(candidate,false);},'save-action'),btn('候補から除外',()=>{void markCandidate(candidate,true);}));
+        const actions=el('div','fixed-cost-item-actions');actions.append(btn('登録',()=>{void markCandidate(candidate,false);},'save-action'),btn('候補から除外',()=>{void markCandidate(candidate,true);}));
         card.append(left,right,actions);list.append(card);
       }
       if(!pending.length)list.append(el('p','subscriptions-empty','未確認の候補はありません。'));

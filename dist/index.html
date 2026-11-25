@@ -50,6 +50,7 @@
         <button id="sidebar-collapse-toggle" class="nav-entry sidebar-collapse-toggle" type="button" aria-expanded="true" aria-label="メニューを折りたたむ" title="メニューを折りたたむ"><span class="nav-symbol"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/><path class="nav-collapse-arrow" d="m16 9-3 3 3 3"/></svg></span><span class="nav-text" id="sidebar-collapse-label">折りたたむ</span></button>
       </div>
       <div class="sidebar-footer">
+        <button type="button" id="activity-history-open" class="activity-history-open" aria-haspopup="dialog" aria-label="通知履歴" title="通知履歴"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg><span id="activity-history-count" aria-hidden="true"></span></button>
         <div class="sidebar-theme">
           <button id="desktop-theme-toggle" class="desktop-theme-toggle" type="button" aria-label="ダークモードに切り替える" title="ダークモードに切り替える">
             <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -58,7 +59,7 @@
             </svg>
           </button>
         </div>
-        <div class="sidebar-meta"><span>Finance v2.0.1</span><time id="app-updated-at" datetime="2026-11-24">更新 2026/11/24 JST</time></div>
+        <div class="sidebar-meta"><span>Finance v2.0.2</span><time id="app-updated-at" datetime="2026-11-25">更新 2026/11/25 JST</time></div>
       </div>
       </div>
     </aside>
@@ -82,7 +83,7 @@
               </label>
               <input id="file-input" type="file" accept="application/pdf,.pdf,text/csv,.csv" multiple hidden>
             </div>
-            <details id="paste-pane" class="import-method import-paste-details"><summary>別の追加方法：Web明細のテキスト貼り付け</summary><div class="import-paste-body">
+            <details id="paste-pane" class="import-method import-paste-details"><summary>Web明細を貼り付け</summary><div class="import-paste-body">
               <label class="sr-only" for="paste-input">Web画面の全内容をコピーして貼り付け</label>
               <textarea id="paste-input" spellcheck="false" placeholder="Web明細をここに貼り付け" rows="5"></textarea>
               <button id="parse-paste" type="button" class="primary-action parse-action"><svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M14 2v6h6"/><circle cx="14" cy="14" r="3"/><path d="m16.2 16.2 2.8 2.8"/></svg><span>明細を解析する</span></button>
@@ -93,12 +94,13 @@
           <button type="button" id="import-clear-errors" class="text-button import-clear-errors hidden">解析失敗をクリア</button>
         </section>
         </div>
+        <div class="batch-outcome-panel"><details id="batch-outcome-details" hidden><summary>保存結果の明細別内訳（要確認）</summary><div id="batch-outcome-list"></div></details></div>
         <p id="import-compact-empty" class="import-compact-empty hidden">取込待ちの明細はありません。</p>
 
         <section class="results-grid" aria-label="解析結果">
           <div class="panel preview-panel statement-index-panel">
-            <div class="panel-heading"><div><div class="step">STEP 02</div><h2>取込待ちの明細</h2></div><div class="list-actions"><span class="pill neutral" id="list-count">0件</span><button id="clear-all" type="button" class="text-button">下書きを破棄</button></div></div>
-            <div id="statement-list" class="statement-list"><div class="empty-list">取込待ちの明細はありません。CSV・PDFまたは詳細設定のWeb明細を追加してください。</div></div>
+            <div class="panel-heading"><div><div class="step">STEP 02</div><h2>取込待ちの明細</h2></div><div class="list-actions"><span class="pill neutral" id="list-count">0件</span><button id="import-discard-duplicates" type="button" class="text-button hidden">重複を除外</button><button id="clear-all" type="button" class="text-button">下書きを破棄</button></div></div>
+            <div id="statement-list" class="statement-list"><div class="empty-list">取込待ちの明細はありません。CSV・PDFまたはWeb明細を追加してください。</div></div>
           </div>
 
           <section class="panel detail-panel" aria-label="選択中の明細と取引">
@@ -140,7 +142,7 @@
         </section>
         <div class="batch-bar" role="group" aria-label="明細の一括保存">
           <div class="batch-bar-copy"><strong id="batch-status">保存対象はありません</strong><span id="batch-description"></span></div>
-          <div class="import-batch-actions"><button type="button" id="import-payment-settings" class="secondary-action hidden">引落日を設定</button><button type="button" id="batch-import" class="save-action" disabled>保存</button></div>
+          <div class="import-batch-actions"><button type="button" id="import-payment-settings" class="secondary-action hidden">引落日を設定</button><button type="button" id="import-inspect-batch" class="secondary-action hidden">保存結果を確認</button><button type="button" id="import-resume-batch" class="secondary-action hidden">残りの保存を再開</button><button type="button" id="batch-import" class="save-action" disabled>保存</button></div>
         </div>
         </div>
         <dialog id="import-add-dialog" class="import-add-dialog" aria-labelledby="import-add-title">
@@ -201,6 +203,7 @@
                 <button type="button" id="manage-next-month" aria-label="翌月">›</button>
                 <button type="button" id="manage-current-month">今月</button>
                 <button type="button" id="manage-show-all" aria-label="全期間を表示">すべて</button>
+                <button type="button" id="manage-provisional-only" aria-pressed="false">暫定のみ</button>
               </div>
           <div class="manage-return-bar"><button type="button" id="manage-back-analysis" class="secondary-action hidden">← 収支分析へ戻る</button><button type="button" id="manage-back-home" class="secondary-action hidden">← ホームへ戻る</button><button type="button" id="manage-back-summary" class="secondary-action hidden">← 月別サマリーへ戻る</button></div>
           <section id="manage-drilldown-breakdown" class="panel manage-drilldown-breakdown hidden" aria-label="分析の金額内訳"></section>
@@ -347,7 +350,7 @@
               </div>
               <div class="assets-save-bar">
                 <p>金額を入力した口座だけ保存します。未入力の口座は変更しません。</p>
-                <button type="submit" id="assets-balances-save" class="save-action">入力した残高をまとめて保存</button>
+                <button type="submit" id="assets-balances-save" class="save-action">残高を保存</button>
               </div>
               <p class="assets-operation-status" id="assets-balances-status" role="status" aria-live="polite"></p>
             </form>
@@ -460,7 +463,7 @@
             </div>
 
             <section class="panel assets-list-panel assets-fixed-cost-reference" aria-label="銀行引落の固定費">
-              <div class="panel-heading"><div><h2>銀行引落の固定費</h2><p>契約・料金・停止期間の編集は固定費管理で行います。</p></div><button type="button" id="assets-fixed-cost-open" class="secondary-action">固定費管理へ</button></div>
+              <div class="panel-heading"><div><h2>銀行引落の固定費</h2><p>銀行引落は固定費管理で編集できます。</p></div><button type="button" id="assets-fixed-cost-open" class="secondary-action">固定費管理へ</button></div>
               <div class="assets-list" id="assets-fixed-cost-list"></div>
             </section>
             <p class="assets-footnote"></p>
@@ -533,7 +536,8 @@
               <button type="button" id="cloud-reauth" class="secondary-action">再認証</button>
               <button type="button" id="cloud-live-refresh" class="secondary-action">最新データ取得</button>
               <button type="button" id="cloud-live-lock" class="secondary-action">保管庫ロック</button>
-              <button type="button" id="cloud-resume-batch" class="secondary-action hidden">保存を再開</button>
+              <button type="button" id="cloud-inspect-batch" class="secondary-action hidden">保存結果を確認</button>
+              <button type="button" id="cloud-resume-batch" class="secondary-action hidden">残りの保存を再開</button>
               <button type="button" id="cloud-new-vault" class="secondary-action hidden">保管庫作成</button>
             </div>
             <div class="cloud-account-actions" role="group" aria-label="Microsoftアカウントの操作">
@@ -575,7 +579,7 @@
                   <button type="button" class="password-visibility-toggle" data-password-toggle="cloud-next-confirm" aria-controls="cloud-next-confirm" aria-label="確認用パスフレーズを表示" aria-pressed="false">表示</button>
                 </div>
                 <p class="cloud-help cloud-rotate-caution">すべての端末を最新版に更新し、旧版のタブを閉じてください。変更が終わるまでページを閉じないでください。変更後は保存済みのパスフレーズも更新してください。</p>
-                <button type="submit" id="cloud-rotate-submit" class="save-action">暗号化パスフレーズを変更</button>
+                <button type="submit" id="cloud-rotate-submit" class="save-action">パスフレーズを変更</button>
               </form>
             </div>
             <p id="cloud-rotate-status" class="cloud-status" role="status" aria-live="polite"></p>
@@ -659,7 +663,7 @@
               <label class="rules-check"><input type="checkbox" id="cloud-cleanup-v1"> 旧v1保管庫・移行済みPDF原本 <span id="cloud-cleanup-v1-count"></span></label>
               <div class="cloud-cleanup-snapshots"><p class="cloud-help">バックアップスナップショット（削除するものを個別選択）</p><div id="cloud-cleanup-snapshot-list"></div></div>
               <label class="rules-check"><input type="checkbox" id="cloud-cleanup-backup"> 削除前にバックアップを確認しました</label>
-              <button type="button" id="cloud-cleanup-delete" class="secondary-action cloud-button danger-action" disabled>選択した不要データを削除</button>
+              <button type="button" id="cloud-cleanup-delete" class="secondary-action cloud-button danger-action" disabled>選択項目を削除</button>
             </div>
             <p id="cloud-cleanup-result" class="cloud-help" role="status" aria-live="polite"></p>
           </section>
@@ -704,6 +708,12 @@
                         <p>OneDriveの保存先にアクセスできるか確認します。ログイン状態や明細は変更しません。</p>
                       </div>
                       <button type="button" id="cloud-folder-check" class="secondary-action cloud-button">保存先を確認</button>
+                    </div>
+                    <div class="cloud-tool-group">
+                      <div class="cloud-tool-description"><strong>保存ロック</strong><p>保存ロックの状態を確認し、中断後に残ったロックを復旧できます。</p></div>
+                      <button type="button" id="cloud-lock-check" class="secondary-action cloud-button">保存ロックを確認</button>
+                      <button type="button" id="cloud-lock-recover" class="secondary-action cloud-button">中断した保存ロックを復旧</button>
+                      <p id="cloud-lock-check-result" class="cloud-probe-result" role="status" aria-live="polite"></p>
                     </div>
                     <div class="cloud-tool-group cloud-tool-diagnostic"><pre id="cloud-auth-diagnostic" class="cloud-auth-diagnostic-output" hidden>診断対象の接続エラーはありません。</pre>
                       <div class="cloud-tool-description">
@@ -803,6 +813,7 @@
       <div class="vault-form-actions"><button type="button" id="vault-cancel" class="secondary-action">キャンセル</button><button type="submit" id="vault-submit" class="save-action">解除する</button></div>
     </form>
   </dialog>
+  <dialog id="activity-history-dialog" aria-labelledby="activity-history-title" class="activity-history-dialog"><div class="activity-history-heading"><h2 id="activity-history-title">通知履歴</h2><button type="button" id="activity-history-close" class="secondary-action" aria-label="通知履歴を閉じる">閉じる</button></div><p>このタブ内の通知を保持します。ロック・再読み込みで消去されます。</p><button type="button" id="activity-history-read" class="secondary-action">すべて確認済みにする</button><div id="activity-history-list"></div></dialog>
   <div id="toast" class="toast activity-toast" role="status" aria-live="polite" aria-atomic="true"><span class="activity-icon" aria-hidden="true"></span><span class="activity-message"></span><button type="button" class="activity-dismiss" aria-label="通知を閉じる" title="通知を閉じる">×</button></div>
   <div id="sidebar-tooltip" class="sidebar-tooltip" role="tooltip" hidden></div>
   <script src="./scripts/startup-recovery.js"></script>

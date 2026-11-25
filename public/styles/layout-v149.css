@@ -29,22 +29,21 @@
   border-radius:8px;font:inherit;font-weight:650;font-size:10.5px;cursor:pointer;height:39px;padding:0 11px;flex:0 0 auto}
 .rule-pattern-row .rule-pattern-remove:hover{color:#b84b54;border-color:#d4b0b4}
 .rules-form-panel #rule-pattern-add{align-self:flex-start;min-height:34px;padding:7px 11px}
-.rules-form-panel #rule-pattern-help{margin:1px 0 2px;font-size:10.5px;line-height:1.5;color:var(--muted)}
+.rules-form-panel #rule-pattern-help{margin:1px 0 2px;font-size:10.5px;color:var(--muted)}
 
 /* Desktop ledger: a compact 1-line editor, one quiet metadata line. */
 .manage-editor .manage-merchant-control.manage-merchant-quiet{display:flex;flex-direction:column;gap:6px;min-width:0}
-.manage-editor .manage-merchant-main{display:flex;align-items:center;gap:7px;min-width:0}
-.manage-editor .manage-merchant-main>input{flex:1 1 0;min-width:0;width:0}
+.manage-editor .manage-merchant-main{display:flex;gap:7px;}
+.manage-editor .manage-merchant-main>input{flex:1 1 0;width:0}
 .manage-editor .manage-merchant-main>.category-chip{flex:0 0 auto;font-size:9px;padding:3px 7px}
-.manage-editor .manage-merchant-main>.manage-rule-action{flex:0 0 auto;white-space:nowrap;min-height:30px;padding:5px 8px}
-.manage-editor .manage-merchant-secondary{display:flex;gap:6px 11px;align-items:center;min-width:0;
-  font-size:10px;color:var(--muted);line-height:1.45}
-.manage-editor .manage-source-text{min-width:0;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.manage-editor .manage-merchant-main>.manage-rule-action{flex:0 0 auto;white-space:nowrap;padding:5px 8px}
+.manage-editor .manage-merchant-secondary{gap:6px 11px;
+  }
+.manage-editor .manage-source-text{max-width:55%;}
 .manage-editor .manage-rule-text{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--accent)}
 .manage-editor .manage-category-text{color:var(--muted)}
-.manage-editor #manage-rows td{vertical-align:middle;padding:10px 8px}
+.manage-editor #manage-rows td{padding:10px 8px}
 .manage-editor .transaction-table{min-width:690px}
-.manage-editor .transaction-table .col-date{width:16%}
 .manage-editor .transaction-table .col-merchant{width:42%}
 .manage-editor .transaction-table .col-amount{width:15%}
 .manage-editor .transaction-table .col-note{width:18%}
@@ -74,8 +73,8 @@
     font-size:11px;padding:8px 12px!important;flex:0 1 auto}
   .sidebar .sidebar-footer{order:10;margin-top:0!important}
   .manage-editor .manage-merchant-main{display:flex;flex-wrap:wrap}
-  .manage-editor .manage-merchant-main>input{flex:1 1 160px;min-width:0;width:auto}
-  .manage-editor .manage-merchant-secondary{display:flex;flex-wrap:wrap;gap:4px 10px}
+  .manage-editor .manage-merchant-main>input{flex:1 1 160px;width:auto}
+  .manage-editor .manage-merchant-secondary{display:flex;gap:4px 10px}
   .manage-editor .manage-source-text{max-width:100%;white-space:normal;overflow-wrap:anywhere}
   .manage-editor #manage-rows td{padding:0!important;vertical-align:top}
 

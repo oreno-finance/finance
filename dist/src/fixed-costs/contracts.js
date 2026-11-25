@@ -199,4 +199,3 @@ export function fixedCostState(item, day) {
         return 'paused';
     return 'active';
 }
-export function costFromAssets(doc) { return doc.fixedCosts ?? []; }

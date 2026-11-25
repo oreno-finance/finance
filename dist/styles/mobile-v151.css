@@ -5,7 +5,7 @@
 .mobile-nav-panel{display:contents}
 
 @media (max-width:800px){
-  #finance-sidebar.sidebar{position:relative!important;height:auto!important;min-height:0!important;
+  #finance-sidebar.sidebar{position:relative!important;
     overflow:visible!important;display:flex!important;align-items:center!important;flex-direction:row!important;
     flex-wrap:nowrap!important;gap:5px!important;padding:11px 14px!important;z-index:20}
   #finance-sidebar .brand{flex:1 1 auto!important;min-width:0!important;width:auto!important}
@@ -67,7 +67,7 @@
 
   /* The existing file input and its drag/drop handling remain intact. */
   #pdf-pane .dropzone{display:inline-flex!important;align-items:center!important;justify-content:center!important;
-    width:100%!important;max-width:360px;height:48px!important;min-height:48px!important;
+    max-width:360px;height:48px!important;min-height:48px!important;
     margin:0!important;padding:11px 18px!important;gap:0!important;
     border:0!important;border-radius:10px!important;background:var(--accent)!important;
     color:#fff!important;box-shadow:none!important;text-align:center!important;

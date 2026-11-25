@@ -84,12 +84,12 @@ test('parser failure preserves the error and permits retry without entering a bu
   assert.equal(context.filesBusy,false);
 });
 
-test('input change snapshots FileList before clearing input; compact presentation persists after first import',()=>{
+test('input change snapshots FileList before clearing input; compact presentation follows the current queue',()=>{
   assert.match(sourceTs,/const chosen=Array\.from\(input\.files\?\?\[\]\);\s*input\.value = '';\s*if\(chosen\.length\)void handleFiles\(chosen\)/);
-  assert.match(sourceTs,/const compact=hasDrafts\|\|hasImportedInThisSession;/);
+  assert.match(sourceTs,/const compact=hasDrafts;/);
   assert.match(sourceTs,/\$\('import-compact-empty'\)\.classList\.toggle\('hidden',!compact\|\|hasDrafts\)/);
-  assert.match(sourceTs,/hasImportedInThisSession=true;activeIndex=index;render/);
-  assert.match(sourceTs,/statements\.unshift\(s\);activeIndex=0;hasImportedInThisSession=true/);
+  assert.match(sourceTs,/activeIndex=statements.indexOf\(revised\);render/);
+  assert.match(sourceTs,/statements\.unshift\(s\);activeIndex=0;/);
 });
 
 test('Phase 6C: ロック中にCSV読込が終了しても明細やファイル名を再登録しない',async()=>{

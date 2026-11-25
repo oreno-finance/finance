@@ -1,5 +1,5 @@
 import {bindModalDismiss,requestConfirmation,confirmationPending,cancelConfirmation} from './modal.js';
-import {formatYen as sharedYen,formatDate,formatDateTime} from './formatters.js';
+import {DATA_STATUS,formatYen as sharedYen,formatDate,formatDateTime} from './formatters.js';
 import { ASSET_ACCOUNTS, latestBalance, validateRecurring, validateSnapshot, validateNisaCardRule, validateOneTime,
   type AssetAccountId, type BalanceSnapshot, type RecurringEntry, type RecurringKind, type RecurringFrequency, type OneTimeEntry, type OneTimeKind, type OneTimeStatus } from '../cloud/assets.js';
 import { CloudWriteUncertainError, type LiveVault } from '../cloud/live-vault.js';
@@ -21,7 +21,7 @@ const $=<T extends HTMLElement>(id:string):T=>{
   if(!value)throw new Error(`Missing assets UI #${id}`);
   return value as T;
 };
-const accountName=(id:AssetAccountId|null)=>ASSET_ACCOUNTS.find(a=>a.id===id)?.name??'未設定';
+const accountName=(id:AssetAccountId|null)=>ASSET_ACCOUNTS.find(a=>a.id===id)?.name??DATA_STATUS.unset;
 const yen=(value:number|null)=>sharedYen(value,0,'—');
 const localDate=(date=new Date()):string=>{
   const adjusted=new Date(date.getTime()-date.getTimezoneOffset()*60000);
@@ -34,11 +34,12 @@ function make(tag:string,className?:string,content?:string):HTMLElement {
 export function status(node:HTMLElement,message:string,error=false):void {
   // A risk that affects financial projections must remain visible beside its form.
   const important=/二重計上|注意：|登録されています/.test(message);
-  // Persist failures (including unconfirmed writes) at the action site, while
-  // successful saves and progress remain ephemeral in the shared activity card.
-  node.textContent=error||important?message:'';
+  // Native modal validation must stay visible above the modal backdrop.
+  // Outside dialogs, ordinary operation feedback belongs to the shared toast.
+  const inline=important||error&&!!node.closest('dialog[open]');
+  node.textContent=inline?message:'';
   node.classList.toggle('bad',error);
-  if(error)node.setAttribute('role','alert');
+  if(error&&inline)node.setAttribute('role','alert');
   else node.removeAttribute('role');
   if(message && (error||!important))simpleActivity(message,error);
 }
@@ -226,7 +227,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
         const amount=amounts.get(item.accountId)!;
         if(amount.value===item.amount)amount.value='';
       }
-      status(node,`${pending.length}口座の残高を保存しました。`);
+
       onSaved(`${pending.length}口座の残高を保存しました。`);
       render();
     }catch(error){status(node,mutationError(error),true);}
@@ -243,7 +244,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
     if(!unchanged()){status($('assets-balances-status'),'残高記録が更新されました。最新情報から確認してください。',true);return;}
     const node=$('assets-balances-status');
     toggleBusy(true);status(node,`${accountName(accountId)}の残高記録を削除しています…`);
-    try{await vault.deleteBalanceSnapshot(id);status(node,`${accountName(accountId)}の残高記録を削除しました。`);onSaved('残高記録をOneDriveから削除しました。');render();}
+    try{await vault.deleteBalanceSnapshot(id);onSaved('残高記録をOneDriveから削除しました。');render();}
     catch(error){status(node,mutationError(error,'削除'),true);}
     finally{toggleBusy(false);}
   }
@@ -381,10 +382,10 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
     if(busy||confirming()||!onceDialog.open)return;
     const node=$('assets-once-error');
     try {
-      const entry=readOnce();toggleBusy(true);
+      const entry=readOnce();toggleBusy(true);status(node,'入出金を保存中…');
       await requireVault().upsertOneTime(entry);
       onceDialog.close();resetOnceForm();
-      status($('assets-once-status'),'入出金を保存しました。');onSaved('入出金をOneDriveに保存しました。');
+      onSaved('入出金をOneDriveに保存しました。');
       render();onPayrollChange();
     }catch(error){status(node,mutationError(error),true);}
     finally{toggleBusy(false);}
@@ -399,7 +400,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
     if(epoch!==onceEpoch||busy||getVault()!==vault||!vault.unlocked)return;
     if(!unchanged()){status($('assets-once-status'),'記録が更新されました。最新情報から確認してください。',true);return;}
     toggleBusy(true);
-    try {await vault.deleteOneTime(id);status($('assets-once-status'),'入出金を削除しました。');onSaved('入出金記録を削除しました。');render();onPayrollChange();}
+    try {await vault.deleteOneTime(id);onSaved('入出金記録を削除しました。');render();onPayrollChange();}
     catch(error){status($('assets-once-status'),mutationError(error,'削除'),true);}
     finally{toggleBusy(false);}
   }
@@ -416,7 +417,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
       const latest=latestBalance(data,account.id),current=now[account.id],upcoming=next[account.id];
       const label=latestTexts.get(account.id)!;
       label.replaceChildren();
-      label.append(make('small','assets-balance-caption','現在の推定残高'),make('strong','assets-balance',current.balance!==null?yen(current.balance):'未登録'));
+      label.append(make('small','assets-balance-caption','現在の推定残高'),make('strong',`assets-balance ${current.balance===null?'data-status-muted':''}`,current.balance!==null?yen(current.balance):DATA_STATUS.unregistered));
       if(latest){
         label.append(make('small','assets-balance-date',`最終確認：${yen(latest.balance)}（${formatDateTime(latest.observedAt,true)}）`));
         const parts=[];
@@ -431,13 +432,13 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
         const autoTransfer=currentReport.autoTransferByAccount[account.id]??0;
         if(autoTransfer)parts.push(`みずほ送金予測 ${autoTransfer>0?'+':''}${yen(autoTransfer)}`);
         // Shared detail panel below all three accounts, not uneven paragraphs in each card.
-        label.append(make('div','assets-balance-future',`来月末の予測：${upcoming.balance===null?'未取得':yen(upcoming.balance)}`));
+        label.append(make('div','assets-balance-future',`来月末の予測：${upcoming.balance===null?DATA_STATUS.unavailable:yen(upcoming.balance)}`));
         const details=accountDetails.get(account.id)!;
         details.replaceChildren();
         if(parts.length)details.append(make('p','',parts.join(' / ')));
         if(current.warning)details.append(make('p','',current.warning));
         const estimatedTransfer=nextReport.estimatedTransferByAccount[account.id]??0;
-        if(estimatedTransfer)details.append(make('p','',`来月末までの仮送金 ${estimatedTransfer>0?'+':''}${yen(estimatedTransfer)}（固定費から推定・未確定）`));
+        if(estimatedTransfer)details.append(make('p','',`来月末までの仮送金 ${estimatedTransfer>0?'+':''}${yen(estimatedTransfer)}（見込み）`));
         if(upcoming.warning&&upcoming.warning!==current.warning)details.append(make('p','',upcoming.warning));
         if(data.payrollDepositAccount===account.id){
           if(payrollStale&&payrollUseStale&&payrollOwner===vault)details.append(make('p','','Payrollの前回取得分を使用中（最新同期失敗）。'));
@@ -531,7 +532,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
     try{
       await requireVault().setMizuhoTransferPlan(plan);
       mizuhoPlanDirty=false;
-      status(node,'保存しました。');onSaved('みずほへの送金予測を保存しました。');render();
+      onSaved('みずほへの送金予測を保存しました。');render();
     }catch(err){status(node,mutationError(err),true);}
     finally{toggleBusy(false);}
   }
@@ -553,7 +554,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
     toggleBusy(true);status(node,'保存中…');
     try{
       await requireVault().setBirthMonth(month);
-      birthDirty=false;status(node,'保存しました。');
+      birthDirty=false;
       onSaved('生年月を保存しました。');render();
     }catch(error){status(node,mutationError(error),true);}
     finally{toggleBusy(false);}
@@ -578,7 +579,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
       if(!clear&&!CARDS.some(c=>c.id===cardId))throw new Error('対象カードを選択してください。');
       toggleBusy(true);status(node,'連携条件をOneDriveに保存しています…');
       await requireVault().setNisaCardRule(link);
-      nisaDirty=false;status(node,clear?'NISAのカード連携を解除しました。':'NISAのカード連携を保存しました。');
+      nisaDirty=false;
       onSaved(clear?'NISAカード連携を解除しました。':'NISAカード連携を保存しました。');render();
     }catch(error){status(node,mutationError(error),true);}
     finally{toggleBusy(false);}
@@ -635,7 +636,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
     if(epoch!==onceEpoch||busy||getVault()!==vault||!vault.unlocked)return;
     if(!unchanged()||editingId!==previousId||recurringSnapshot()!==draft){status($('assets-recurring-status'),'記録または入力が更新されました。再確認してください。',true);return;}
     const node=$('assets-recurring-status');toggleBusy(true);status(node,'OneDriveから削除しています…');
-    try{await vault.deleteRecurring(item.id);if(editingId===item.id)resetForm();status(node,'削除しました。');onSaved('定期入出金をOneDriveから削除しました。');render();}
+    try{await vault.deleteRecurring(item.id);if(editingId===item.id)resetForm();onSaved('定期入出金をOneDriveから削除しました。');render();}
     catch(error){status(node,mutationError(error,'削除'),true);}
     finally{toggleBusy(false);}
   }
@@ -756,7 +757,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
     toggleBusy(true);status(node,'給与の入金先設定をOneDriveに保存しています…');
     try {
       await requireVault().setPayrollDepositAccount(id===''?null:id as 'rakuten-bank'|'cash-savings');
-      payrollAccountDirty=false;status(node,'給与の入金先を暗号化して保存しました。');
+      payrollAccountDirty=false;
       onSaved('給与の入金先を保存しました。');render();
     }catch(error){status(node,mutationError(error),true);}
     finally{toggleBusy(false);}
@@ -855,7 +856,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
         const entry=readEntry();
         toggleBusy(true);status(node,'OneDriveに暗号化保存しています…');
         await requireVault().upsertRecurring(entry);
-        resetForm();status(node,'OneDriveへの保存が完了しました。');
+        resetForm();
         onSaved('定期入出金をOneDriveに保存しました。');render();
       }catch(error){status(node,mutationError(error),true);}
       finally{toggleBusy(false);}

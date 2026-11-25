@@ -1,3 +1,4 @@
+import { statementMonthKey } from '../importers/import-policy.js';
 import { isZeroUsage } from '../models/types.js';
 export function emptyDocument() {
     return { format: 'finance-cloud-document-v1', records: [], deleted: [], conflicts: [] };
@@ -108,16 +109,13 @@ export function detectDocumentEditCollisions(base, local, remote) {
 /** Guard at the final merged OneDrive document, not just the import screen.
  * An independently added record in another browser tab must not double-count a bill. */
 export function duplicateStatementMonths(records, protectedIds) {
-    const target = new Set(records.filter(r => protectedIds.has(r.id) && r.statement.cardId && r.statement.billingMonth)
-        .map(r => `${r.statement.cardId}|${r.statement.billingMonth}`));
+    const target = new Set(records.filter(r => protectedIds.has(r.id)).map(r => statementMonthKey(r.statement)).filter(key => key !== null));
     if (!target.size)
         return [];
     const seen = new Set(), duplicates = new Set();
     for (const record of records) {
-        if (!record.statement.cardId || !record.statement.billingMonth)
-            continue;
-        const key = `${record.statement.cardId}|${record.statement.billingMonth}`;
-        if (!target.has(key))
+        const key = statementMonthKey(record.statement);
+        if (!key || !target.has(key))
             continue;
         if (seen.has(key))
             duplicates.add(key);

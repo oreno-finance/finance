@@ -72,6 +72,8 @@ test('Import policy: identical parsed statements are not added twice', () => {
 | 26/11/10 | テスト店 | ご本人 | 1回払い | | 26/12 | 100 |`;
   const a = run(raw);
   const b = run(raw);
+  assert.deepEqual(planStatementImport([a], b), { kind: 'add' });
+  a.cardId=b.cardId='smbc-nl';
   assert.deepEqual(planStatementImport([a], b), { kind: 'duplicate', index: 0 });
   assert.equal(statementSignature(a), statementSignature(b));
 });
@@ -116,6 +118,7 @@ test('Import policy: manual row changes do not break frozen source signatures', 
 2026年12月 支払い予定分のご利用明細合計
 **100円**
 | 26/11/10 | テスト店 | ご本人 | 1回払い | | 26/12 | 100 |`);
+  a.cardId='smbc-nl';
   const frozen = statementSignature(a);
   a.rows[0].merchant = '手動で変更';
   const b = run(`三井住友カード
@@ -123,5 +126,6 @@ test('Import policy: manual row changes do not break frozen source signatures', 
 2026年12月 支払い予定分のご利用明細合計
 **100円**
 | 26/11/10 | テスト店 | ご本人 | 1回払い | | 26/12 | 100 |`);
+  b.cardId='smbc-nl';
   assert.deepEqual(planStatementImport([a], b, () => frozen), { kind: 'duplicate', index: 0 });
 });

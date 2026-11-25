@@ -1,12 +1,12 @@
 import { statementPeriod } from '../models/types.js';
-import { formatYen as sharedYen, formatSignedYen, formatMonth } from './formatters.js';
+import { DATA_STATUS, financialStatusClass, formatYen as sharedYen, formatSignedYen, formatMonth } from './formatters.js';
 /** Finance P1-A: in-browser multi-month / annual analysis, no additional persistence. */
 import { annualAnalytics, comparableDelta, priorYearAnalytics, rollingAnalytics } from '../analysis/period-analytics.js';
 import { monthNavigator, yearNavigator, localMonth } from './period-navigator.js';
 import { periodPointBenefitsFromReports } from '../summary/point-benefits.js';
 import { pointBenefitsSection, pointCoverage } from './point-benefits.js';
 import { measureFinanceSync } from '../cloud/performance-diagnostics.js';
-const formatYen = (amount, digits = 0) => sharedYen(amount, digits, '未取得');
+const formatYen = (amount, digits = 0) => sharedYen(amount, digits, DATA_STATUS.missing);
 const signedYen = formatSignedYen;
 const monthLabel = (period) => `${Number(period.slice(5))}月`;
 const labelYearMonth = formatMonth;
@@ -33,11 +33,11 @@ function panel(heading) {
     root.append(body);
     return { root, body };
 }
-const quality = (month) => month.coverage === 'missing' ? '未取得' : month.coverage === 'partial' ? '一部未取得' : month.coverage === 'provisional' ? '暫定' : month.coverage === 'review' ? '要確認' : '登録済み';
-const amountText = (value) => value === null ? '未取得' : formatYen(value);
+const quality = (month) => month.coverage === 'missing' ? DATA_STATUS.missing : month.coverage === 'partial' ? '一部未取得' : month.coverage === 'provisional' ? DATA_STATUS.provisional : month.coverage === 'review' ? DATA_STATUS.review : '登録済み';
+const amountText = (value) => value === null ? DATA_STATUS.missing : formatYen(value);
 function metric(label, value, sub) {
     const root = el('div', 'analysis-metric');
-    root.append(el('span', 'analysis-muted', label), el('strong', '', value));
+    root.append(el('span', 'analysis-muted', label), el('strong', financialStatusClass(value), value));
     if (sub)
         root.append(el('small', 'analysis-muted', sub));
     return root;
@@ -86,7 +86,7 @@ export function initAnalysis(deps) {
         const result = el('div', 'analysis-metrics');
         const totals = data.totals;
         const range = `${data.months[0].period}〜${data.months.at(-1).period}`;
-        result.append(metric('収入（実績・見込み）', formatYen(totals.income), `${totals.knownIncomeMonths}/${data.months.length}か月 · ${range}`), metric('支出（明細・予定）', formatYen(totals.expense), `${totals.knownExpenseMonths}/${data.months.length}か月 · NISAを含む`), metric('収支（実績・見込み）', formatYen(totals.balance), totals.comparable ? '' : '欠測・暫定などを含む参考値'), metric('平均支出', formatYen(totals.avgExpense, 0), `${totals.knownExpenseMonths}か月分の平均`));
+        result.append(metric('収入（実績・見込み）', formatYen(totals.income), `${totals.knownIncomeMonths}/${data.months.length}か月 · ${range}`), metric('支出（明細・予定）', formatYen(totals.expense), `${totals.knownExpenseMonths}/${data.months.length}か月 · NISAを含む`), metric('収支（実績・見込み）', sharedYen(totals.balance, 0, DATA_STATUS.unavailable), totals.comparable ? '' : '欠測・暫定などを含む参考値'), metric('平均支出', sharedYen(totals.avgExpense, 0, DATA_STATUS.unavailable), `${totals.knownExpenseMonths}か月分の平均`));
         return result;
     }
     function qualitySummary(data) {
@@ -125,7 +125,7 @@ export function initAnalysis(deps) {
                 }
                 pair.append(slot);
             }
-            cell.append(pair, el('span', 'analysis-bar-label', monthLabel(month.period)), el('small', 'analysis-muted', month.coverage === 'registered' ? '' : quality(month)));
+            cell.append(pair, el('span', 'analysis-bar-label', monthLabel(month.period)), el('small', `analysis-muted ${financialStatusClass(quality(month))}`, month.coverage === 'registered' ? '' : quality(month)));
             bars.append(cell);
         }
         scroll.append(bars);
@@ -149,9 +149,11 @@ export function initAnalysis(deps) {
             const first = el('td');
             first.append(action(labelYearMonth(month.period), () => go(month.period), 'analysis-link'));
             row.append(first);
-            for (const amount of [month.income, month.expense, month.balance, month.nisa])
-                row.append(el('td', 'analysis-number', formatYen(amount)));
-            row.append(el('td', '', quality(month)));
+            for (const [index, amount] of [month.income, month.expense, month.balance, month.nisa].entries()) {
+                const value = index === 2 ? sharedYen(amount, 0, DATA_STATUS.unavailable) : formatYen(amount);
+                row.append(el('td', `analysis-number ${financialStatusClass(value)}`, value));
+            }
+            row.append(el('td', financialStatusClass(quality(month)), quality(month)));
             body.append(row);
         }
         table.append(body);
@@ -164,7 +166,7 @@ export function initAnalysis(deps) {
         const block = panel('期間の特徴');
         const totals = data.totals;
         const grid = el('div', 'analysis-insights');
-        grid.append(metric('支出が最大の月', totals.maxExpense ? labelYearMonth(totals.maxExpense.period) : '未取得', totals.maxExpense ? formatYen(totals.maxExpense.amount) : '登録済み明細なし'), metric('支出が最小の月', totals.minExpense ? labelYearMonth(totals.minExpense.period) : '未取得', totals.minExpense ? formatYen(totals.minExpense.amount) : '登録済み明細なし'));
+        grid.append(metric('支出が最大の月', totals.maxExpense ? labelYearMonth(totals.maxExpense.period) : DATA_STATUS.missing, totals.maxExpense ? formatYen(totals.maxExpense.amount) : '登録済み明細なし'), metric('支出が最小の月', totals.minExpense ? labelYearMonth(totals.minExpense.period) : DATA_STATUS.missing, totals.minExpense ? formatYen(totals.minExpense.amount) : '登録済み明細なし'));
         block.body.append(grid);
         const latest = data.months.at(-1), previous = data.months.at(-2);
         if (latest && previous) {
@@ -228,7 +230,7 @@ export function initAnalysis(deps) {
                 const cell = el('td', 'analysis-number');
                 const amount = group.amounts[index] ?? null;
                 if (amount === null || amount === 0)
-                    cell.textContent = amount === null ? '未取得' : formatYen(0);
+                    cell.textContent = amount === null ? DATA_STATUS.missing : formatYen(0);
                 else
                     cell.append(action(formatYen(amount), () => drill(dimension, group.id, group.label, [data.months[index].period]), 'analysis-link'));
                 item.append(cell);

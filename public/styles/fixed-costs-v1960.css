@@ -30,7 +30,7 @@
 .fixed-cost-form-error{color:var(--danger,#bd3e43);font-size:12px;min-height:0}
 .fixed-cost-form-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:8px}
 .fixed-cost-form-actions button{min-height:40px;padding:8px 18px}
-@media(max-width:620px){.fixed-cost-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.fixed-cost-metric:last-child{grid-column:1/-1}.fixed-cost-toolbar .subscriptions-tabs{width:100%;flex-wrap:nowrap;overflow-x:auto}.fixed-cost-toolbar .subscriptions-tab{flex:0 0 auto;white-space:nowrap}.fixed-cost-form{padding:15px;gap:10px}.fixed-cost-item{align-items:flex-start}.fixed-cost-item-price{text-align:right}}
+@media(max-width:620px){.fixed-cost-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.fixed-cost-metric:last-child{grid-column:1/-1}.fixed-cost-toolbar .subscriptions-tabs{flex-wrap:nowrap;overflow-x:auto}.fixed-cost-toolbar .subscriptions-tab{flex:0 0 auto;white-space:nowrap}.fixed-cost-form{padding:15px;gap:10px}.fixed-cost-item{align-items:flex-start}.fixed-cost-item-price{text-align:right}}
 @media(max-width:360px){.fixed-cost-form{grid-template-columns:1fr}.fixed-cost-field{grid-column:1/-1}.fixed-cost-metrics{grid-template-columns:1fr}.fixed-cost-metric:last-child{grid-column:auto}}
 .fixed-cost-detail-line{display:flex;gap:12px;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--line,#dde2e8);font-size:13px}
 .fixed-cost-detail-line strong{white-space:nowrap}

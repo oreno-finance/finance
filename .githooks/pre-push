@@ -9,19 +9,5 @@ if ! command -v gitleaks >/dev/null 2>&1; then
   echo '[FINANCE] BLOCKED: Gitleaksが未インストールです。brew install gitleaks を実行してください。' >&2
   exit 1
 fi
-# Git passes <local-ref> <local-sha> <remote-ref> <remote-sha> on standard input.
-zero=0000000000000000000000000000000000000000
-while read -r local_ref local_sha remote_ref remote_sha; do
-  [ -n "$local_ref" ] || continue
-  [ "$local_sha" != "$zero" ] || continue
-  case "$remote_sha" in
-    "$zero") commits=$(git rev-list "$local_sha" --not --remotes) ;;
-    *) commits=$(git rev-list "$remote_sha..$local_sha") ;;
-  esac
-  for sha in $commits; do
-    node scripts/audit-publication.mjs --commit "$sha"
-  done
-done
-# Inspect live/untracked files as well as all Git history, never just HEAD.
-node scripts/audit-publication.mjs --tree
-gitleaks git --redact --no-banner --log-opts='--all' .
+# Inspect only the actual outgoing commits; --tree remains an explicit diagnostic.
+node scripts/audit-publication.mjs --push "${2:-}"

@@ -80,6 +80,23 @@ function parseRakuten(text, rows, sourceKind) {
         !lines.some(line => /^20\d{2}\/\d{1,2}\/\d{1,2}\s+/.test(line));
     return { cardId: null, paymentDate: date, statedTotal: total, billingMonth: billingMonth ?? paymentMonth(date), ...(zeroUsage ? { zeroUsage: true } : {}) };
 }
+/** The regular Rakuten PDF has an explicit billing-confirmation date, separate from the debit date. */
+function rakutenPdfConfirmed(text, paymentDate) {
+    const lines = lineList(text);
+    if (!paymentDate || lines[0] !== 'ご利用代金請求明細書')
+        return false;
+    const headers = lines.filter(line => line === 'お支払日 返済方法 引落口座 請求確定日 利用獲得ポイント 調整額 返金額');
+    if (headers.length !== 1)
+        return false;
+    const row = lines[lines.indexOf(headers[0]) + 1] ?? '';
+    const m = /^(20\d{2})\/(\d{1,2})\/(\d{1,2})\s+.+?\s+(20\d{2})\/(\d{1,2})\/(\d{1,2})\s+[\d,]+(?:ポイント)?\s+[-−\d,]+円?\s+[-−\d,]+円?$/.exec(row);
+    if (!m)
+        return false;
+    const paid = isoDate(+m[1], +m[2], +m[3]);
+    const finalized = isoDate(+m[4], +m[5], +m[6]);
+    const today = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    return paid === paymentDate && !!finalized && finalized <= paymentDate && finalized <= today;
+}
 function parseJcb(text, rows) {
     const n = normalize(text);
     const lines = lineList(n);
@@ -215,6 +232,8 @@ export function parseStatementText(raw, sourceKind, sourceName, html = '') {
     const sum = rows.reduce((s, row) => s + row.amount, 0);
     if (rows.length && data.statedTotal !== null && sum !== data.statedTotal)
         warnings.push(`請求金額と明細合計に差額があります（${(data.statedTotal - sum).toLocaleString('ja-JP')}円）。内容を確認してください。`);
+    const status = classifyStatus(normalized);
+    const confirmation = data.zeroUsage ? 'confirmed' : provider === 'rakuten' && sourceKind === 'pdf' && status !== 'provisional' && rakutenPdfConfirmed(normalized, data.paymentDate) ? 'confirmed' : status;
     return { provider, cardId: data.cardId, sourceKind, sourceName, billingMonth: data.billingMonth,
-        paymentDate: data.paymentDate, statedTotal: data.statedTotal, confirmation: data.zeroUsage ? 'confirmed' : classifyStatus(normalized), ...(data.zeroUsage ? { zeroUsage: true } : {}), rows, warnings };
+        paymentDate: data.paymentDate, statedTotal: data.statedTotal, confirmation, ...(data.zeroUsage ? { zeroUsage: true } : {}), rows, warnings };
 }

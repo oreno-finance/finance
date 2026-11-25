@@ -112,7 +112,7 @@ test('contract deletion tombstones survive cloud merges and prevent reappearance
  const ui=read('src/ui/subscriptions.ts');
  assert.match(ui,/deleteFixedCost\(item.contract.id\)/);
  assert.match(ui,/if\(!ignore\)\{/);
- assert.match(ui,/内容を確認して登録/);
+ assert.match(ui,/btn\('登録',\(\)=>\{void markCandidate\(candidate,false\)/);
 });
 
 test('year-over-year drilldown accepts up to 24 months and shows side-by-side years',()=>{

@@ -23,7 +23,7 @@
 .activity-toast[data-kind="bad"] .activity-icon::before {content:'!'}
 .activity-toast[data-kind="working"] .activity-icon {border-top-color:transparent;animation:finance-activity-spin 800ms linear infinite}
 .activity-toast[data-kind="working"] .activity-icon::before {content:''}
-.activity-toast .activity-message {display:block;min-width:0;white-space:normal}
+.activity-toast .activity-message {display:block;min-width:0;white-space:normal;pointer-events:auto;user-select:text;-webkit-user-select:text;cursor:text}
 @keyframes finance-activity-spin {to{transform:rotate(360deg)}}
 /* Tooltip escapes the clipped side rail and is hidden during temporary expansion. */
 .sidebar-tooltip {position:fixed;z-index:320;background:#18263c;color:#fff;font-size:12px;font-weight:650;
@@ -36,3 +36,46 @@
 .activity-toast .activity-dismiss:focus-visible{outline:2px solid #b7e5fc;outline-offset:1px}
 @media(max-width:800px){.toast.activity-toast{bottom:calc(12px + env(safe-area-inset-bottom,0px))!important;right:12px!important;max-width:calc(100vw - 24px)}}
 @media(prefers-reduced-motion:reduce){.toast.activity-toast{transition:none!important}.activity-toast[data-kind="working"] .activity-icon{animation-duration:1.8s}}
+
+.activity-history-open{max-width:100%;font-size:12px;cursor:pointer;background:transparent;color:inherit;border:1px solid currentColor;border-radius:6px;padding:6px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.activity-history-open.has-unread{color:#e4ae61;font-weight:700}
+.activity-history-dialog{position:fixed;inset:0;margin:auto;width:min(560px,calc(100vw - 28px));max-height:calc(100dvh - 28px);overflow:auto;overscroll-behavior:contain;padding:20px;border-radius:14px;box-shadow:0 18px 50px #0004}
+.activity-history-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.activity-history-heading h2{margin:0;font-size:18px;line-height:1.5}
+.activity-history-entry{padding:10px 0;border-bottom:1px solid currentColor;overflow-wrap:anywhere}
+.activity-history-entry p{margin:4px 0;white-space:pre-wrap;user-select:text;-webkit-user-select:text}
+.activity-history-entry[data-kind="bad"],.activity-history-entry[data-kind="warn"]{border-left:3px solid #d97706;padding-left:10px}
+
+.activity-history-open{position:relative;display:grid;place-items:center;width:40px;height:36px;min-width:40px;padding:0;overflow:visible}
+#activity-history-count:not(:empty){position:absolute;top:-4px;right:-6px;border-radius:10px;background:#a33d28;color:white;font-size:10px;padding:1px 4px}
+.activity-history-dialog{background:var(--panel);color:var(--ink);border:1px solid var(--line)}
+.activity-history-dialog::backdrop{background:#102135a8}
+.activity-history-entry{border-bottom-color:var(--line)}
+#import-view.has-import-rejections:not(.has-import-drafts)>.results-grid{display:block!important;height:auto!important}
+#import-view.has-import-rejections:not(.has-import-drafts)>.results-grid>.detail-panel{display:none!important}
+
+.batch-outcome-panel{order:1;flex:0 0 auto;min-height:0}
+.batch-outcome-panel:has(#batch-outcome-details[hidden]){display:none}
+#batch-outcome-details{margin:4px 0 8px;font-size:12px}
+#batch-outcome-details summary{cursor:pointer}
+#batch-outcome-list{max-height:160px;overflow:auto;overscroll-behavior:contain}
+.batch-outcome-row{display:flex;justify-content:space-between;gap:10px;padding:5px 8px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+
+/* Retained parsed collisions remain selectable, not red parse-error placeholders. */
+.statement-entry .statement-card.duplicate{background:var(--panel);border-color:var(--line)}
+.statement-entry .statement-card.conflict{background:color-mix(in srgb,#d49a42 9%,var(--panel));border-color:color-mix(in srgb,#d49a42 55%,var(--line))}
+.statement-entry .statement-card.duplicate.selected,.statement-entry .statement-card.conflict.selected{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+.statement-flag.duplicate{background:color-mix(in srgb,var(--muted) 13%,var(--panel));color:var(--muted)}
+.statement-flag.conflict{background:color-mix(in srgb,#d49a42 16%,var(--panel));color:var(--ink)}
+#import-view.has-import-rejections:not(.has-import-drafts)>.results-grid{margin-top:12px}
+
+/* Keep cleanup choices distinct from their scan button, including on mobile. */
+.settings-view #cloud-cleanup-options:not(.hidden){margin-top:16px}
+.settings-view #cloud-cleanup-options > #cloud-cleanup-delete{margin-top:12px}
+/* Missing data is a single neutral status, not an empty full-size breakdown. */
+.points-benefits.points-benefits-compact,#home-view .points-benefits.points-benefits-compact{padding:12px 16px;gap:0}
+.points-benefits-missing .points-benefits-heading > strong{color:var(--muted);font-size:12px;font-weight:600}
+
+/* Neutral missing values, amber review/provisional, accent estimates. */
+.workspace .data-status-muted{color:var(--muted)}
+.workspace .data-status-warning{color:var(--warning,#b7791f)}
+.workspace .data-status-estimate{color:var(--accent)}

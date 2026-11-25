@@ -5,11 +5,56 @@ let previousMessage = '';
 let previousKind: ActivityKind | '' = '';
 let previousAt = 0;
 let dismissBound=false;
+type ActivityEntry={message:string;kind:ActivityKind;at:number;unread:boolean};
+const history:ActivityEntry[]=[];
+let dropped=0;
+export function activityHistory():ReadonlyArray<Readonly<ActivityEntry>>{return history.map(entry=>({...entry}));}
+function updateHistory():void{
+  if(typeof document==='undefined')return;
+  const count=history.filter(entry=>entry.unread).length;
+  const button=document.getElementById('activity-history-open');
+  if(button){button.setAttribute('aria-label',count?`通知履歴（未確認 ${count}件）`:'通知履歴');button.classList.toggle('has-unread',count>0);}
+  const badge=document.getElementById('activity-history-count');if(badge)badge.textContent=count?String(count):'';
+  const dialog=document.getElementById('activity-history-dialog') as HTMLDialogElement|null;
+  const list=document.getElementById('activity-history-list');
+  if(!list||!dialog?.open)return;
+  list.replaceChildren();
+  if(dropped){const p=document.createElement('p');p.textContent=`古い通知 ${dropped}件は保持上限に達したため省略しました。`;list.append(p);}
+  if(!history.length){const p=document.createElement('p');p.textContent='通知はありません。';list.append(p);}
+  for(const entry of history){
+    const row=document.createElement('div');row.className='activity-history-entry';row.dataset.kind=entry.kind;
+    const time=document.createElement('small');time.textContent=new Date(entry.at).toLocaleTimeString('ja-JP');
+    const message=document.createElement('p');message.textContent=entry.message;
+    row.append(time,message);list.append(row);
+  }
+}
+export function initActivityHistory():void{
+  const dialog=document.getElementById('activity-history-dialog') as HTMLDialogElement|null;
+  const button=document.getElementById('activity-history-open');
+  if(!dialog||!button)return;
+  button.addEventListener('click',()=>{if(!dialog.open){dialog.showModal();updateHistory();}});
+  document.getElementById('activity-history-close')?.addEventListener('click',()=>dialog.close());
+  document.getElementById('activity-history-read')?.addEventListener('click',()=>{for(const entry of history)entry.unread=false;updateHistory();});
+  updateHistory();
+}
+function recordActivity(message:string,kind:ActivityKind,at:number):void{
+  if(kind==='working'||kind==='info')return;
+  const last=history[0];
+  if(last?.message===message&&last.kind===kind&&at-last.at<1000)return;
+  history.unshift({message,kind,at,unread:kind==='warn'||kind==='bad'});
+  if(history.length>200){let ordinary=history.length-1;while(ordinary>=0&&history[ordinary]!.unread)ordinary--;history.splice(ordinary<0?history.length-1:ordinary,1);dropped++;}
+  updateHistory();
+}
 function hideToast():void {
   if(dismissal){clearTimeout(dismissal);dismissal=undefined;}
   if(typeof document!=='undefined')document.getElementById('toast')?.classList.remove('visible');
 }
 export function clearActivity():void {
+  history.splice(0);dropped=0;
+  if(typeof document==='undefined')return;
+  const historyDialog=document.getElementById('activity-history-dialog') as HTMLDialogElement|null;
+  if(historyDialog?.open)historyDialog.close();
+  document.getElementById('activity-history-list')?.replaceChildren();updateHistory();
   hideToast();previousMessage='';previousKind='';previousAt=0;
   const panel=document.getElementById('toast');
   const label=panel?.querySelector<HTMLElement>('.activity-message');if(label)label.textContent='';
@@ -31,8 +76,9 @@ export function showActivity(message: string, kind: ActivityKind = 'info'): void
   if (!panel || !label) return;
   bindDismiss(panel);
   const now = Date.now();
-  // Some legacy callers issue a successful operationResult and a toast together.
-  if (panel.classList.contains('visible') && kind === previousKind && now - previousAt < 450 && (value === previousMessage || kind === 'good')) return;
+  recordActivity(value,kind,now);
+  // Suppress identical notices, never a different completed operation.
+  if (panel.classList.contains('visible') && kind === previousKind && now - previousAt < 450 && value === previousMessage) return;
   previousMessage = value; previousKind = kind; previousAt = now;
   if (dismissal) { clearTimeout(dismissal); dismissal = undefined; }
   label.textContent = value;
@@ -41,11 +87,11 @@ export function showActivity(message: string, kind: ActivityKind = 'info'): void
   if(close)close.disabled=false;
   panel.classList.add('visible');
   panel.setAttribute('role', kind === 'bad' ? 'alert' : 'status');
-  // Keep an actual pending operation visible, and expire every outcome.
-  if (kind !== 'working') {
+  // Warnings and errors never expire; later notices retain them in history.
+  if (kind === 'good' || kind === 'info') {
     dismissal = setTimeout(() => {
       hideToast();
-    }, kind === 'bad' || kind === 'warn' ? 7500 : kind === 'good' ? 2700 : 4000);
+    }, kind === 'good' ? 2700 : 4000);
   }
 }
 

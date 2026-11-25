@@ -96,7 +96,7 @@ class FinanceBrowserTests(unittest.TestCase):
         assert page.locator('.future-chart-svg').get_attribute('aria-valuemax') is not None
 
     @staticmethod
-    def offline_document():
+    def offline_document(import_workspace=False):
         import base64, json, re
         html=re.sub(r'<script\b[^>]*>.*?</script>','',(ROOT/'dist/index.html').read_text(encoding='utf-8'),flags=re.S)
         # This is test-only document markup; production CSP is independently audited.
@@ -112,9 +112,114 @@ class FinanceBrowserTests(unittest.TestCase):
                 if not target.is_relative_to(module_root):raise ValueError('Unexpected fixture module path')
                 return match.group(1)+module_key(target)+match.group(3)
             source=re.sub(r"((?:from|import)\s+['\"])(\.{1,2}/[^'\"]+)(['\"])",replace_specifier,file.read_text(encoding='utf-8'))
+            if import_workspace and file==module_root/'main.js':
+                # Test-only access to real import handlers; do not run auth or startup.
+                assert source.rstrip().endswith('init();')
+                source=source.rstrip()[:-len('init();')]+"""
+window.financeImportTest={
+  prepare(records){
+    liveVault={unlocked:true,records:()=>records,assetSettings:()=>({}),merchantRules:()=>[],merchantCategories:()=>[]};
+    for(const record of records){const s=structuredClone(record.statement);statements.push(s);savedIds.set(s,record.id);originalSaved.add(s);savedFingerprints.set(s,statementWorkingFingerprint(s));importedSignatures.set(s,statementSignature(s));}
+    for(const node of document.querySelectorAll('.workspace .content > :is(section,div)[id]'))node.classList.toggle('hidden',node.id!=='import-view');
+    bindImportCardChoices();render();
+  },
+  add(raw){return acceptStatement(parseStatementText(raw,'pdf','synthetic.pdf'),{bytes:new Uint8Array([1,2,3]),mime:'application/pdf'});},
+  state(){return importQueue().map(s=>({card:s.cardId,status:s.confirmation,collision:importCollision(s),source:pendingSources.has(s),id:savedIds.get(s)??null}));}
+};
+"""
             modules[module_key(file)]='data:text/javascript;base64,'+base64.b64encode(source.encode()).decode()
         html=html.replace('</head>','<script type="importmap">'+json.dumps({'imports':modules})+'</script></head>')
         return html
+
+    def test_import_duplicate_keeps_preview_card_choice_and_revision(self):
+        html=self.offline_document(import_workspace=True)
+        raw="\n".join(['ご利用代金請求明細書','楽天カード株式会社','2024年04月ご請求金額 ご利用カード','1,000円 楽天カード(Visa) ****-****-****-0000','お支払日 返済方法 引落口座 請求確定日 利用獲得ポイント 調整額 返金額','2024/04/27 口座振替 架空銀行 2024/04/12 10 0円 0円','利用日 利用店名 利用者 支払方法 利用金額 手数料/利息 支払総額 当月請求額 翌月繰越残高','2024/03/03 架空商店 本人 1回払い 1,000 0 1,000 1,000 0'])
+        for width,mobile in ((1250,False),(390,True)):
+            with self.subTest(width=width):
+                context=self.browser.new_context(viewport={'width':width,'height':850},is_mobile=mobile,has_touch=mobile)
+                try:
+                    page=context.new_page();errors=[]
+                    page.on('pageerror',lambda exc:errors.append(str(exc)))
+                    page.route('**/*',lambda route:route.abort());page.set_content(html)
+                    page.evaluate("""async raw=>{
+                      await import('finance-fixture/main.js');
+                      const {parseStatementText}=await import('finance-fixture/importers/statement-parser.js');
+                      const s=parseStatementText(raw,'pdf','synthetic.pdf');
+                      financeImportTest.prepare([{id:'stored-first',statement:{...s,cardId:'rakuten-etc'}},{id:'stored-second',statement:{...s,cardId:'rakuten-mizuho',confirmation:'provisional'}}]);
+                      await financeImportTest.add(raw);
+                    }""",raw)
+                    state=lambda:page.evaluate('financeImportTest.state()')
+                    radios=page.locator('#import-rakuten-choice')
+                    radios.locator('input[value="rakuten-etc"]').check(force=True)
+                    self.assertEqual(state()[0]['collision'],'duplicate')
+                    self.assertTrue(state()[0]['source'])
+                    self.assertTrue(page.locator('#preview-content').is_visible())
+                    self.assertIn('架空商店',page.locator('#transaction-rows').inner_text())
+                    self.assertTrue(page.locator('#batch-import').is_disabled())
+                    self.assertEqual(page.locator('#statement-list .statement-card.duplicate').count(),1)
+                    self.assertFalse(page.locator('#import-upload-feedback').is_visible())
+                    self.assertFalse(page.locator('#import-inline-entry').is_visible())
+                    radios.locator('input[value="rakuten-mizuho"]').check(force=True)
+                    page.locator('#import-revision-dialog').wait_for()
+                    page.locator('#import-revision-cancel').click()
+                    self.assertEqual(state()[0]['collision'],'revision')
+                    self.assertTrue(state()[0]['source'])
+                    radios.locator('input[value="rakuten-etc"]').check(force=True)
+                    self.assertEqual(state()[0]['collision'],'duplicate')
+                    radios.locator('input[value="rakuten-mizuho"]').check(force=True)
+                    page.locator('#import-revision-accept').click()
+                    self.assertEqual(state(),[{'card':'rakuten-mizuho','status':'confirmed','collision':None,'source':True,'id':'stored-second'}])
+                    self.assertTrue(page.locator('#batch-import').is_enabled())
+                    page.locator('#statement-list .statement-remove').click()
+                    self.assertEqual(state(),[])
+                    self.assertTrue(page.locator('#import-inline-entry').is_visible())
+                    self.assertFalse(page.locator('#import-upload-feedback').is_visible())
+                    self.assertFalse(page.locator('#import-view > .results-grid').is_visible())
+                    # Re-import an explicitly provisional PDF against the stored final bill.
+                    # It remains inspectable but cannot be saved or manually promoted.
+                    provisional_raw=raw+'\n請求金額確定前の明細'
+                    page.evaluate('raw=>financeImportTest.add(raw)',provisional_raw)
+                    radios.locator('input[value="rakuten-etc"]').check(force=True)
+                    self.assertEqual(state()[0]['status'],'provisional')
+                    self.assertEqual(state()[0]['collision'],'blocked')
+                    self.assertTrue(state()[0]['source'])
+                    self.assertTrue(page.locator('#batch-import').is_disabled())
+                    self.assertFalse(page.locator('#import-revision-dialog').is_visible())
+                    self.assertEqual(page.get_by_text('原本を確認して確定明細として扱う',exact=True).count(),0)
+                    self.assertIn('確定済み明細は未確定の明細で置き換えません',page.locator('#notice-list').inner_text())
+                    self.assertIn('架空商店',page.locator('#transaction-rows').inner_text())
+                    page.locator('#statement-list .statement-remove').click()
+                    self.assertEqual(state(),[])
+                    self.assertEqual(errors,[])
+                finally:context.close()
+
+    def test_activity_history_retains_errors_and_clears_on_lock(self):
+        html=self.offline_document()
+        for width,mobile in ((1100,False),(390,True)):
+            with self.subTest(width=width):
+                context=self.browser.new_context(viewport={'width':width,'height':760},is_mobile=mobile,has_touch=mobile)
+                try:
+                    page=context.new_page();page.route('**/*',lambda route:route.abort());page.set_content(html)
+                    page.evaluate('''async()=>{
+                      const activity=await import('finance-fixture/ui/activity-feedback.js');
+                      activity.initActivityHistory();activity.showActivity('架空の警告','warn');activity.showActivity('架空のエラー','bad');
+                      document.getElementById('toast').querySelector('button').click();
+                      activity.showActivity('架空の保存完了','good');
+                      document.getElementById('activity-history-open').click();
+                    }''')
+                    self.assertTrue(page.locator('#activity-history-dialog').is_visible())
+                    bounds=page.locator('#activity-history-dialog').bounding_box()
+                    viewport=page.evaluate('()=>({width:innerWidth,height:innerHeight})')
+                    self.assertAlmostEqual(bounds['x']+bounds['width']/2,viewport['width']/2,delta=2)
+                    self.assertAlmostEqual(bounds['y']+bounds['height']/2,viewport['height']/2,delta=2)
+                    self.assertEqual(page.locator('#activity-history-list .activity-history-entry').count(),3)
+                    self.assertIn('架空のエラー',page.locator('#activity-history-list').inner_text())
+                    page.locator('#activity-history-read').click()
+                    self.assertEqual(page.locator('#activity-history-count').inner_text(),'')
+                    page.evaluate('''async()=>{(await import('finance-fixture/ui/activity-feedback.js')).clearActivity()}''')
+                    self.assertFalse(page.locator('#activity-history-dialog').is_visible())
+                    self.assertEqual(page.locator('#activity-history-list').inner_text(),'')
+                finally:context.close()
 
     def test_shared_period_navigation_and_action_roles(self):
         html=self.offline_document()
@@ -725,15 +830,31 @@ class FinanceBrowserTests(unittest.TestCase):
                       window.URL=class extends NativeURL {constructor(input,base){super(input,base==='about:blank'?'https://finance-e2e.invalid/':base);}};
                       const settings=await import('finance-fixture/cloud/cloud-settings.js');
                       const modal=await import('finance-fixture/ui/modal.js');
-                      const test=window.securityTest={epoch:0,deletes:[],rotations:0,cancel:()=>modal.cancelAllConfirmations()};
+                      const test=window.securityTest={epoch:0,deletes:[],rotations:0,recoveries:0,cancel:()=>modal.cancelAllConfirmations()};
                       try{settings.initCloudSettings({hasUnsavedChanges:()=>false,confirmationContext:()=>{const epoch=test.epoch;return ()=>epoch===test.epoch;},
                         onRefresh:async()=>{},onMigration:async()=>{},onLock:async()=>true,
+                        onRecoverSaveLock:async approve=>{if(!await approve('2026-01-01T00:00:00Z'))return 'cancelled';test.recoveries++;return 'released';},
                         onCleanupPreview:async()=>({generationCount:2,legacyFolderCount:0,unreferencedOriginalCount:1,legacyV1Count:0,snapshots:[]}),
                         onCleanupDelete:async which=>{test.deletes.push(which);return 2;},onChangePassphrase:async()=>{test.rotations++;}});}finally{window.URL=NativeURL;}
                       for(const view of document.querySelectorAll('.workspace .content > :is(section,div)[id$="-view"]'))view.classList.toggle('hidden',view.id!=='settings-view');
                       for(const el of document.querySelectorAll('#settings-view details'))el.open=true;
                     }''')
                     dialog=page.locator('.finance-confirm-dialog')
+                    def open_recovery():
+                        # Synthetic disconnected document: allow the test-only
+                        # click, without authenticating to a real account.
+                        page.evaluate("document.getElementById('cloud-lock-recover').disabled=false")
+                        page.locator('#cloud-lock-recover').click();dialog.wait_for()
+                        self.assertIn('他のすべてのFinanceタブを閉じ',dialog.inner_text())
+                    open_recovery()
+                    recover_text=dialog.get_by_role('textbox',name='確認用の文字列')
+                    recover_accept=dialog.get_by_role('button',name='復旧する')
+                    self.assertTrue(recover_accept.is_disabled());recover_text.fill('解除 ');self.assertTrue(recover_accept.is_disabled())
+                    recover_text.fill('解除');page.keyboard.press('Escape');dialog.wait_for(state='detached')
+                    self.assertEqual(page.evaluate('securityTest.recoveries'),0)
+                    open_recovery();recover_text.fill('解除');recover_accept.click();dialog.wait_for(state='detached')
+                    self.assertEqual(page.evaluate('securityTest.recoveries'),1)
+                    self.assertIn('保存ロックを解除しました',page.locator('#cloud-lock-check-result').inner_text())
                     def scan():
                         page.locator('#cloud-cleanup-scan').click()
                         page.locator('#cloud-cleanup-options').wait_for(state='visible')
@@ -978,7 +1099,7 @@ class FinanceBrowserTests(unittest.TestCase):
                       const assets=emptyAssets();assets.snapshots=[{id:'balance-test',accountId:'rakuten-bank',balance:100000,observedAt:previous+'-01T00:00:00Z'}];
                       const source={records:[],rules:[],categories:[],assets,payroll:{ready:true,syncedAt:1000,entries:[{id:'salary-a',employerId:'main',job:'main',paidOn:day,payPeriod:current,netPay:50000,grossPay:null,taxablePay:null,currency:'JPY',kind:'salary',revision:1}]},currentPeriod:current};
                       let writes=0,archive=null,settings=0;
-                      const vault={unlocked:true,listArchivedMonths:async()=>archive?[current]:[],loadArchivedReport:async()=>archive,
+                      const vault={unlocked:true,listArchivedMonths:async()=>archive?[current]:[],loadArchivedReport:async period=>period===current?archive:null,
                         saveArchivedReport:async(snapshot,note)=>{writes++;archive={format:'finance-monthly-report-v1',period:current,current:{id:'saved',savedAt:new Date().toISOString(),note,snapshot,sourceHash:'a'.repeat(64)},history:[]};return archive;}};
                       const show=id=>{for(const n of document.querySelectorAll('.workspace .content > :is(section,div)[id]'))n.classList.toggle('hidden',n.id!==id);document.getElementById(id).classList.remove('hidden');};
                       const summary=initMonthlySummary({source:()=>source,openRecord(){},openDrilldown(){},openCardSettings(){settings++;}});
@@ -993,7 +1114,9 @@ class FinanceBrowserTests(unittest.TestCase):
                       show('summary-view');summary.setPeriod(current);
                     }''')
                     summary=page.locator('#monthly-content')
-                    self.assertEqual(summary.locator('.points-benefits-heading strong').inner_text(),'—')
+                    self.assertEqual(summary.locator('.points-benefits-heading strong').inner_text(),'明細未取得')
+                    self.assertEqual(summary.locator('.points-benefits-list').count(),0)
+                    self.assertEqual(summary.locator('.points-benefits-compact').count(),1)
                     self.assertIn('明細未取得',summary.locator('.points-benefits').inner_text())
                     page.evaluate('window.polish2.noUse()')
                     self.assertEqual(summary.locator('.points-benefits-heading strong').inner_text(),'0 pt')
@@ -1029,6 +1152,26 @@ class FinanceBrowserTests(unittest.TestCase):
                     reports.get_by_text('保存済み',exact=False).first.wait_for()
                     page.wait_for_function('window.polish2.writes()===1 && !!document.querySelector("#reports-memo")')
                     self.assertEqual(reports.locator('#reports-memo').input_value(),'テストメモ')
+                    self.assertFalse(page.evaluate('window.polish2.reports.isDirty()'))
+                    reports.locator('#reports-memo').fill('編集中')
+                    self.assertTrue(page.evaluate('window.polish2.reports.isDirty()'))
+                    reports.locator('#reports-memo').fill('テストメモ')
+                    self.assertFalse(page.evaluate('window.polish2.reports.isDirty()'))
+                    page.evaluate("window.polish2.reports.openPeriod('2025-01');window.polish2.reports.render()")
+                    reports.locator('#reports-memo').wait_for()
+                    self.assertFalse(page.evaluate('window.polish2.reports.isDirty()'))
+                    page.evaluate('window.polish2.reports.openPeriod(window.polish2.current);window.polish2.reports.render()')
+                    reports.locator('#reports-memo').wait_for()
+                    self.assertFalse(page.evaluate('window.polish2.reports.isDirty()'))
+                    reports.locator('#reports-memo').fill('保持する下書き')
+                    page.evaluate("window.polish2.reports.openPeriod('2025-01');window.polish2.reports.render()")
+                    reports.locator('#reports-memo').wait_for()
+                    self.assertTrue(page.evaluate('window.polish2.reports.isDirty()'))
+                    page.evaluate('window.polish2.reports.openPeriod(window.polish2.current);window.polish2.reports.render()')
+                    reports.locator('#reports-memo').wait_for()
+                    self.assertEqual(reports.locator('#reports-memo').input_value(),'保持する下書き')
+                    reports.locator('#reports-memo').fill('テストメモ')
+                    self.assertFalse(page.evaluate('window.polish2.reports.isDirty()'))
                     page.evaluate('window.polish2.historical()')
                     reports.locator('.reports-history summary').click();reports.locator('.reports-history-button').click()
                     self.assertEqual(reports.locator('#reports-memo').count(),0)

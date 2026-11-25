@@ -1,6 +1,6 @@
 import { requestConfirmation, confirmationPending, cancelConfirmation } from './modal.js';
 import { localDay } from '../cloud/asset-projection.js';
-import { formatYen as sharedYen, formatMonth, formatDateTime, formatDate } from './formatters.js';
+import { DATA_STATUS, financialStatusClass, formatYen as sharedYen, formatMonth, formatDateTime, formatDate } from './formatters.js';
 import { showActivity, finishActivity } from './activity-feedback.js';
 /** P1-B monthly report archive. Nothing is written without pressing Save. */
 import { reportSnapshot, snapshotHash } from '../reports/monthly-report.js';
@@ -8,8 +8,9 @@ import { CloudWriteUncertainError } from '../cloud/live-vault.js';
 import { monthNavigator, localMonth } from './period-navigator.js';
 import { pointBenefitsSection, archivedPointCoverage } from './point-benefits.js';
 const today = localMonth;
-const yen = (value) => sharedYen(value, 0, '未取得');
+const yen = (value) => sharedYen(value, 0, DATA_STATUS.missing);
 const month = formatMonth;
+const metricValue = (label, value) => label === '収支' ? sharedYen(value, 0, DATA_STATUS.unavailable) : yen(value);
 function el(tag, cls = '', content) {
     const node = document.createElement(tag);
     node.className = cls;
@@ -30,14 +31,14 @@ function section(title) {
 }
 function row(parent, label, value) {
     const root = el('div', 'reports-row');
-    root.append(el('span', '', label), el('strong', '', value));
+    root.append(el('span', '', label), el('strong', financialStatusClass(value), value));
     parent.append(root);
 }
 function renderSnapshot(root, snapshot, showMetrics = true) {
     const metrics = el('div', 'reports-metrics');
     for (const [label, value] of [['収入', snapshot.income], ['支出', snapshot.expense], ['収支', snapshot.balance]]) {
         const item = el('div', 'reports-metric');
-        item.append(el('span', '', label), el('strong', '', yen(value)));
+        item.append(el('span', '', label), el('strong', financialStatusClass(metricValue(label, value)), metricValue(label, value)));
         metrics.append(item);
     }
     if (showMetrics)
@@ -119,6 +120,8 @@ export function initMonthlyReports(deps) {
             periods = list;
             archive = document;
             loadedPeriod = selected;
+            if (drafts.get(selected)?.note === (document?.current.note ?? ''))
+                drafts.delete(selected);
             const held = drafts.get(selected);
             draftConflict = !!held && held.revision !== (document?.current.id ?? null);
             draft = held?.note ?? document?.current.note ?? '';
@@ -199,14 +202,20 @@ export function initMonthlyReports(deps) {
             const hash = await snapshotHash(reportSnapshot(selected, source));
             if (id === request) {
                 changed = hash !== archive.current.sourceHash;
-                render();
+                syncSourceNotice();
             }
         }
         catch {
             if (id === request) {
                 changed = false;
+                syncSourceNotice();
             }
         }
+    }
+    function syncSourceNotice() {
+        const notice = container.querySelector('.reports-source-changed');
+        if (notice)
+            notice.hidden = !changed;
     }
     function selectPeriod(period) {
         // A cloud save must finish against its original month. Loading requests may
@@ -303,11 +312,14 @@ export function initMonthlyReports(deps) {
             control.body.append(error);
         }
         const state = archive?.current;
-        if (changed && state)
-            control.body.append(el('p', 'reports-quality', '明細や設定に変更があります。レポートを更新できます。'));
+        if (state) {
+            const notice = el('p', 'reports-quality reports-source-changed', '明細や設定に変更があります。レポートを更新できます。');
+            notice.hidden = !changed;
+            control.body.append(notice);
+        }
         if (draftConflict) {
             control.body.append(el('p', 'reports-quality', '別の端末でメモが更新されました。編集中の内容を確認してください。'));
-            control.body.append(button('編集内容を破棄して最新を表示', async () => {
+            control.body.append(button('編集を破棄', async () => {
                 const id = request, period = selected, vault = deps.vault(), note = draft, revision = archive?.current.id;
                 if (!await requestConfirmation({ owner: confirmationOwner, title: '編集中のメモを破棄しますか？', message: '保存済みの最新レポートを表示します。', acceptLabel: '破棄する', destructive: true }))
                     return;
@@ -328,12 +340,23 @@ export function initMonthlyReports(deps) {
         memo.maxLength = 2000;
         memo.value = draft;
         memo.placeholder = '今月の振り返り';
-        memo.addEventListener('input', () => { draft = memo.value; drafts.set(selected, { note: draft, revision: archive?.current.id ?? null }); });
+        memo.addEventListener('input', () => {
+            if (!memo.isConnected || busy || !active() || loadedPeriod !== selected)
+                return;
+            draft = memo.value;
+            // Keep the original revision during a conflict; typing cannot approve a remote overwrite.
+            if (!draftConflict && draft === (archive?.current.note ?? ''))
+                drafts.delete(selected);
+            else {
+                const held = drafts.get(selected);
+                drafts.set(selected, { note: draft, revision: held ? held.revision : archive?.current.id ?? null });
+            }
+        });
         control.body.append(memo);
         const submit = button(state ? 'レポートを更新' : 'レポートを作成', () => { void save(); }, 'save-action');
         submit.disabled = draftConflict;
         control.body.append(submit);
-        control.body.append(button('月別サマリーを開く', () => deps.openMonth(selected)));
+        control.body.append(button('月別サマリー', () => deps.openMonth(selected)));
         const revision = chosenRevision ? archive?.history.find(item => item.id === chosenRevision) ?? state : state;
         let preview = null;
         if (!revision) {
@@ -359,7 +382,7 @@ export function initMonthlyReports(deps) {
             const metrics = el('div', 'reports-metrics');
             for (const [label, value] of [['収入', snapshot.income], ['支出', snapshot.expense], ['収支', snapshot.balance]]) {
                 const item = el('div', 'reports-metric');
-                item.append(el('span', '', label), el('strong', '', yen(value)));
+                item.append(el('span', '', label), el('strong', financialStatusClass(metricValue(label, value)), metricValue(label, value)));
                 metrics.append(item);
             }
             container.append(metrics);
@@ -399,5 +422,5 @@ export function initMonthlyReports(deps) {
     }
     return { render: () => { render(); if (archive && !busy)
             void compareSource(); }, openPeriod, reset,
-        isBusy: () => busy || confirmationPending(confirmationOwner), isDirty: () => [...drafts].some(([period, entry]) => entry.note !== ((period === selected && loadedPeriod === selected) ? archive?.current.note ?? '' : '')) };
+        isBusy: () => busy || confirmationPending(confirmationOwner), isDirty: () => drafts.size > 0 };
 }

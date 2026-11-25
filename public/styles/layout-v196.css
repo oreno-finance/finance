@@ -4,7 +4,7 @@
     display:block!important;overflow-y:auto!important;overflow-x:hidden!important;min-height:0!important;
     overscroll-behavior-y:auto;
   }
-  #import-view:not(.hidden){display:block!important;flex:none!important;height:auto!important;min-height:0!important;overflow:visible!important}
+  #import-view:not(.hidden){display:block!important;flex:none!important;min-height:0!important;overflow:visible!important}
   #import-view > .import-panel {margin-bottom:16px}
   #import-view > .results-grid {
     display:grid!important;flex:none!important;height:auto!important;min-height:0!important;overflow:visible!important;align-items:start!important;
@@ -57,8 +57,8 @@
   #finance-sidebar .sidebar-subnav>.nav-entry{margin:1px 0!important;padding-left:12px!important}
   #finance-sidebar .sidebar-bottom-actions{padding:11px 0 0!important;gap:2px!important;min-width:220px;width:220px;align-items:stretch!important}
   #finance-sidebar .sidebar-bottom-actions>.nav-entry{width:220px!important;margin:0!important;padding:0 12px!important}
-  #finance-sidebar .sidebar-footer{width:220px;min-width:220px;white-space:nowrap;margin:10px 0 0!important}
-  #finance-sidebar .sidebar-theme{width:220px;justify-content:flex-start!important;padding:0 10px!important}
+  #finance-sidebar .sidebar-footer{width:220px;min-width:220px;white-space:nowrap;}
+  #finance-sidebar .sidebar-theme{padding:0 10px!important}
   #finance-sidebar .sidebar-meta{white-space:nowrap}
   .app-shell.nav-collapsed #finance-sidebar.sidebar{width:72px!important;min-width:72px!important;flex-basis:72px!important}
   .app-shell.nav-collapsed #finance-sidebar .brand-copy,.app-shell.nav-collapsed #finance-sidebar .side-label,.app-shell.nav-collapsed #finance-sidebar .sidebar-meta{opacity:0;pointer-events:none}
@@ -88,7 +88,7 @@
   .app-shell #finance-sidebar.sidebar,#finance-sidebar .nav-text,#finance-sidebar #sidebar-collapse-toggle,#finance-sidebar .brand-copy{transition:none!important}
 }
 /* Payment configuration is actionable only while valid CSV drafts lack a due date. */
-#import-view .import-batch-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:10px;min-width:0}
+#import-view .import-batch-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px;min-width:0}
 #import-view #import-payment-settings{white-space:nowrap}
 @media(max-width:630px){#import-view .import-batch-actions{width:100%}#import-view .import-batch-actions>button{flex:1 1 auto}}
 /* Match the same page scroll on tablets and phones; no nested fixed-height queue. */

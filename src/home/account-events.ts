@@ -130,7 +130,7 @@ export function forecastAccounts(source:MonthlySource,today:string,horizonDays=4
   }
   for(const funding of estimatedMizuhoFunding(source.assets as import('../cloud/assets.js').AssetsDocument,source.records,today,until)){
     for(const [accountId,sign] of [['rakuten-bank',-1],['mizuho-bank',1]] as const)
-      push({id:`${funding.id}:${accountId}`,date:funding.date,title:'みずほ銀行へ送金（固定費から推定・未確定）',amount:sign*funding.amount,
+      push({id:`${funding.id}:${accountId}`,date:funding.date,title:'みずほ銀行へ送金（見込み）',amount:sign*funding.amount,
         kind:'transfer',accountId,estimated:true,movementStatus:'estimated',route:'楽天銀行 → みずほ銀行'});
   }
   for(const entry of source.assets.oneTime??[])addMovement(`once:${entry.id}`,entry.date,entry.name,entry.amount,'one-time',entry.fromAccountId,entry.toAccountId,entry.status);

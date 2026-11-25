@@ -1,8 +1,4 @@
 /* Finance v1.4.6 — compact app connection settings and purposeful diagnostics. */
-.settings-view .cloud-advanced-content .cloud-grid{
-  align-items:start;
-  gap:14px;
-}
 .settings-view .cloud-advanced-content .cloud-grid>.cloud-panel{
   height:auto;
   min-height:0;
@@ -85,8 +81,8 @@
 }
 .settings-view .cloud-troubleshooting .cloud-tool-actions{
   display:flex;
-  gap:9px;
-  align-items:center;
+
+
   flex-wrap:wrap;
   margin-top:10px;
 }

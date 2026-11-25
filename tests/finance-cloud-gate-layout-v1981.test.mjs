@@ -53,3 +53,19 @@ test('only the disconnected manager stops stretching; authenticated scroll rules
   assert.match(appCss, /#manage-view #manage-content > \.table-scroll \{[^}]*overflow-y:auto!important;/s);
   assert.doesNotMatch(gateCss, /#manage-view:not\(\.hidden\)\s*\{\s*flex:0 0 auto/);
 });
+
+test('checking takes precedence over locked on every page, then manual unlock returns',async()=>{
+  const {syncFinanceCloudGates}=await import('../dist/src/ui/cloud-gate.js');
+  const node=()=>({dataset:{},classList:{toggle(){}},children:[],textContent:'',append(...items){this.children.push(...items);},prepend(item){this.children.unshift(item);},replaceChildren(...items){this.children=items;},setAttribute(){},addEventListener(_,fn){this.click=fn;},querySelector(){return this.children.find(x=>x.className==='finance-cloud-gate')??null;}});
+  const roots=new Map(pages.map(id=>[id,node()]));const old=globalThis.document;
+  globalThis.document={getElementById:id=>roots.get(id),createElement:node,createTextNode:text=>({textContent:text,children:[]})};
+  const flatten=n=>[n,...n.children.flatMap(flatten)];let unlocks=0;
+  const base={blocked:true,locked:true,notice:{kind:'connected',message:''},onRetry(){},onReauthenticate(){},onUnlock(){unlocks++;},onSettings(){}};
+  try{
+    syncFinanceCloudGates({...base,checking:true});
+    for(const root of roots.values()){const items=flatten(root);assert.ok(items.some(n=>n.textContent==='OneDriveを確認中'));assert.ok(!items.some(n=>n.textContent==='保管庫を解除'));}
+    syncFinanceCloudGates({...base,checking:false});
+    for(const root of roots.values()){const action=flatten(root).find(n=>n.textContent==='保管庫を解除');assert.ok(action);action.click();}
+    assert.equal(unlocks,pages.length);
+  }finally{globalThis.document=old;}
+});

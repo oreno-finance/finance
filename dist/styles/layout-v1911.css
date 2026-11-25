@@ -133,5 +133,4 @@
   background:var(--accent-bg);border-color:var(--accent);box-shadow:0 0 0 2px var(--accent);
 }
 @media(prefers-reduced-motion:reduce){
-  .app-shell.nav-collapsed.nav-peeking #finance-sidebar.sidebar {animation:none!important;clip-path:none!important}
 }
