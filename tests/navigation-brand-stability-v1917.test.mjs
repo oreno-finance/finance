@@ -1,3 +1,4 @@
+import {shippedSheet} from './helpers/css-loading.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -32,6 +33,6 @@ test('配布版のメニューとJavaScriptはソース版に一致する',()=>{
     const source=path==='src/main.js'?'dist/src/main.js':`public/${path}`;
     if(path==='src/main.js'){
       assert.match(read(source),/label\.textContent = collapsed \? ['"]固定表示['"] : ['"]折りたたむ['"]/);
-    } else assert.equal(read(source),read(`dist/${path}`),path);
+    } else assert.equal(read(source),(path.endsWith('.css')?shippedSheet(path.split('/').pop()):read(`dist/${path}`)),path);
   }
 });

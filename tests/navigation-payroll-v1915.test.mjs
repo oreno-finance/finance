@@ -1,3 +1,4 @@
+import {shippedSheet} from './helpers/css-loading.mjs';
 import {styleOrder} from './helpers/css-loading.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -50,5 +51,5 @@ test('Payroll同期状況は件数と最終同期だけ。未同期では0件と
 
 test('公開用HTMLとCSSは編集元と一致する',()=>{
   for(const path of ['index.html','styles/navigation-payroll-v1915.css','styles/ui-v165.css'])
-    assert.equal(src('public/'+path),src('dist/'+path));
+    assert.equal(src('public/'+path),(path.endsWith('.css')?shippedSheet(path.split('/').pop()):src('dist/'+path)));
 });

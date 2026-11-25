@@ -1,3 +1,4 @@
+import {shippedSheet} from './helpers/css-loading.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -113,6 +114,6 @@ test('browser memory settings register and forget actions have complete scoped b
   assert.match(style,/\.cloud-remember-actions #cloud-remember-register\{/);
   assert.match(style,/\.cloud-remember-actions #cloud-remember-forget:hover\{/);
   assert.match(style,/\.cloud-remember-actions button:focus-visible\{/);
-  assert.equal(read('dist/styles/style.css'),style);
+  assert.equal(shippedSheet('style.css'),style);
   assert.equal(read('dist/styles/app.css'),bundled);
 });

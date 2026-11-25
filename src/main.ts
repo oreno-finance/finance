@@ -12,7 +12,7 @@ import { hasVault, unlockVault, readStatements, readOriginal, exportEncryptedBac
 import { verifyLegacyMigration, verifyDownloadedBackup } from './storage/legacy-cleanup.js';
 import { graphClientWithoutRedirect, initCloudSettings, cloudConnectPrompt, activeMicrosoftAccountId, cloudConnectionNotice, recordCloudConnectionFailure, type CloudConnectPrompt } from './cloud/cloud-settings.js';
 import { syncFinanceCloudGates } from './ui/cloud-gate.js';
-import { LiveVault, CloudWriteUncertainError, BrowserKeyGenerationChangedError, type PendingBatchResult } from './cloud/live-vault.js';
+import { LiveVault, CloudWriteUncertainError, CloudEditCancelledError, BrowserKeyGenerationChangedError, type PendingBatchResult } from './cloud/live-vault.js';
 import { GraphError } from './cloud/onedrive-api.js';
 import { readBrowserKey, rememberBrowserKey, forgetBrowserKey, applyBrowserRetentionChoice, isBrowserRemembered, InvalidRememberedBrowserKeyError, isManuallyLocked, setManualLock, clearManualLock, notifyOtherFinanceTabs, CROSS_TAB_LOCK_KEY, type BrowserKeyContext } from './cloud/remembered-browser.js';
 import type { CloudRecord } from './cloud/merge.js';
@@ -126,7 +126,7 @@ function interruptionState():InterruptionSnapshot {
   if(reportsUi?.isBusy())busy.push('月次レポートの処理');
   if(cleanupBusy)busy.push('暗号化データの整理');
   if(liveVault?.isRotating)busy.push('パスフレーズの変更');
-  if(liveVault?.hasPendingYearBatch)busy.push('明細の保存結果の確認');
+  if(liveVault?.hasPendingYearBatch)unsaved.push('結果未確認の明細保存');
   if(cloudRefreshing)busy.push('OneDriveの更新');
   if(cloudStartupRunning&&liveVault?.unlocked)busy.push('OneDriveの接続確認');
   if(pending().length||failedImports.length||$<HTMLTextAreaElement>('paste-input').value.trim())unsaved.push('カード明細');
@@ -246,10 +246,10 @@ function setBadgeState(className: string, text: string): void {
   detailBadge.textContent = text;
 }
 function balanced(s: ParsedStatement): boolean { return (s.rows.length > 0 || isZeroUsage(s)) && s.statedTotal !== null && s.statedTotal === calculatedTotal(s); }
-function issues(s: ParsedStatement): string[] {
+function issues(s: ParsedStatement, duplicates=duplicateMonths(statements)): string[] {
   const errors = importErrors(s, pendingSources.has(s) || originalSaved.has(s));
   const idx = statements.indexOf(s);
-  if (idx >= 0 && duplicateMonths(statements).has(idx)) errors.push('同じカード・請求月が重複しています');
+  if (idx >= 0 && duplicates.has(idx)) errors.push('同じカード・請求月が重複しています');
   return errors;
 }
 /** Expected Rakuten/Vpass card choices are not red errors; saving still requires a valid card. */
@@ -728,7 +728,7 @@ function initCloudActionControls(): void {
   $('import-inspect-batch').addEventListener('click',()=>$('cloud-inspect-batch').click());
   $('cloud-inspect-batch').addEventListener('click',()=>{void (async()=>{
     const vault=liveVault,epoch=lockSequence;
-    if(!vault?.unlocked||!vault.hasPendingYearBatch||batchBusy||filesBusy||revisionBusy)return;
+    if(!vault?.unlocked||!vault.hasPendingYearBatch||batchBusy||filesBusy||revisionBusy||cloudRefreshing)return;
     batchBusy=true;updateCloudStatus();render();
     try{
       const results=await vault.inspectPendingYearBatch();
@@ -742,40 +742,56 @@ function initCloudActionControls(): void {
   })();});
   $('import-resume-batch').addEventListener('click',()=>$('cloud-resume-batch').click());
   $('cloud-resume-batch').addEventListener('click',()=>{void (async()=>{
-    if(!liveVault?.unlocked||!liveVault.hasPendingYearBatch||batchBusy||filesBusy)return;
+    if(!liveVault?.unlocked||!liveVault.hasPendingYearBatch||batchBusy||filesBusy||revisionBusy||cloudRefreshing)return;
     const vault=liveVault,epoch=lockSequence;
     const current=()=>epoch===lockSequence&&liveVault===vault&&vault.unlocked;
     const list=vault.pendingYearBatchEntries();
     const fingerprint=(s:ParsedStatement)=>JSON.stringify(s);
-    if(list.some(item=>statements.some(s=>{
-      const id=savedIds.get(s)??pendingCloudIds.get(s);
-      return id===item.id&&fingerprint(s)!==fingerprint(item.statement);
-    }))){
-      operationResult('編集中の明細があります。変更を確認してから保存してください。','warn');return;
-    }
     batchBusy=true;updateCloudStatus();render();
     showActivity('残りの明細を保存中…','working');
     try {
-      await vault.resumePendingYearBatch();
+      const completed=await vault.resumePendingYearBatch(async results=>{
+        const conflicts=results.filter(item=>item.status==='conflict');
+        const summary=showPendingBatchResults(results);
+        const labels=conflicts.map(item=>`${cardDisplayName(item.statement.cardId)??providerLabel(item.statement.provider)} ${item.statement.billingMonth??'請求月不明'}`);
+        return await requestConfirmation({owner:ordinaryConfirmationOwner,title:'競合した明細を除外して再開しますか？',
+          message:`${summary}\n\n${labels.join('\n')}\n\n競合した明細のこの端末での変更を破棄し、OneDriveの保存済みデータ（削除済みの場合は削除）を優先します。残りの明細は保存・整理を続行します。`,
+          acceptLabel:'競合を除外して再開',cancelLabel:'取込待ちを保持',destructive:true})&&current();
+      });
       if(!current())return;
       const records=vault.records();
-      for(const s of statements){
+      const completedIds=new Set(completed),batchIds=new Set(list.map(item=>item.id));
+      const excluded=list.length-completed.length;
+      // Settle only the recovery plan: discard explicitly excluded conflicts,
+      // preserve unrelated drafts and later edits of successfully saved records.
+      const drafts=statements.filter(s=>{
+        if(!hasUnsavedChanges(s))return false;
         const id=savedIds.get(s)??pendingCloudIds.get(s);
-        if(!id||!list.some(item=>item.id===id))continue;
-        const stored=records.find(r=>r.id===id);
-        if(!stored||fingerprint(stored.statement)!==fingerprint(s))continue;
-        savedIds.set(s,id);savedFingerprints.set(s,statementWorkingFingerprint(s));
-        dirty.delete(s);importStaged.delete(s);pendingSources.delete(s);
-        if(stored.originalId)originalSaved.add(s);
+        if(!id||!batchIds.has(id))return true;
+        if(!completedIds.has(id))return false; // Explicitly accepted OneDrive version.
+        if(list.some(item=>item.id===id&&fingerprint(item.statement)===fingerprint(s)))return false;
+        // A later edit of a successfully recovered draft remains local and dirty.
+        const stored=records.find(record=>record.id===id);
+        if(stored){savedIds.set(s,id);savedFingerprints.set(s,statementWorkingFingerprint(stored.statement));if(stored.originalId)originalSaved.add(s);dirty.add(s);}
+        return true;
+      });
+      const draftIds=new Set(drafts.map(s=>savedIds.get(s)??pendingCloudIds.get(s)).filter(Boolean));
+      statements.splice(0,statements.length,...drafts);
+      for(const record of records){
+        if(draftIds.has(record.id))continue;
+        const s=record.statement;
+        savedIds.set(s,record.id);savedFingerprints.set(s,statementWorkingFingerprint(s));
+        importedSignatures.set(s,statementSignature(s));if(record.originalId)originalSaved.add(s);
+        statements.push(s);
       }
-      if(!pending().length)replaceCloudRecords(records);
+      activeIndex=statements.length?0:-1;
       renderRules();assetsUi?.render();futureUi?.render();cardSettingsUi?.render();
       showBatchDetails([], '');
       const warning=vault.takeMutationWarning();
-      operationResult(`${list.length}件の保存結果を照合し、保存を完了しました。${warning?` ${warning}`:''}`,warning?'warn':'good');
+      operationResult(`${completedIds.size}件の保存を確認しました。${excluded?` 競合${excluded}件はOneDrive側を採用しました。`:''}${warning?` ${warning}`:''}`,warning||excluded?'warn':'good');
     }catch(error){
       if(!current())return;
-      showBatchDetails(list.map(item=>item.statement),'保存結果未確認');
+      if(!(error instanceof CloudEditCancelledError))showBatchDetails(list.map(item=>item.statement),'保存結果未確認');
       operationResult(error instanceof Error?error.message:'保存を再開できませんでした。','warn');
     }finally {batchBusy=false;finishActivity('残りの明細を保存中');updateCloudStatus();render();}
   })();});
@@ -825,9 +841,16 @@ function renderRows(): void {
   }
 }
 
+/** One selection policy for the button and the actual save, including saved-record collisions. */
+function importBatchPlan():{eligible:ParsedStatement[];blocked:ParsedStatement[]} {
+  const duplicates=duplicateMonths(statements);
+  const eligible:ParsedStatement[]=[],blocked:ParsedStatement[]=[];
+  for(const draft of importQueue().filter(hasUnsavedChanges))
+    (issues(draft,duplicates).length?blocked:eligible).push(draft);
+  return {eligible,blocked};
+}
 function updateBatchStatus(): void {
-  const drafts = importQueue().filter(hasUnsavedChanges);
-  const blocked = importQueue().filter(s => issues(s).length > 0);
+  const {eligible,blocked}=importBatchPlan();
   const selectionOnly = blocked.filter(s => cardSelectionPending(s) && displayIssues(s).length === 0);
   const errors = blocked.filter(s => displayIssues(s).length > 0);
   const errorCount = blocked.length + failedImports.length;
@@ -837,26 +860,27 @@ function updateBatchStatus(): void {
   paymentAction.classList.toggle('hidden',missingPaymentCards.length===0);
   const recovery=!!liveVault?.hasPendingYearBatch;
   for(const id of ['import-inspect-batch','import-resume-batch']){
-    const action=$<HTMLButtonElement>(id);action.classList.toggle('hidden',!recovery);action.disabled=batchBusy||filesBusy||revisionBusy;
+    const action=$<HTMLButtonElement>(id);action.classList.toggle('hidden',!recovery);action.disabled=batchBusy||filesBusy||revisionBusy||cloudRefreshing;
   }
-  button.disabled = !drafts.length || errorCount > 0 || batchBusy || filesBusy || revisionBusy || recovery;
+  button.disabled = !eligible.length || batchBusy || filesBusy || revisionBusy || recovery || cloudRefreshing;
   $('clear-all').classList.toggle('hidden', importQueue().length + failedImports.length === 0);
   const duplicateAction=$<HTMLButtonElement>('import-discard-duplicates');
   const redundant=removableDuplicateDrafts().length;
   duplicateAction.classList.toggle('hidden',redundant===0);
   duplicateAction.disabled=batchBusy||filesBusy||revisionBusy||recovery||confirmationPending();
   duplicateAction.textContent=`重複${redundant}件を除外`;
-  button.textContent = batchBusy ? '保存中…' : '保存';
+  button.textContent = batchBusy ? '保存中…' : eligible.length ? `${eligible.length}件を保存` : '保存';
   const collisions=blocked.filter(s=>importCollision(s)!==null).length;
   const otherErrors=errors.filter(s=>!importCollision(s)&&!(s.sourceKind==='csv'&&!s.paymentDate&&issues(s).every(e=>e==='支払日が不明または不正です'))).length+failedImports.length;
-  $('batch-status').textContent = otherErrors
+  const status = otherErrors
     ? `${otherErrors}件に不備があります`
     : missingPaymentCards.length ? `${missingPaymentCards.length}枚のカードの引落日が未設定`
       : collisions ? `${collisions}件の重複・競合${redundant?`（${redundant}件を一括除外可能）`:''}`
       : selectionOnly.length ? `${selectionOnly.length}件のカード選択待ち`
         : errorCount ? `${errorCount}件に不備があります`
-          : drafts.length ? `${drafts.length}件の明細` : '保存対象はありません';
-  $('batch-description').textContent = '';
+          : eligible.length ? `${eligible.length}件の明細` : '保存対象はありません';
+  $('batch-status').textContent = eligible.length&&errorCount ? `${eligible.length}件を保存可能／${errorCount}件は取込待ち` : status;
+  $('batch-description').textContent = eligible.length&&errorCount ? status : '';
 }
 
 /** One adapter supplies the state and actions; every gated page uses the same UI. */
@@ -972,7 +996,7 @@ function updateCloudStatus(message?:string):void {
   if(failure && message) showActivity(message,'bad');
   $('cloud-live-migrate').classList.toggle('hidden',!liveVault);
   for(const id of ['cloud-inspect-batch','cloud-resume-batch']){
-    const action=$<HTMLButtonElement>(id);action.classList.toggle('hidden',!liveVault?.hasPendingYearBatch);action.disabled=batchBusy||filesBusy||revisionBusy;
+    const action=$<HTMLButtonElement>(id);action.classList.toggle('hidden',!liveVault?.hasPendingYearBatch);action.disabled=batchBusy||filesBusy||revisionBusy||cloudRefreshing;
   }
   syncCloudGate();
 }
@@ -2151,12 +2175,11 @@ function showPendingBatchResults(results:readonly PendingBatchResult[]):string{
   return '照合時点：'+Object.entries(labels).map(([status,label])=>`${label} ${counts[status as keyof typeof counts]}件`).join('／');
 }
 async function saveAllPending():Promise<void> {
-  if(batchBusy||filesBusy||revisionBusy||liveVault?.hasPendingYearBatch)return;
+  if(batchBusy||filesBusy||revisionBusy||liveVault?.hasPendingYearBatch||cloudRefreshing)return;
   const epoch=lockSequence;
-  const candidates=importQueue().filter(hasUnsavedChanges);if(!candidates.length)return;
+  let candidates=importBatchPlan().eligible;if(!candidates.length)return;
+  const initialCount=candidates.length;
   let confirmed=false;
-  const invalidCount=importQueue().filter(s=>issues(s).length).length+failedImports.length;
-  if(invalidCount){toast(`不備のある明細が${invalidCount}件あります。修正してから保存してください。`);return;}
   batchBusy=true;updateBatchStatus();
   showBatchDetails([], '');
   operationResult(`${candidates.length}件の明細をOneDriveへ暗号化保存中…`, 'working');
@@ -2164,8 +2187,10 @@ async function saveAllPending():Promise<void> {
     if(!await ensureUnlocked()){if(epoch===lockSequence)operationResult('ロック解除がキャンセルされました。明細は未保存です。','warn');return;}
     if(epoch!==lockSequence)return;
     const vault=liveVault!;
-    const latest=importQueue().filter(hasUnsavedChanges);
-    if(!latest.length)return;
+    // Unlock may reveal saved records that conflict with a previously valid draft.
+    const latest=importBatchPlan().eligible;
+    if(!latest.length){operationResult('保存可能な明細がありません。取込待ちの内容を確認してください。','warn');return;}
+    candidates=latest;
     const fingerprints=latest.map(s=>statementWorkingFingerprint(s));
     const ids=await vault.saveBatch(latest.map(s=>{
       let id=savedIds.get(s)??pendingCloudIds.get(s);
@@ -2187,10 +2212,8 @@ async function saveAllPending():Promise<void> {
     try{await refreshVaultControls();}
     catch{mutationWarning=mutationWarning??'OneDriveへの保存は完了しましたが、画面の更新に失敗しました。最新データを取得してください。';}
     if(epoch!==lockSequence||liveVault!==vault||!vault.unlocked)return;
-    const remaining = latest.filter(s=>importStaged.has(s)).length;
-    const message = remaining
-      ? `${latest.length}件をOneDriveに保存しました。うち${remaining}件に追加の未保存編集があります。`
-      : `${latest.length}件の明細をOneDriveに暗号化保存しました。`;
+    const remaining = importQueue().filter(hasUnsavedChanges).length+failedImports.length;
+    const message = `${latest.length}件の明細をOneDriveに暗号化保存しました。${remaining?` ${remaining}件は取込待ちに残っています。`:''}`;
     operationResult(mutationWarning?`${message} ${mutationWarning}`:message,mutationWarning||remaining?'warn':'good');
   }catch(error){
     const uncertain=error instanceof CloudWriteUncertainError;
@@ -2210,7 +2233,7 @@ async function saveAllPending():Promise<void> {
       }catch{if(epoch!==lockSequence||liveVault!==vault||!vault.unlocked)return;/* Keep unknown results on read failure. */}
     }
     updateCloudStatus();operationResult(resultMessage,uncertain?'warn':'bad');
-  }finally{batchBusy=false;finishActivity('明細を保存中');finishActivity('保存結果を反映中');finishActivity(`${candidates.length}件の明細をOneDriveへ暗号化保存中`);render();}
+  }finally{batchBusy=false;finishActivity('明細を保存中');finishActivity('保存結果を反映中');finishActivity(`${initialCount}件の明細をOneDriveへ暗号化保存中`);render();}
 }
 
 /** Display actual old/new rows before a month is replaced, regardless of import source. */
@@ -2761,11 +2784,18 @@ function init(): void {
   initCloudSettings({
     hasUnsavedChanges:()=>{const state=interruptionState();return !!(state.busy.length||state.unsaved.length);},
     canNavigate:()=>confirmInterruption('認証画面へ移動'),
+    recoveryPending:()=>!!liveVault?.hasPendingYearBatch,
+    runRecoveryAuthentication:async run=>{
+      if(!liveVault?.hasPendingYearBatch||interruptionState().busy.length||currentModal!==null||$<HTMLDialogElement>('legacy-cleanup-dialog').open)
+        throw new Error('実行中の操作が完了してから再認証してください。');
+      cloudRefreshing=true;updateCloudStatus();render();
+      try{await run();}finally{cloudRefreshing=false;updateCloudStatus();render();}
+    },
     confirmationContext,
     onRecoverSaveLock:async approve=>{
       const vault=liveVault,valid=confirmationContext();
       if(!vault?.unlocked)throw new Error('先に保管庫を解除してください。');
-      const busy=()=>interruptionState().busy.filter(item=>item!=='明細の保存結果の確認');
+      const busy=()=>interruptionState().busy;
       if(busy().length)throw new Error('実行中の操作が完了してから復旧してください。');
       const result=await vault.recoverSaveLock(approve,()=>valid()&&!busy().length);
       if(valid()&&result==='released'){

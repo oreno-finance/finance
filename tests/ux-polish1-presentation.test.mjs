@@ -27,8 +27,8 @@ test('表示文言の整理後も保存・差し替え・照合の確認情報�
  assert.match(html,/id="import-revision-accept"[^>]*>差し替える<\/button>/);
  assert.match(html,/差し替えは取込待ちに追加され、保存操作でOneDriveへ反映されます/);
  assert.match(html,/id="import-revision-override-accept"/);
- assert.match(main,/button\.textContent = batchBusy \? '保存中…' : '保存'/);
- assert.match(main,/button\.disabled = !drafts\.length \|\| errorCount > 0/);
+ assert.match(main,/button\.textContent = batchBusy \? '保存中…' : eligible\.length/);
+ assert.match(main,/button\.disabled = !eligible\.length \|\| batchBusy/);
  assert.match(main,/rule\.priority === 100 \? card :/);
  assert.match(main,/filtered\.length > 60 \?/);
  assert.doesNotMatch(read('src/cloud/cloud-settings.ts'),/npm install → npm run build/);

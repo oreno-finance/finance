@@ -1,3 +1,4 @@
+import {shippedSheet} from './helpers/css-loading.mjs';
 import {styleOrder} from './helpers/css-loading.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -50,6 +51,6 @@ test('dark mobile CSV/PDF button and monthly report quality warning are low-glar
 test('new presentation overrides are last and copied into production',()=>{
   assert.ok(styleOrder.indexOf("navigation-polish-v1916.css") < styleOrder.indexOf("mobile-finish-v1922.css"));
   assert.match(html,/href="\.\/styles\/app\.css"/);
-  assert.equal(read('public/styles/mobile-finish-v1922.css'),read('dist/styles/mobile-finish-v1922.css'));
+  assert.equal(read('public/styles/mobile-finish-v1922.css'),shippedSheet('mobile-finish-v1922.css'));
   assert.equal(read('public/index.html'),read('dist/index.html'));
 });

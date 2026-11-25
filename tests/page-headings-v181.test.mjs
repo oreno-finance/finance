@@ -1,3 +1,4 @@
+import {shippedSheet} from './helpers/css-loading.mjs';
 import {styleOrder} from './helpers/css-loading.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,6 +28,6 @@ test('forecast heading avoids a repeated eyebrow', () => {
 
 test('distribution includes the same page layout and new stylesheet', () => {
   assert.equal(dist, html);
-  assert.equal(readFileSync(new URL('../dist/styles/page-headings-v181.css', import.meta.url),'utf8'),css);
+  assert.equal(shippedSheet('page-headings-v181.css'),css);
   assert.match(styleOrder, /styles\/page-headings-v181\.css/);
 });
