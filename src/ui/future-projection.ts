@@ -2,7 +2,7 @@ import {DATA_STATUS,financialStatusClass,formatYen as sharedYen,formatMonth,form
 /** Long-term savings planner reads persisted settings; only comparison parameters are editable. */
 import type { AssetsDocument } from '../cloud/assets.js';
 import type { CloudRecord } from '../cloud/merge.js';
-import {futureProjection, suggestedNisaMonthly, targetMonthForAge, projectionAgeBounds, type FuturePoint} from '../cloud/future-projection.js';
+import {currentSavingMonthly, futureProjection, suggestedNisaMonthly, targetMonthForAge, projectionAgeBounds, type FuturePoint} from '../cloud/future-projection.js';
 import {matchingNisaRows} from '../cloud/asset-projection.js';
 
 export interface FutureProjectionUi {render():void;reset():void}
@@ -243,8 +243,6 @@ export function initFutureProjection(getSource:()=>FutureSource|null):FutureProj
     document.getElementById('settings-nisa-panel')?.scrollIntoView({block:'start',behavior:'smooth'});
   });
   const moneyField=(input:HTMLInputElement)=>input.value.trim()&&Number.isSafeInteger(Number(input.value))&&Number(input.value)>=0?Number(input.value):null;
-  const monthlyEquivalent=(entries:FutureSource['assets']['recurring']):number=>
-    Math.round(entries.reduce((sum,e)=>sum+(e.frequency==='monthly'?e.amount:e.frequency==='weekly'?e.amount*52/12:e.amount/12),0));
   const updateAgeTarget=()=>{
     const calculated=targetMonthForAge(getSource()?.assets.birthMonth??'',Number(age.value));
     if(calculated)target.value=calculated;
@@ -289,20 +287,16 @@ export function initFutureProjection(getSource:()=>FutureSource|null):FutureProj
     find('future-target-label').textContent=bounds?`目標年月：${dateTitle(target.value)}`:'';
     if(!birthMonth){hint.textContent='生年月を設定してください。';return;}
     if(!bounds){hint.textContent='生年月と現在年月から、50年以内に選べる目標年齢がありません。';return;}
-    const cashRules=source.assets.recurring.filter(e=>e.enabled&&e.toAccountId==='cash-savings'&&e.fromAccountId!=='cash-savings'&&(e.kind==='transfer'||e.kind==='income'));
-    const nisaRules=source.assets.recurring.filter(e=>e.enabled&&e.toAccountId==='nisa'&&(e.kind==='income'||e.kind==='transfer'));
-    const hasNisaSchedule=nisaRules.length>0;
+    const todayValue=localToday();
     const ruleFingerprint=JSON.stringify([source.assets.nisaCardRule,source.assets.nisaCardRuleHistory??[]]);
     if(!cachedNisa||cachedNisa.records!==source.records||cachedNisa.rules!==ruleFingerprint)
       cachedNisa={records:source.records,rules:ruleFingerprint,rows:matchingNisaRows(source.assets,source.records)};
     const nisaRows=cachedNisa.rows;
-    const suggested=suggestedNisaMonthly(source.assets,source.records,localToday(),nisaRows);
-    const cashMonthly=monthlyEquivalent(cashRules);
-    const nisaBase=hasNisaSchedule?monthlyEquivalent(nisaRules):suggested.amount;
+    const suggested=suggestedNisaMonthly(source.assets,source.records,todayValue,nisaRows);
+    const {cash:cashMonthly,nisa:nisaBase}=currentSavingMonthly(source.assets,todayValue,suggested.amount);
     if(!scenarioCashEdited)saving.value=String(Math.ceil((cashMonthly+5000)/5000)*5000);
     if(!scenarioNisaEdited)nisaScenarioInput.value=String(Math.ceil((nisaBase+5000)/5000)*5000);
     find('future-scenario-hint').textContent=`現在の月額目安：現金 ${yen(cashMonthly)} · NISA ${yen(nisaBase)}`;
-    const todayValue=localToday();
     const todayPeriod=todayValue.slice(0,7);
     const amount=moneyField(saving),scenarioNisaAmount=moneyField(nisaScenarioInput);
     const changesCash=compare&&cashChoice.checked;
@@ -316,7 +310,7 @@ export function initFutureProjection(getSource:()=>FutureSource|null):FutureProj
     try {
       const report=futureProjection(source.assets,source.records,{
         today:todayValue,targetMonth:target.value,changeMonth,savingsRuleId:null,
-        savingsAmount:amount??0,nisaMonthly:hasNisaSchedule?0:suggested.amount,nisaAnnualReturn:Number(nisaRate.value)/100,
+        savingsAmount:amount??0,nisaMonthly:suggested.amount,nisaAnnualReturn:Number(nisaRate.value)/100,
         cashScenarioMonthly:changesCash?amount:null,
         nisaScenarioMonthly:changesNisa?scenarioNisaAmount:null,
       },nisaRows);

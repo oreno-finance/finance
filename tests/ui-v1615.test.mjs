@@ -9,8 +9,8 @@ test('birth month is editable only in NISA settings and reuses the established c
   assert.match(asset,/birthDirty/);assert.match(future,/source.assets.birthMonth/);
 });
 test('NISA forecast baseline is calculated from statements or recurring schedule, no manual input',()=>{
-  assert.doesNotMatch(html,/future-nisa-monthly/);assert.match(future,/hasNisaSchedule\?monthlyEquivalent\(nisaRules\):suggested.amount/);
-  assert.match(future,/nisaMonthly:hasNisaSchedule\?0:suggested.amount/);
+  assert.doesNotMatch(html,/future-nisa-monthly/);assert.match(future,/currentSavingMonthly\(source.assets,todayValue,suggested.amount\)/);
+  assert.match(future,/nisaMonthly:suggested.amount/);
   assert.match(html,/id="future-scenario-nisa"/);
 });
 test('all HTML placeholders avoid redundant example prefix and lighter palette applies to text fields',()=>{

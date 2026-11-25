@@ -4,7 +4,8 @@ import {recurringForCalculation} from '../fixed-costs/payment-history.js';
  * are *scheduled*, not bank-confirmed. No actual NISA returns are inferred. */
 import { recurringCoveredByOneTime, type AssetsDocument, type RecurringEntry } from './assets.js';
 import { forecastAssets, matchingNisaRows } from './asset-projection.js';
-import { recurringInMonth } from './recurring-schedule.js';
+import { recurringEffectiveAmount, recurringInMonth } from './recurring-schedule.js';
+import { fixedCostState, monthlyEquivalent } from '../fixed-costs/contracts.js';
 import type { CloudRecord } from './merge.js';
 
 export interface FutureOptions {
@@ -50,12 +51,32 @@ function stepMonth(month:string):string {
   const year=Number(month.slice(0,4)),mm=Number(month.slice(5));
   return `${year+(mm===12?1:0)}-${String(mm===12?1:mm+1).padStart(2,'0')}`;
 }
-/** Monthly NISA card purchases are evidence of past contributions only.
- * When no recurring transfer to NISA exists, the latest recent month can be
- * offered as an editable assumption for future card contributions. */
+function savingRulesFor(doc:AssetsDocument,account:'cash-savings'|'nisa'):RecurringEntry[] {
+  return recurringForCalculation(doc).filter(e=>e.enabled&&e.toAccountId===account&&e.fromAccountId!==account&&(e.kind==='income'||e.kind==='transfer'));
+}
+function overlaps(entry:RecurringEntry,start:string,end:string):boolean {
+  return entry.startOn<=end&&(entry.endOn===null||entry.endOn>=start);
+}
+/** A configured bank schedule takes precedence while its validity overlaps a month.
+ * A pause or an annual schedule's non-payment month is not a switch to card funding. */
+function nisaScheduleInMonth(rules:readonly RecurringEntry[],month:string):boolean {
+  const lastDay=new Date(Date.UTC(Number(month.slice(0,4)),Number(month.slice(5)),0)).getUTCDate();
+  return rules.some(e=>overlaps(e,`${month}-01`,`${month}-${lastDay}`));
+}
+/** Current monthly pace uses the effective amount, not the latest saved revision. */
+export function currentSavingMonthly(doc:AssetsDocument,today:string,cardMonthly:number):{cash:number;nisa:number} {
+  const cashRules=savingRulesFor(doc,'cash-savings'),nisaRules=savingRulesFor(doc,'nisa');
+  const monthly=(rules:readonly RecurringEntry[])=>Math.round(rules.reduce((sum,e)=>
+    sum+(fixedCostState({...e,pauses:e.pauses??[]},today)==='active'?monthlyEquivalent({frequency:e.frequency,amount:recurringEffectiveAmount(e,today)}):0),0));
+  return {cash:monthly(cashRules),nisa:nisaRules.some(e=>overlaps(e,today,today))?monthly(nisaRules):cardMonthly};
+}
+/** Historic classification is preserved; only samples in the current active
+ * card-rule period may seed future contributions. */
 export function suggestedNisaMonthly(doc:AssetsDocument,records:readonly CloudRecord[],today:string,
   nisaMatches?:readonly ReturnType<typeof matchingNisaRows>[number][]):{amount:number;source:string} {
-  const matches=(nisaMatches??matchingNisaRows(doc,records)).filter(row=>row.date<=today);
+  if(!doc.nisaCardRule?.enabled)return {amount:0,source:'NISAカード積立が未設定または無効です'};
+  const cutoff=doc.nisaCardRuleHistory?.at(-1)?.effectiveOn;
+  const matches=(nisaMatches??matchingNisaRows(doc,records)).filter(row=>row.date<=today&&(!cutoff||row.date>=cutoff));
   const perMonth=new Map<string,number>();
   for(const row of matches)perMonth.set(row.date.slice(0,7),(perMonth.get(row.date.slice(0,7))??0)+row.amount);
   const last=[...perMonth].sort((a,b)=>b[0].localeCompare(a[0]))[0];
@@ -77,12 +98,12 @@ export function futureProjection(doc:AssetsDocument,records:readonly CloudRecord
     throw Error('将来予測の年月・積立額・利回り設定が不正です。');
   const months=(Number(targetMonth.slice(0,4))-Number(today.slice(0,4)))*12+Number(targetMonth.slice(5))-Number(today.slice(5,7));
   if(months>600)throw Error('将来予測は50年以内にしてください。');
-  const savingRules=doc.recurring.filter(e=>e.enabled && e.toAccountId==='cash-savings' && e.fromAccountId!=='cash-savings' && (e.kind==='income'||e.kind==='transfer'));
+  const savingRules=savingRulesFor(doc,'cash-savings');
   if(savingsRuleId!==null&&!savingRules.some(e=>e.id===savingsRuleId))throw Error('試算対象の貯金ルールが見つかりません。');
-  const hasNisaSchedule=doc.recurring.some(e=>e.enabled&&e.toAccountId==='nisa'&&(e.kind==='income'||e.kind==='transfer'));
-  if(hasNisaSchedule&&nisaMonthly!==0)throw Error('NISAの定期入金が登録されています。カード積立の仮入力を重ねられません。');
+  const nisaRules=savingRulesFor(doc,'nisa');
+  const hasNisaSchedule=nisaRules.some(e=>overlaps(e,today,today));
   const matches=nisaMatches??matchingNisaRows(doc,records);
-  const conflictingNisaSources=hasNisaSchedule&&matches.some(row=>row.date<=today);
+  let conflictingNisaSources=hasNisaSchedule&&nisaMonthly>0;
   const starting=forecastAssets(doc,today,records,[],null,matches);
   // forecastAssets returns null when a confirmed balance snapshot is unavailable.
   // If no snapshot is present, never manufacture a 0-yen starting balance.
@@ -133,8 +154,11 @@ export function futureProjection(doc:AssetsDocument,records:readonly CloudRecord
     // frequency of underlying recurring instructions. No bank transfers occur.
     if(replacingCash&&cashScenario!==null)cashScenario=sum(cashScenario,cashScenarioMonthly);
     if(current>currentPeriod){
-      if(nisa!==null)nisa=Math.round((nisa+(hasNisaSchedule?0:nisaMonthly))*growth);
-      if(nisaScenario!==null)nisaScenario=Math.round((nisaScenario+(replacingNisa?nisaScenarioMonthly:(hasNisaSchedule?0:nisaMonthly)))*growth);
+      const scheduled=nisaScheduleInMonth(nisaRules,current);
+      const cardPrincipal=scheduled?0:nisaMonthly;
+      if(scheduled&&nisaMonthly>0)conflictingNisaSources=true;
+      if(nisa!==null)nisa=Math.round((nisa+cardPrincipal)*growth);
+      if(nisaScenario!==null)nisaScenario=Math.round((nisaScenario+(replacingNisa?nisaScenarioMonthly:cardPrincipal))*growth);
       if((nisa!==null&&!Number.isSafeInteger(nisa))||(nisaScenario!==null&&!Number.isSafeInteger(nisaScenario)))
         throw Error('NISAの将来予測額が大きすぎます。');
     }

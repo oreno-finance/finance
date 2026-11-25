@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {futureProjection,suggestedNisaMonthly,targetMonthForAge} from '../dist/src/cloud/future-projection.js';
+import {currentSavingMonthly,futureProjection,suggestedNisaMonthly,targetMonthForAge} from '../dist/src/cloud/future-projection.js';
 import {canonicalStatementFilename} from '../dist/src/ui/statement-filename.js';
-import {emptyAssets} from '../dist/src/cloud/assets.js';
+import {emptyAssets,withUpdatedNisaCardRule} from '../dist/src/cloud/assets.js';
+import {matchingNisaRows,forecastAssets} from '../dist/src/cloud/asset-projection.js';
 
 const clone=o=>structuredClone(o);
 const now='2026-11-17';
@@ -58,7 +59,9 @@ test('recurring NISA transfers exclude additional inferred card deposits',()=>{
   const r=futureProjection(d,[],{...options,nisaMonthly:0});
   assert.equal(r.hasNisaSchedule,true);
   assert.equal(r.target.nisa,145000);
-  assert.throws(()=>futureProjection(d,[],options),/重ねられません/);
+  const both=futureProjection(d,[],options);
+  assert.equal(both.target.nisa,r.target.nisa);
+  assert.equal(both.conflictingNisaSources,true);
 });
 test('missing confirmed snapshots stay missing, not zero',()=>{
   const d=base();d.snapshots=d.snapshots.filter(v=>v.accountId!=='nisa');
@@ -100,4 +103,73 @@ test('old card samples are not projected forever',()=>{
   const d=base();d.nisaCardRule={cardId:'rakuten-mizuho',merchantContains:'楽天証券',enabled:true};
   const records=[{id:'card-1',statement:{cardId:'rakuten-mizuho',rows:[{id:'row-1',usedOn:'2025-01-20',merchant:'楽天証券',amount:20000}]}}];
   assert.equal(suggestedNisaMonthly(d,records,now).amount,0);
+});
+
+const cardRule={cardId:'rakuten-mizuho',merchantContains:'Synthetic investment',enabled:true};
+const cardSample=(date,amount=20000,id='row-1')=>({id,statement:{cardId:cardRule.cardId,rows:[{id:'sample',usedOn:date,merchant:cardRule.merchantContains,amount}]}});
+const nisaDeposit=(overrides={})=>({...deposit('Synthetic recurring NISA',15000),id:'nisa-transfer-001',toAccountId:'nisa',...overrides});
+
+test('expired bank NISA schedule does not suppress current card contributions or hint',()=>{
+  const d=base();d.nisaCardRule=cardRule;d.recurring.push(nisaDeposit({endOn:'2026-10-31'}));
+  const records=[cardSample('2026-10-20')];
+  const amount=suggestedNisaMonthly(d,records,now).amount;
+  assert.equal(amount,20000);
+  const r=futureProjection(d,records,{...options,nisaMonthly:amount});
+  assert.equal(r.hasNisaSchedule,false);assert.equal(r.conflictingNisaSources,false);
+  assert.equal(r.target.nisa,140000);assert.equal(r.target.nisaScenario,r.target.nisa);
+  assert.deepEqual(currentSavingMonthly(d,now,amount),{cash:10000,nisa:20000});
+});
+test('bank schedule only takes precedence in overlapping months; scenario replaces principal once',()=>{
+  const d=base();d.nisaCardRule=cardRule;d.recurring.push(nisaDeposit({startOn:'2027-01-01',endOn:'2027-02-28'}));
+  const r=futureProjection(d,[],{...options,targetMonth:'2027-03',nisaScenarioMonthly:30000,changeMonth:'2027-02'});
+  assert.deepEqual(r.points.map(p=>p.nisa),[100000,120000,135000,150000,170000]);
+  assert.deepEqual(r.points.map(p=>p.nisaScenario),[100000,120000,135000,165000,195000]);
+  assert.equal(r.conflictingNisaSources,true);
+  assert.equal(currentSavingMonthly(d,now,20000).nisa,20000);
+  assert.equal(currentSavingMonthly(d,'2027-01-01',20000).nisa,15000);
+  assert.equal(currentSavingMonthly(d,'2027-02-28',20000).nisa,15000);
+  assert.equal(currentSavingMonthly(d,'2027-03-01',20000).nisa,20000);
+});
+test('non-payment and paused months of an active bank schedule do not start card deposits',()=>{
+  const d=base();d.recurring.push(nisaDeposit({frequency:'yearly',monthOfYear:1,pauses:[{startOn:'2026-12-01',endOn:'2026-12-31'}]}));
+  const r=futureProjection(d,[],{...options,targetMonth:'2027-02'});
+  assert.deepEqual(r.points.map(p=>p.nisa),[100000,100000,115000,115000]);
+  assert.equal(currentSavingMonthly(d,'2026-12-15',20000).nisa,0);
+  assert.equal(currentSavingMonthly(d,'2027-01-01',20000).nisa,1250);
+});
+test('monthly pace excludes disabled, future, expired and paused entries and uses effective pricing',()=>{
+  const d=base();d.recurring=[
+    {...deposit(),amount:24000,pricing:[{effectiveOn:'2026-01-01',amount:12000},{effectiveOn:'2026-12-01',amount:24000}]},
+    {...deposit(),id:'future',startOn:'2027-01-01'},
+    {...deposit(),id:'ended',endOn:'2026-11-16'},
+    {...deposit(),id:'disabled',enabled:false},
+    {...deposit(),id:'paused',pauses:[{startOn:'2026-11-17',endOn:null}]},
+    nisaDeposit({amount:30000,pricing:[{effectiveOn:'2026-01-01',amount:15000},{effectiveOn:'2026-12-01',amount:30000}]})];
+  assert.deepEqual(currentSavingMonthly(d,now,20000),{cash:12000,nisa:15000});
+  assert.deepEqual(currentSavingMonthly(d,'2026-12-01',20000),{cash:24000,nisa:30000});
+});
+test('disabled or removed card rule preserves historical contributions but stops future inference',()=>{
+  const d=base();d.nisaCardRule=cardRule;
+  const records=[cardSample('2026-11-10')];
+  const history=matchingNisaRows(d,records);assert.equal(history.length,1);
+  for(const rule of [null,{...cardRule,enabled:false}]){
+    const changed=withUpdatedNisaCardRule(d,rule,now);
+    const matched=matchingNisaRows(changed,records);
+    assert.deepEqual(matched,history);
+    assert.equal(forecastAssets(changed,now,records,[],null,matched).nisa.balance,120000);
+    assert.equal(suggestedNisaMonthly(changed,records,now,matched).amount,0);
+    assert.equal(suggestedNisaMonthly(changed,records,'2026-11-18').amount,0);
+    assert.equal(futureProjection(changed,records,{...options,nisaMonthly:suggestedNisaMonthly(changed,records,now,matched).amount},matched).target.nisa,120000);
+  }
+});
+test('changed or re-enabled card rule only infers from its current effective period',()=>{
+  const d=base();d.nisaCardRule=cardRule;
+  const records=[cardSample('2026-11-10'),cardSample('2026-11-18',30000,'row-2')];
+  const removed=withUpdatedNisaCardRule(d,null,'2026-11-12');
+  const enabled=withUpdatedNisaCardRule(removed,cardRule,'2026-11-17');
+  assert.equal(suggestedNisaMonthly(enabled,records,'2026-11-17').amount,0);
+  const matches=matchingNisaRows(enabled,records);assert.equal(matches.length,2);
+  assert.equal(suggestedNisaMonthly(enabled,records,'2026-11-18',matches).amount,30000);
+  const other=withUpdatedNisaCardRule(d,{...cardRule,merchantContains:'Other investment'},now);
+  assert.equal(suggestedNisaMonthly(other,records,'2026-11-18').amount,0);
 });
