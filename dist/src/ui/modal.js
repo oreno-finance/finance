@@ -49,7 +49,7 @@ export function requestConfirmation(options) {
         return Promise.resolve(false);
     return new Promise(resolve => {
         const dialog = document.createElement('dialog');
-        dialog.className = 'finance-confirm-dialog';
+        dialog.className = 'finance-confirm-dialog finance-modal';
         dialog.setAttribute('aria-label', options.title);
         dialog.setAttribute('role', 'alertdialog');
         const title = document.createElement('h2');

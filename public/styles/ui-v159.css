@@ -48,15 +48,6 @@
 /* An income entry has no withdrawal source or category, so fill the row with two inputs. */
 .assets-recurring-grid .recurring-account-row:has(> .rules-field.hidden[for="assets-recurring-from"]){grid-template-columns:repeat(2,minmax(0,1fr))!important}
 
-/* All modal close crosses have the same unfussy appearance. */
-#assets-once-close,#categories-dialog-close,#recent-merchants-close{
-  width:38px!important;height:38px!important;min-width:38px!important;min-height:38px!important;
-  display:grid!important;place-items:center!important;align-items:center!important;justify-content:center!important;
-  border:none!important;outline-offset:2px;border-radius:8px!important;box-shadow:none!important;
-  background:transparent!important;color:var(--muted)!important;font-size:23px!important;line-height:1!important;
-  padding:0!important;margin:0!important;flex:0 0 38px!important;
-}
-#assets-once-close:hover,#categories-dialog-close:hover,#recent-merchants-close:hover{color:var(--ink)!important;background:transparent!important}
 html.assets-once-page-locked,html.assets-once-page-locked body{overflow:hidden!important;overscroll-behavior:none!important}
 #assets-once-dialog{overscroll-behavior:contain}
 

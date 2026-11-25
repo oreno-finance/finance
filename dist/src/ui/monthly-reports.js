@@ -10,7 +10,19 @@ import { pointBenefitsSection, archivedPointCoverage } from './point-benefits.js
 const today = localMonth;
 const yen = (value) => sharedYen(value, 0, DATA_STATUS.missing);
 const month = formatMonth;
-const metricValue = (label, value) => label === '収支' ? sharedYen(value, 0, DATA_STATUS.unavailable) : yen(value);
+const metricValue = (label, value, snapshot) => label === '収支' ? sharedYen(value, 0, DATA_STATUS.unavailable) : label === '支出' && snapshot.cardOutflow === null ? DATA_STATUS.unavailable : yen(value);
+function reportMetrics(snapshot) {
+    const metrics = el('div', 'reports-metrics');
+    for (const [label, value] of [['収入', snapshot.income], ['支出', snapshot.expense], ['収支', snapshot.balance]]) {
+        const tone = label === '収支' && value !== null ? (value < 0 ? ' cashflow-negative' : ' cashflow-positive') : '';
+        const item = el('div', `reports-metric${tone}`), text = metricValue(label, value, snapshot);
+        item.append(el('span', '', label), el('strong', financialStatusClass(text), text));
+        if (label === '支出' && snapshot.cardOutflow === null && value !== null)
+            item.append(el('small', 'reports-muted', `判明分 ${yen(value)}`));
+        metrics.append(item);
+    }
+    return metrics;
+}
 function el(tag, cls = '', content) {
     const node = document.createElement(tag);
     node.className = cls;
@@ -35,14 +47,8 @@ function row(parent, label, value) {
     parent.append(root);
 }
 function renderSnapshot(root, snapshot, showMetrics = true) {
-    const metrics = el('div', 'reports-metrics');
-    for (const [label, value] of [['収入', snapshot.income], ['支出', snapshot.expense], ['収支', snapshot.balance]]) {
-        const item = el('div', 'reports-metric');
-        item.append(el('span', '', label), el('strong', financialStatusClass(metricValue(label, value)), metricValue(label, value)));
-        metrics.append(item);
-    }
     if (showMetrics)
-        root.append(metrics);
+        root.append(reportMetrics(snapshot));
     if (showMetrics && snapshot.quality.length) {
         const note = el('p', 'reports-quality', snapshot.quality.join(' · '));
         root.append(note);
@@ -379,13 +385,7 @@ export function initMonthlyReports(deps) {
             if (chosenRevision)
                 heading.append(button('最新版へ戻る', () => { chosenRevision = null; render(); }));
             container.append(heading);
-            const metrics = el('div', 'reports-metrics');
-            for (const [label, value] of [['収入', snapshot.income], ['支出', snapshot.expense], ['収支', snapshot.balance]]) {
-                const item = el('div', 'reports-metric');
-                item.append(el('span', '', label), el('strong', financialStatusClass(metricValue(label, value)), metricValue(label, value)));
-                metrics.append(item);
-            }
-            container.append(metrics);
+            container.append(reportMetrics(snapshot));
             if (snapshot.quality.length)
                 container.append(el('p', 'reports-quality', snapshot.quality.join(' · ')));
             if (chosenRevision && revision)

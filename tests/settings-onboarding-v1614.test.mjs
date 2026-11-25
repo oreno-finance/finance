@@ -21,7 +21,7 @@ test('startup sign-in invitation is a dismissible native dialog with two clear a
   assert.match(main,/dialog\.showModal\(\)/);
   assert.match(main,/cloudConnectDismissed=true;/);
   assert.match(main,/cloud-connect-later'\)\.addEventListener\('click'/);
-  assert.match(main,/connectionDialog\.addEventListener\('cancel'/);
+  assert.match(main,/bindModalDismiss\(connectionDialog,dismissConnection\)/);
 });
 
 test('connect invitation follows account status, not a generic network error',()=>{

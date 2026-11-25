@@ -16,7 +16,7 @@ interface Deps {source():MonthlySource|null;vault():LiveVault|null;onSaved():voi
 type Tab='registered'|'candidate'|'ended'|'ignored';
 type Item={kind:'card'|'cash'|'bank';id:string;name:string;amount:number;currentAmount?:number;frequency:CostFrequency;payment:string;
   status:'active'|'paused'|'ended'|'scheduled';priceKind:'fixed'|'variable';contract?:FixedCostEntry;bank?:RecurringEntry;
-  decision?:CardRecurringDecision;decisionKey?:string;candidate?:SubscriptionCandidate;lastAmount?:number;lastMonth?:string};
+  decision?:CardRecurringDecision;decisionKey?:string;candidate?:SubscriptionCandidate;lastAmount?:number;lastMonth?:string;lastDifference?:number};
 const nextPayment=(item:Item,day:string,source?:MonthlySource|null):string=>{
   const contract=item.contract??item.bank;
   const next=contract?nextContractPayment(contract,day):null;
@@ -29,7 +29,7 @@ const nextPayment=(item:Item,day:string,source?:MonthlySource|null):string=>{
   return `${formatDate(next)}${changes.length?`
 変更予定：${changes.join(' · ')}`:''}`;
 };
-const priceLabel=(item:Item)=>item.decision&&!item.contract?'登録済みの推定額':item.status==='scheduled'?'開始時の契約額':item.priceKind==='variable'?'登録予算':'現在の契約額';
+const priceLabel=(item:Item)=>item.decision&&!item.contract?'登録済みの推定額':item.priceKind==='variable'?(item.status==='scheduled'?'開始時の登録予算':'登録予算'):item.status==='scheduled'?'開始時の契約額':'現在の契約額';
 const yen=(value:number|null)=>sharedYen(value,0,'—');
 const localDate=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 function el<K extends keyof HTMLElementTagNameMap>(name:K,cls='',text?:string):HTMLElementTagNameMap[K]{const node=document.createElement(name);if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node;}
@@ -51,7 +51,7 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
   let futurePaymentDate:string|null=null,futurePriceDate:string|null=null;
   const confirmationOwner={};let epoch=0;
   const confirming=()=>confirmationPending(confirmationOwner);
-  const dialog=el('dialog','fixed-cost-dialog');dialog.setAttribute('aria-label','固定支出の登録と編集');
+  const dialog=el('dialog','fixed-cost-dialog finance-modal');dialog.setAttribute('aria-label','固定支出の登録と編集');
   const form=el('form','fixed-cost-form');form.noValidate=true;
   const title=el('h2','','固定支出を追加');const header=modalHeader(title,()=>{void closeDialog();});form.append(header);
   const field=(name:string,label:string,kind:'text'|'number'|'date'|'select'|'textarea',options?:readonly [string,string][]):HTMLElement=>{
@@ -91,7 +91,7 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
   const equivalent=el('p','fixed-cost-equivalent');form.append(equivalent);
   const error=el('p','fixed-cost-form-error');error.setAttribute('role','alert');form.append(error);
   const histories=el('div','fixed-cost-histories');form.append(histories);
-  const buttons=el('div','fixed-cost-form-actions');
+  const buttons=el('div','fixed-cost-form-actions finance-modal-actions');
   const remove=btn('削除',()=>{void deleteCurrent();},'danger-action');
   const clear=btn('変更をクリア',()=>{void clearDraft();});
   const cancel=btn('キャンセル',()=>closeDialog());const save=el('button','save-action','保存');save.type='submit';buttons.append(remove,clear,cancel,save);form.append(buttons);
@@ -104,6 +104,7 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
     const origin=item.contract??item.bank,source=deps.source(),today=localDate();
     const section=(label:string)=>{const d=el('details','fixed-cost-history');d.append(el('summary','',label));histories.append(d);return d;};
     const line=(parent:HTMLElement,left:string,right:string,cls='')=>{const row=el('div',`fixed-cost-detail-line ${cls}`);row.append(el('span','',left),el('strong','',right));parent.append(row);};
+    if(item.lastAmount!==undefined)line(histories,'最新の請求実績',`${yen(item.lastAmount)}（${formatMonth(item.lastMonth,'年月不明')}）`);
     if(origin){
       const prices=origin.pricing??[];
       if(prices.length>1){const d=section('料金変更履歴');for(const p of [...prices].reverse())line(d,`${formatDate(p.effectiveOn)}${p.effectiveOn>today?'（適用予定）':''}`,yen(p.amount));}
@@ -242,6 +243,12 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
     initialAmount=get('amount');initialTerms=existing?readTerms():null;
     updateConditional();resetDirty();renderHistories(item);dialog.showModal();updateConditional();input('name').focus();
   }
+  function latestEvidence(origin:FixedCostEntry|RecurringEntry,observations:ReturnType<ReturnType<typeof contractCardEvidence>>){
+    const last=latestContractCardCharge(observations);
+    const observation=last?observations.find(o=>o.period===last.month):undefined;
+    // Legacy or incomplete history cannot prove the amount on the charge date.
+    return {lastAmount:last?.amount,lastMonth:last?.month,lastDifference:observation&&last&&origin.pricing?.length&&origin.pricing[0]!.effectiveOn<=observation.usedOn?last.amount-priceOnDay(origin.pricing??[],observation.usedOn,origin.amount):undefined};
+  }
   function itemsFromSource(source:MonthlySource,candidates=detectCardSubscriptions(source),latest=latestRegisteredCardCharges(source)):Item[] {
     const today=localDate();const contracts=source.assets.fixedCosts??[];
     const list:Item[]=[];
@@ -251,18 +258,18 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
       if(bank.kind!=='expense')continue;
       const status=bank.endOn!==null&&bank.endOn<today?'ended':bank.startOn>today?'scheduled':!bank.enabled||
         (bank.pauses??[]).some(p=>today>=p.startOn&&(p.endOn===null||today<=p.endOn))?'paused':'active';
-      const terms=paymentTermsOn(bank,today),last=latestContractCardCharge(historyEvidence(bank));
+      const terms=paymentTermsOn(bank,today),last=latestEvidence(bank,historyEvidence(bank));
       list.push({kind:terms.payment,id:bank.id,name:bank.name,amount:bank.amount,currentAmount:priceOnDay(bank.pricing??[],today,bank.amount),frequency:terms.frequency,payment:paymentLabel(terms,source),
-        status,priceKind:bank.priceKind??'fixed',bank,lastAmount:last?.amount,lastMonth:last?.month});
+        status,priceKind:bank.priceKind??'fixed',bank,...last});
     }
     const decisions=source.assets.cardRecurringDecisions??{};
     for(const contract of contracts){
       const terms=paymentTermsOn(contract,today);
       const found=terms.merchantKey?candidates.find(c=>c.key===terms.merchantKey):undefined;
-      const last=latestContractCardCharge(historyEvidence(contract));
+      const last=latestEvidence(contract,historyEvidence(contract));
       list.push({kind:terms.payment,id:contract.id,name:contract.name,amount:contract.amount,currentAmount:priceOnDay(contract.pricing,today,contract.amount),frequency:terms.frequency,
         payment:paymentLabel(terms,source),
-        status:fixedCostState(contract,today),priceKind:contract.priceKind,contract,candidate:found,lastAmount:last?.amount,lastMonth:last?.month});
+        status:fixedCostState(contract,today),priceKind:contract.priceKind,contract,candidate:found,...last});
     }
     for(const [key,decision] of Object.entries(decisions)){
       if(decision.state!=='registered'||registeredKeys.has(key)||candidates.some(c=>matchedCardRecurringDecision(decisions,c)===key&&registeredKeys.has(c.key)))continue;
@@ -367,7 +374,7 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
     const items=itemsFromSource(source,candidates,latest),today=localDate(),active=items.filter(x=>x.status!=='ended');
     const total=active.filter(x=>x.status==='active').reduce((sum,x)=>sum+monthlyEquivalent({...x,amount:x.currentAmount??x.amount}),0);
     const metrics=el('div','fixed-cost-metrics');
-    for(const [name,value] of [['月額換算',yen(total)],['年間換算',yen(total*12)],['登録件数',`${active.length}件`]] as const){
+    for(const [name,value] of [['月額換算',yen(total)],['年間換算',yen(total*12)]] as const){
       const box=el('div','fixed-cost-metric');box.append(el('span','',name),el('strong','',value));metrics.append(box);
     }root!.append(metrics);
     const toolbar=el('div','fixed-cost-toolbar');const tabs=el('div','subscriptions-tabs');
@@ -400,17 +407,30 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
       const selected=items.filter(x=>tab==='ended'?x.status==='ended':x.status!=='ended');
       for(const item of selected){
         const card=el('article','panel fixed-cost-item fixed-cost-registered-item');
-        const info=el('div','fixed-cost-item-info');info.append(el('strong','',item.name),el('small','',`${freqName(item.frequency)} · ${item.payment} · ${stateName(item.status)}`));
-        const price=el('div','fixed-cost-item-price');price.append(el('strong','',`${yen(item.currentAmount??item.amount)}／${item.frequency==='yearly'?'年':item.frequency==='weekly'?'週':'月'}`),el('small','',priceLabel(item)));
-        info.append(el('small','fixed-cost-next',`次回支払予定：${nextPayment(item,today,source)}`),el('small','',`月額換算：${yen(monthlyEquivalent({...item,amount:item.currentAmount??item.amount}))}`));
+        const origin=item.contract??item.bank;
+        const terms=origin?paymentTermsOn(origin,today):null;
+        const info=el('div','fixed-cost-item-info');info.append(el('strong','',item.name),el('small','',[item.payment,terms?scheduleLabel(terms):freqName(item.frequency),item.status==='active'?'':stateName(item.status)].filter(Boolean).join(' · ')));
+        const price=el('div','fixed-cost-item-price');price.append(el('strong','',`${yen(item.currentAmount??item.amount)}／${item.frequency==='yearly'?'年':item.frequency==='weekly'?'週':'月'}`));
+        if(item.priceKind==='variable'||item.status==='scheduled'||!origin)price.append(el('small','',priceLabel(item)));
+        if(item.frequency!=='monthly')info.append(el('small','',`月額換算：${yen(monthlyEquivalent({...item,amount:item.currentAmount??item.amount}))}`));
+        if(origin&&item.status!=='ended'){
+          const next=nextPayment(item,today,source);
+          if(next!=='予定なし'&&(item.frequency!=='monthly'||item.status!=='active'||next.includes('変更予定：')))info.append(el('small','fixed-cost-next',`次回支払予定：${next}`));
+          const nextDay=nextContractPayment(origin,today);
+          // Changes beyond the next payment still matter, without repeating the next-payment notice.
+          const futurePrice=origin.pricing?.find(p=>p.effectiveOn>today&&(!nextDay||p.effectiveOn>nextDay));
+          const futureTerms=contractPaymentHistory(origin).find(t=>t.effectiveOn>today&&(!nextDay||t.effectiveOn>nextDay));
+          if(futurePrice)info.append(el('small','fixed-cost-next',`変更予定：${yen(futurePrice.amount)}（${formatDate(futurePrice.effectiveOn)}）`));
+          if(futureTerms)info.append(el('small','fixed-cost-next',`支払条件変更：${paymentLabel(futureTerms,source)} · ${scheduleLabel(futureTerms)}（${formatDate(futureTerms.effectiveOn)}）`));
+          if(origin.endOn&&origin.endOn>=today)info.append(el('small','',`終了予定：${formatDate(origin.endOn)}`));
+          const pause=origin.pauses?.find(p=>p.startOn>today);
+          if(pause)info.append(el('small','',`停止予定：${formatDate(pause.startOn)}`));
+        }
         const actions=el('div','fixed-cost-item-actions');
         const edit=btn('',()=>openDetails(item),'fixed-cost-edit-icon');
         const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('width','18');svg.setAttribute('height','18');svg.setAttribute('fill','none');svg.setAttribute('stroke','currentColor');svg.setAttribute('stroke-width','1.8');svg.setAttribute('stroke-linecap','round');svg.setAttribute('stroke-linejoin','round');svg.setAttribute('aria-hidden','true');
         const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d','M13.5 6.5l4 4M4 20l4.5-1 12-12a2.8 2.8 0 0 0-4-4l-12 12L4 20z');svg.append(path);edit.append(svg);edit.setAttribute('aria-label','詳細・編集');edit.title='詳細・編集';actions.append(edit);
-        if(item.lastAmount!==undefined){
-          const delta=item.lastAmount-(item.currentAmount??item.amount);
-          info.append(el('small','',`最新の請求実績：${yen(item.lastAmount)}（${formatMonth(item.lastMonth,'年月不明')}）${delta!==0?` · 現在の契約額との差額 ${delta>0?'+':''}${yen(delta)}`:''}`));
-        }
+        if(item.lastDifference!==undefined&&item.lastDifference!==0)info.append(el('small','',`${item.priceKind==='variable'?'請求時の予算':'請求時の契約額'}との差額 ${item.lastDifference>0?'+':''}${yen(item.lastDifference)}`));
         if(item.decision&&!item.contract)info.append(el('small','','旧形式の簡易登録です。詳細・編集から正式な契約情報を保存してください。'));
         if(item.bank&&!item.bank.enabled)info.append(el('small','',`旧形式で停止中の予定です。再開は契約状態の変更から行えます。`));
         card.append(info,price,actions);list.append(card);

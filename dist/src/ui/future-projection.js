@@ -368,7 +368,8 @@ export function initFutureProjection(getSource) {
         const amount = moneyField(saving), scenarioNisaAmount = moneyField(nisaScenarioInput);
         const changesCash = compare && cashChoice.checked;
         const changesNisa = compare && nisaChoice.checked;
-        if (!target.value || target.value < todayPeriod || !from.value || from.value < todayPeriod ||
+        const changeMonth = compare ? from.value : monthAfter(todayPeriod);
+        if (!target.value || target.value < todayPeriod || !changeMonth || changeMonth < todayPeriod ||
             !Number.isFinite(Number(nisaRate.value)) ||
             (changesCash && amount === null) || (changesNisa && scenarioNisaAmount === null)) {
             hint.textContent = '年月と積立額を確認してください。';
@@ -376,7 +377,7 @@ export function initFutureProjection(getSource) {
         }
         try {
             const report = futureProjection(source.assets, source.records, {
-                today: todayValue, targetMonth: target.value, changeMonth: from.value, savingsRuleId: null,
+                today: todayValue, targetMonth: target.value, changeMonth, savingsRuleId: null,
                 savingsAmount: amount ?? 0, nisaMonthly: hasNisaSchedule ? 0 : suggested.amount, nisaAnnualReturn: Number(nisaRate.value) / 100,
                 cashScenarioMonthly: changesCash ? amount : null,
                 nisaScenarioMonthly: changesNisa ? scenarioNisaAmount : null,

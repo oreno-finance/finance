@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {forecastBankBalances,prepareBankForecast} from '../dist/src/cloud/salary-projection.js';
 import {homeOverview} from '../dist/src/home/overview.js';
 import {forecastAccounts} from '../dist/src/home/account-events.js';
 import {homeActions,statementReviewDate} from '../dist/src/home/action-items.js';
@@ -150,4 +151,26 @@ test('10th-payment SMBC review guidance handles year rollover',()=>{
   assert.equal(statementReviewDate('smbc-nl','2027-01-10'),'2026-12-26');
   assert.equal(statementReviewDate('goldpoint','2027-01-12'),'2027-01-11');
   assert.equal(statementReviewDate('smbc-nl','2027-01-27'),'2027-01-11');
+});
+
+
+test('home balance cards share current and next-month projections, with NISA, zero and unavailable payroll',()=>{
+  const s=source();s.assets.snapshots=[snapshot('r','rakuten-bank',100000),snapshot('m','mizuho-bank',0),snapshot('n','nisa',20000)];
+  s.assets.payrollDepositAccount='rakuten-bank';s.payroll.ready=false;
+  const work=prepareBankForecast(s.records,s.assets);
+  const now=forecastBankBalances(s.assets,today,s.records,[],'rakuten-bank',today,work).accounts;
+  const next=forecastBankBalances(s.assets,'2026-12-31',s.records,[],'rakuten-bank',today,work).accounts;
+  const h=homeOverview(s,today);
+  for(const a of h.accounts){assert.equal(a.current,now[a.id].balance);assert.equal(a.predicted,next[a.id].balance);}
+  assert.equal(h.accounts.find(a=>a.id==='mizuho-bank').current,0);
+  assert.equal(h.accounts.find(a=>a.id==='cash-savings').current,null);
+  assert.equal(h.accounts.find(a=>a.id==='nisa').current,20000);
+});
+test('movement identity pairs only the original transfer, including a single NISA-side event',()=>{
+  const s=source([]);
+  s.assets.oneTime=['a','b','c'].map((id,i)=>({id,date:'2026-11-20',name:'transfer',amount:5000,kind:'transfer',status:'planned',fromAccountId:'rakuten-bank',toAccountId:i===2?'nisa':'mizuho-bank'}));
+  const h=forecastAccounts(s,today);const transfers=h.upcomingMovements.filter(x=>x.transferId);
+  assert.equal(transfers.length,5);
+  assert.deepEqual([...new Set(transfers.map(x=>x.transferId))],['once:a','once:b','once:c']);
+  assert.equal(transfers.filter(x=>x.transferId==='once:a').reduce((v,x)=>v+x.amount,0),0);
 });

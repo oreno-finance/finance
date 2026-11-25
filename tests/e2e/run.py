@@ -35,10 +35,16 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
 
+class FixtureServer(http.server.ThreadingHTTPServer):
+    # Python 3.9 defaults to a backlog of five connections. Chromium loads
+    # module graphs in parallel; avoid refusing connections during bursts.
+    request_queue_size = 128
+
+
 class FinanceBrowserTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), QuietHandler)
+        cls.server = FixtureServer(('127.0.0.1', 0), QuietHandler)
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
         cls.base = f'http://127.0.0.1:{cls.server.server_port}'
@@ -64,6 +70,16 @@ class FinanceBrowserTests(unittest.TestCase):
         page = context.new_page()
         errors = []
         page.on('pageerror', lambda exc: errors.append(str(exc)))
+        # Dynamic import errors name only the entry module. Report the actual
+        # failed fixture request, including transitive dependencies, without retry.
+        def report_failure(request):
+            if request.url.startswith(self.base + '/'):
+                print(f'[E2E HTTP] {urlsplit(request.url).path}: {request.failure}', flush=True)
+        def report_response(response):
+            if response.url.startswith(self.base + '/') and response.status >= 400:
+                print(f'[E2E HTTP] {urlsplit(response.url).path}: HTTP {response.status}', flush=True)
+        page.on('requestfailed', report_failure)
+        page.on('response', report_response)
         page.goto(self.base + '/tests/e2e/finance-fixture.html')
         return page, context, errors
 
@@ -195,14 +211,44 @@ window.financeImportTest={
 
     def test_activity_history_retains_errors_and_clears_on_lock(self):
         html=self.offline_document()
-        for width,mobile in ((1100,False),(390,True)):
+        for width,mobile in ((1100,False),(390,True),(320,True)):
             with self.subTest(width=width):
-                context=self.browser.new_context(viewport={'width':width,'height':760},is_mobile=mobile,has_touch=mobile)
+                context=self.browser.new_context(viewport={'width':width,'height':760},is_mobile=mobile,has_touch=mobile,reduced_motion='reduce')
                 try:
                     page=context.new_page();page.route('**/*',lambda route:route.abort());page.set_content(html)
                     page.evaluate('''async()=>{
+                      document.documentElement.classList.remove('finance-nav-boot-collapsed');
+                      document.getElementById('finance-sidebar').classList.add('mobile-open');
+                      document.getElementById('mobile-nav-panel').inert=false;
+                      (await import('finance-fixture/ui/activity-feedback.js')).initActivityHistory();
+                    }''')
+                    opener=page.locator('#activity-history-open')
+                    badge=page.locator('#activity-history-count')
+                    for theme in ('light','dark'):
+                        page.evaluate('(t)=>document.documentElement.dataset.theme=t',theme)
+                        for collapsed in ((False,True) if not mobile else (False,)):
+                            page.evaluate("(c)=>document.querySelector('.app-shell').classList.toggle('nav-collapsed',c)",collapsed)
+                            self.assertFalse(badge.is_visible())
+                            def geometry():
+                                return opener.evaluate('''b=>{const r=b.getBoundingClientRect(),v=b.querySelector('svg').getBoundingClientRect(),s=getComputedStyle(b);return {x:r.x,w:r.width,h:r.height,dx:v.x-r.x,dy:v.y-r.y,sw:v.width,sh:v.height,border:s.borderColor,radius:s.borderRadius}}''')
+                            before=geometry()
+                            self.assertEqual(before['w'],before['h'])
+                            self.assertAlmostEqual(before['dx']*2+before['sw'],before['w'],delta=1)
+                            self.assertAlmostEqual(before['dy']*2+before['sh'],before['h'],delta=1)
+                            self.assertEqual(before['radius'],'10px')
+                            if not mobile:
+                                other=page.locator('#desktop-theme-toggle').evaluate('''b=>{const r=b.getBoundingClientRect(),s=getComputedStyle(b);return {x:r.x,w:r.width,h:r.height,border:s.borderColor,radius:s.borderRadius}}''')
+                                self.assertEqual({k:before[k] for k in other},other)
+                            for count in ('1','99','200'):
+                                badge.evaluate('(b,n)=>b.textContent=n',count)
+                                self.assertTrue(badge.is_visible())
+                                self.assertEqual(geometry(),before)
+                                self.assertTrue(badge.evaluate("b=>{const r=b.getBoundingClientRect(),s=document.getElementById('finance-sidebar').getBoundingClientRect();return r.left>=s.left&&r.right<=s.right}"))
+                            badge.evaluate("b=>b.textContent=''")
+                    page.evaluate("()=>document.querySelector('.app-shell').classList.remove('nav-collapsed')")
+                    page.evaluate('''async()=>{
                       const activity=await import('finance-fixture/ui/activity-feedback.js');
-                      activity.initActivityHistory();activity.showActivity('架空の警告','warn');activity.showActivity('架空のエラー','bad');
+                      activity.showActivity('架空の警告','warn');activity.showActivity('架空のエラー','bad');
                       document.getElementById('toast').querySelector('button').click();
                       activity.showActivity('架空の保存完了','good');
                       document.getElementById('activity-history-open').click();
@@ -214,7 +260,14 @@ window.financeImportTest={
                     self.assertAlmostEqual(bounds['y']+bounds['height']/2,viewport['height']/2,delta=2)
                     self.assertEqual(page.locator('#activity-history-list .activity-history-entry').count(),3)
                     self.assertIn('架空のエラー',page.locator('#activity-history-list').inner_text())
-                    page.locator('#activity-history-read').click()
+                    mark=page.locator('#activity-history-read')
+                    self.assertTrue(mark.evaluate('''b=>{const s=getComputedStyle(b),r=b.getBoundingClientRect(),p=b.parentElement.getBoundingClientRect();return s.fontSize==='12px'&&s.borderTopWidth==='0px'&&s.backgroundColor==='rgba(0, 0, 0, 0)'&&Math.abs(r.right-p.right)<1}'''))
+                    close=page.locator('#activity-history-close')
+                    self.assertEqual(close.inner_text(),'×')
+                    close.click();self.assertFalse(page.locator('#activity-history-dialog').is_visible())
+                    opener.click();page.keyboard.press('Escape');self.assertFalse(page.locator('#activity-history-dialog').is_visible())
+                    opener.click();mark.click()
+                    self.assertTrue(mark.is_disabled())
                     self.assertEqual(page.locator('#activity-history-count').inner_text(),'')
                     page.evaluate('''async()=>{(await import('finance-fixture/ui/activity-feedback.js')).clearActivity()}''')
                     self.assertFalse(page.locator('#activity-history-dialog').is_visible())
@@ -308,8 +361,8 @@ window.financeImportTest={
                           const $=id=>document.getElementById(id), cs=el=>getComputedStyle(el);
                           const actions=['batch-import','manage-save','manage-delete','cloud-login','assets-recurring-save','categories-dialog-save','import-revision-accept'].map(id=>({id,font:cs($(id)).fontSize,min:cs($(id)).minHeight}));
                           $('assets-page').classList.remove('hidden');$('assets-workspace').classList.remove('hidden');
-                          const closeIds=['import-add-close','import-revision-close','categories-dialog-close','recent-merchants-close','assets-once-close'];
-                          const closes=closeIds.map(id=>{const el=$(id),dialog=el.closest('dialog');dialog.showModal();const r=el.getBoundingClientRect(),c=cs(el);const result={id,w:r.width,h:r.height,font:c.fontSize,visible:r.width>0&&r.right<=document.documentElement.clientWidth+1};dialog.close();return result;});
+                          const closeIds=['import-add-close','import-revision-close','categories-dialog-close','recent-merchants-close','assets-once-close','legacy-cleanup-close','cloud-connect-close','vault-close','activity-history-close'];
+                          const closes=closeIds.map(id=>{const el=$(id),dialog=el.closest('dialog');dialog.showModal();const r=el.getBoundingClientRect(),c=cs(el);const d=cs(dialog),dr=dialog.getBoundingClientRect();const result={id,w:r.width,h:r.height,font:c.fontSize,visible:r.width>0&&r.right<=document.documentElement.clientWidth+1,common:dialog.classList.contains('finance-modal'),radius:d.borderRadius,backdrop:getComputedStyle(dialog,'::backdrop').backgroundColor,inside:dr.left>=0&&dr.right<=innerWidth+1&&dr.top>=0&&dr.bottom<=innerHeight+1};dialog.close();return result;});
                           return {actions,closes,originalHidden:$('manage-original-download').classList.contains('hidden'),duplicateSuccess:!!$('verification-ok'),amountDiff:!!$('amount-diff'),revisionText:$('import-revision-dialog').textContent};
                         }''')
                         for item in result['actions']:
@@ -320,6 +373,9 @@ window.financeImportTest={
                             self.assertEqual(item['h'],44 if width<=800 else 40,item)
                             self.assertEqual(item['font'],'25px',item)
                             self.assertTrue(item['visible'],item)
+                            self.assertTrue(item['common'] and item['inside'],item)
+                            self.assertEqual(item['radius'],'14px',item)
+                            self.assertEqual(item['backdrop'],'rgba(12, 24, 42, 0.52)',item)
                         self.assertTrue(result['originalHidden']);self.assertFalse(result['duplicateSuccess']);self.assertTrue(result['amountDiff'])
                         self.assertIn('保存操作でOneDriveへ反映',result['revisionText'])
                     self.assertFalse(errors,errors)
@@ -400,6 +456,7 @@ window.financeImportTest={
                     page.locator('#assets-fixed-cost-open').click()
                     page.locator('.fixed-cost-item').filter(has_text='銀行固定費テスト').get_by_role('button',name='詳細・編集').click()
                     detail=page.locator('.fixed-cost-dialog')
+                    self.assertTrue(detail.evaluate("d=>d.classList.contains('finance-modal')&&getComputedStyle(d).borderRadius==='14px'&&d.querySelector('.finance-modal-head .finance-modal-x').textContent==='×'"))
                     self.assertIn('次回支払予定',detail.inner_text())
                     self.assertIn('適用予定',detail.inner_text())
                     form=page.locator('.fixed-cost-form');visible=lambda:form.locator('.fixed-cost-field:visible [name]').evaluate_all('xs=>xs.map(x=>x.name)')
@@ -668,17 +725,22 @@ window.financeImportTest={
                     # Prior-month funding is available regardless of the current day.
                     page.evaluate('window.ordinary.showHome()');funding=page.locator('.home-funding-save:enabled')
                     self.assertIn('期限超過',page.locator('.home-funding-prior').inner_text())
-                    self.assertEqual(funding.inner_text(),'送金済みを記録')
+                    self.assertEqual(funding.inner_text(),'送金済み')
                     page.evaluate("window.ordinary.bill.statement.confirmation='provisional';window.ordinary.home.render()")
-                    self.assertIn('明細未確定',page.locator('.home-funding-prior').inner_text())
+                    self.assertIn('明細確定待ち',page.locator('.home-funding-prior').inner_text())
                     self.assertTrue(page.locator('.home-funding-prior .home-funding-review').is_visible())
                     self.assertEqual(page.locator('.home-funding-prior .home-funding-save').count(),0)
                     page.evaluate("window.ordinary.bill.statement.confirmation='confirmed';window.ordinary.home.render()")
                     funding.click();page.evaluate('window.ordinary.bill.statement.rows[0].amount=2000;window.ordinary.bill.statement.statedTotal=2000')
-                    confirm.get_by_role('button',name='送金済みを記録').click();self.assertEqual(page.evaluate('window.ordinary.writes.length'),2)
-                    funding.click();confirm.get_by_role('button',name='送金済みを記録').click()
+                    confirm.get_by_role('button',name='送金済み').click();self.assertEqual(page.evaluate('window.ordinary.writes.length'),2)
+                    funding.click();confirm.get_by_role('button',name='送金済み').click()
                     page.wait_for_function('window.ordinary.writes.length===3')
                     self.assertEqual(page.evaluate('window.ordinary.writes.at(-1)'),['funding',page.evaluate('window.ordinary.previous'),True])
+                    self.assertEqual(page.locator('#home-content > .home-funding').count(),0)
+                    completed=page.locator('.home-funding-completed')
+                    self.assertFalse(completed.locator('.home-funding-revoke').is_visible())
+                    completed.locator('summary').click()
+                    self.assertTrue(completed.get_by_role('button',name='確認を取り消す').is_visible())
                     # No-use approval belongs to the originally displayed month, never another month.
                     page.evaluate('window.ordinary.showSummary()');noUse=page.get_by_role('button',name='この月はカード利用なしと確認')
                     noUse.click();page.evaluate('window.ordinary.summary.setPeriod(window.ordinary.previous)')
@@ -788,6 +850,7 @@ window.financeImportTest={
                     for theme in ('light','dark'):
                         page.evaluate('(theme)=>document.documentElement.dataset.theme=theme',theme)
                         page.evaluate('window.confirmTest.open()');dialog=page.locator('.finance-confirm-dialog')
+                        self.assertTrue(dialog.evaluate("d=>d.classList.contains('finance-modal')&&getComputedStyle(d).borderRadius==='14px'"))
                         self.assertEqual(dialog.locator('img').count(),0)
                         self.assertIn('<img src=x',dialog.inner_text())
                         self.assertTrue(dialog.get_by_role('button',name='キャンセル').evaluate('x=>document.activeElement===x'))
@@ -979,6 +1042,94 @@ window.financeImportTest={
                 finally:
                     context.close()
 
+    def test_release_history_without_cloud_and_failed_fetch(self):
+        import json
+        from playwright.sync_api import expect
+        entries=json.loads((ROOT/'dist/release-notes.json').read_text(encoding='utf-8'))
+        html=self.offline_document()
+        for width in (1100,390,320):
+            with self.subTest(width=width):
+                context=self.browser.new_context(viewport={'width':width,'height':750},is_mobile=width<800,has_touch=width<800)
+                try:
+                    page=context.new_page();page.set_default_timeout(5000);errors=[]
+                    page.on('pageerror',lambda exc:errors.append(str(exc)))
+                    page.route('**/*',lambda route:route.abort());page.set_content(html)
+                    page.evaluate('''async(entries)=>{
+                      window.releaseRequests=0;
+                      window.fetch=async(url,options)=>{
+                        if(url!=='./release-notes.json'||options.credentials!=='omit')throw new Error('unexpected request');
+                        window.releaseRequests++;
+                        if(window.releaseRequests===1)throw new Error('offline');
+                        return new Response(JSON.stringify(entries),{headers:{'Content-Type':'application/json'}});
+                      };
+                      const {initReleaseHistory}=await import('finance-fixture/ui/release-history.js');
+                      const {syncFinanceCloudGates}=await import('finance-fixture/ui/cloud-gate.js');
+                      const state={blocked:true,locked:false,checking:false,notice:{kind:'not-connected',message:'未接続'},onRetry(){},onReauthenticate(){},onUnlock(){},onSettings(){}};
+                      window.setReleaseLocked=()=>syncFinanceCloudGates({...state,locked:true});
+                      syncFinanceCloudGates(state);initReleaseHistory();
+                      document.documentElement.classList.remove('finance-nav-boot-collapsed');
+                      document.getElementById('finance-sidebar').classList.add('mobile-open');
+                      document.getElementById('mobile-nav-panel').inert=false;
+                    }''',entries)
+                    opener=page.locator('#release-history-open');dialog=page.locator('#release-history-dialog')
+                    self.assertEqual(page.evaluate('window.releaseRequests'),0)
+                    expect(dialog).not_to_be_visible()
+                    opener.click();expect(dialog).to_contain_text('アップデート履歴を取得できませんでした')
+                    dialog.get_by_role('button',name='閉じる').click();expect(dialog).not_to_be_visible()
+                    page.evaluate('window.setReleaseLocked()')
+                    for theme in ('light','dark'):
+                        page.evaluate('(t)=>document.documentElement.dataset.theme=t',theme)
+                        opener.click();expect(dialog).to_be_visible()
+                        expect(dialog.locator('article')).to_have_count(len(entries))
+                        self.assertTrue(dialog.evaluate("d=>d.classList.contains('finance-modal')&&getComputedStyle(d).borderRadius==='14px'"))
+                        expect(dialog.locator('article').first).to_contain_text('v'+entries[0]['version'])
+                        expect(dialog.locator('.release-history-latest')).to_have_count(1)
+                        expect(dialog.locator('article').last).to_contain_text('初期開発')
+                        self.assertTrue(dialog.evaluate('(d)=>d.scrollHeight>d.clientHeight&&d.scrollWidth<=d.clientWidth+1'))
+                        self.assertTrue(dialog.evaluate('(d)=>{const r=d.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight}'))
+                        page.keyboard.press('Escape');expect(dialog).not_to_be_visible();expect(opener).to_be_focused()
+                    self.assertEqual(page.evaluate('window.releaseRequests'),2)
+                    self.assertFalse(errors,errors)
+                finally:
+                    context.close()
+
+    def test_closed_future_comparison_ignores_invalid_start_month(self):
+        from playwright.sync_api import expect
+        html=self.offline_document()
+        for width,mobile in ((1100,False),(390,True)):
+            with self.subTest(width=width):
+                context=self.browser.new_context(viewport={'width':width,'height':850},is_mobile=mobile,has_touch=mobile)
+                try:
+                    page=context.new_page();errors=[]
+                    page.on('pageerror',lambda exc:errors.append(str(exc)))
+                    page.route('**/*',lambda route:route.abort());page.set_content(html)
+                    page.evaluate('''async()=>{
+                      const {emptyAssets}=await import('finance-fixture/cloud/assets.js');
+                      const {initFutureProjection}=await import('finance-fixture/ui/future-projection.js');
+                      const d=new Date(),today=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`;
+                      const assets=emptyAssets();assets.birthMonth=`${d.getFullYear()-25}-01`;
+                      assets.snapshots=[{id:'cash-test',accountId:'cash-savings',balance:100000,observedAt:`${today}T00:00:00Z`},{id:'nisa-test',accountId:'nisa',balance:200000,observedAt:`${today}T00:00:00Z`}];
+                      document.getElementById('future-view').classList.remove('hidden');
+                      initFutureProjection(()=>({assets,records:[]})).render();
+                    }''')
+                    scenario=page.locator('#future-scenario-accordion');summary=scenario.locator('summary')
+                    start=page.locator('#future-change-month');hint=page.locator('#future-hint');graph=page.locator('.future-chart-svg')
+                    baseline=page.locator('.future-table').text_content()
+                    valid=start.input_value()
+                    expect(graph).to_be_visible()
+                    for invalid in ('','2000-01'):
+                        summary.click();expect(page.locator('.future-metric-scenario')).to_be_visible()
+                        start.fill(invalid);expect(hint).to_have_text('年月と積立額を確認してください。');expect(graph).to_have_count(0)
+                        summary.click();expect(graph).to_be_visible();expect(hint).to_have_text('')
+                        expect(page.locator('.future-table')).to_have_text(baseline)
+                        expect(start).to_have_value(invalid);expect(page.locator('.future-metric-scenario')).to_have_count(0)
+                        summary.click();expect(hint).to_have_text('年月と積立額を確認してください。');expect(start).to_have_value(invalid)
+                        start.fill(valid);expect(graph).to_be_visible();expect(page.locator('.future-metric-scenario')).to_be_visible()
+                        summary.click();expect(page.locator('.future-metric-scenario')).to_have_count(0)
+                    self.assertFalse(errors,errors)
+                finally:
+                    context.close()
+
     def test_graph_pointer_drag_keyboard_zoom_desktop(self):
         page, context, errors = self.create_page()
         try:
@@ -1072,7 +1223,10 @@ window.financeImportTest={
                       document.getElementById('summary-view').classList.remove('hidden');summary.setPeriod(period);
                     }""")
                     summary=page.locator('#monthly-content')
-                    self.assertIn('一部カードのみ確認済み',summary.inner_text())
+                    expense=summary.locator('.monthly-metric').filter(has=page.get_by_text('支出',exact=True))
+                    self.assertEqual(expense.locator('.monthly-metric-value').inner_text(),'算出不可')
+                    self.assertIn('一部カードのみ確認済み',expense.inner_text())
+                    self.assertIn('支出総額は算出できません',summary.inner_text())
                     self.assertIn('利用なし確認済み',summary.inner_text())
                     self.assertEqual(errors,[])
                 finally:
@@ -1137,6 +1291,22 @@ window.financeImportTest={
                     self.assertIn('−13,000円',home.inner_text())
                     self.assertIn('実行済み',home.inner_text())
                     self.assertIn('楽天銀行 → みずほ銀行',home.inner_text())
+                    self.assertEqual(home.locator('.home-debit').filter(has_text='テスト振替').count(),1)
+                    self.assertEqual(home.locator('.home-debit').filter(has_text='テスト振替').locator('b').inner_text(),'2,500円')
+                    self.assertEqual(home.locator('.home-metric > span').all_text_contents(),['収入','支出','収支'])
+                    self.assertEqual(summary.locator('.monthly-metric-label').all_text_contents(),['収入','支出','収支'])
+                    page.evaluate('''()=>{const {assets,day,home}=window.polish2;assets.oneTime.push(...Array.from({length:7},(_,i)=>({id:'other-'+i,name:'別振替'+i,kind:'transfer',amount:2500,date:day,fromAccountId:'rakuten-bank',toAccountId:'mizuho-bank',status:'planned',categoryId:null})));home.render()}''')
+                    self.assertEqual(home.locator('.home-debit').count(),6)
+                    home.get_by_role('button',name='すべて表示',exact=True).click()
+                    self.assertEqual(home.locator('.home-debit').filter(has_text='別振替').count(),7)
+                    home.get_by_role('button',name='折りたたむ',exact=True).click()
+                    self.assertEqual(home.locator('.home-debit').count(),6)
+                    page.evaluate("window.polish2.assets.oneTime=window.polish2.assets.oneTime.filter(x=>x.id==='transfer-a');window.polish2.home.render()")
+                    for theme in ('light','dark'):
+                        page.evaluate('(t)=>document.documentElement.dataset.theme=t',theme)
+                        self.assertTrue(home.locator('.home-account').first.is_visible())
+                        self.assertTrue(home.locator('.home-account-forecast').first.is_visible())
+                        self.assertTrue(home.locator('.home-account').evaluate_all('xs=>xs.every(e=>e.scrollWidth<=e.clientWidth+1)'))
                     page.evaluate("window.polish2.show('analysis-view');window.polish2.analysis.render()")
                     analysis=page.locator('#analysis-content')
                     analysis.get_by_role('button',name='利用先',exact=True).click()
@@ -1192,7 +1362,7 @@ window.financeImportTest={
                     page.on('pageerror',lambda exc:errors.append(str(exc)))
                     page.route('**/*',lambda route:route.abort());page.set_content(html)
                     page.evaluate('''async()=>{
-                      const {emptyAssets}=await import('finance-fixture/cloud/assets.js');
+                      const {emptyAssets,cardRecurringKey}=await import('finance-fixture/cloud/assets.js');
                       const {initSubscriptions}=await import('finance-fixture/ui/subscriptions.js');
                       const {initAssetsSettings}=await import('finance-fixture/ui/assets-settings.js');
                       const {initFutureProjection}=await import('finance-fixture/ui/future-projection.js');
@@ -1207,22 +1377,42 @@ window.financeImportTest={
                       {id:'future-cost',name:'将来契約',payment:'cash',cardId:null,merchantKey:null,categoryId:null,frequency:'yearly',dayOfMonth:yesterday.getDate(),monthOfYear:yesterday.getMonth()+1,weekday:null,startOn:past,endOn:null,amount:3000,priceKind:'fixed',pricing:[{effectiveOn:past,amount:2000},{effectiveOn:tomorrow,amount:3000}],pauses:[],note:'',updatedAt:new Date().toISOString()}];
                       data.cardPreferences={'rakuten-mizuho':{name:'テストカード',pointRatePercent:1,pointRateHistory:[{effectiveOn:'1900-01-01',ratePercent:2},{effectiveOn:next,ratePercent:1}]}};
                       data.cardRecurringDecisions={'rakuten-mizuho|test-merchant':{cardId:'rakuten-mizuho',merchant:'test-merchant',label:'対象外テスト',amount:1000,frequency:'monthly',state:'ignored',updatedAt:new Date().toISOString()}};
-                      const vault={unlocked:true,assetSettings:()=>structuredClone(data),readonlyRecords:()=>[]};
-                      const source=()=>vault.unlocked?{assets:vault.assetSettings(),records:[],rules:[],categories:[],payroll:{ready:false,entries:[],syncedAt:null}}:null;
+                      const records=[];const vault={unlocked:true,assetSettings:()=>structuredClone(data),readonlyRecords:()=>structuredClone(records)};
+                      const source=()=>vault.unlocked?{assets:vault.assetSettings(),records:vault.readonlyRecords(),rules:[],categories:[],payroll:{ready:false,entries:[],syncedAt:null}}:null;
                       const show=id=>{for(const node of document.querySelectorAll('.workspace .content > :is(section,div)[id$="-view"],#assets-page'))node.classList.toggle('hidden',node.id!==id);document.getElementById(id).classList.remove('hidden');};
                       const subs=initSubscriptions({source,vault:()=>vault,onSaved:()=>{},openAccountSettings:()=>{}});
                       const accounts=initAssetsSettings(()=>vault,()=>[],()=>{},()=>{});
                       const forecast=initFutureProjection(source);const cards=initCardSettings(()=>vault,()=>{});
-                      window.polish3={show,subs,accounts,forecast,cards,lock(){vault.unlocked=false;accounts.reset();forecast.reset();cards.reset();subs.reset();}};
+                      window.polish3={show,subs,accounts,forecast,cards,
+                        historicalCharge(){const prior=new Date(d.getFullYear(),d.getMonth()-1,1).toLocaleDateString('sv-SE').slice(0,7);
+                          data.fixedCosts.push({...data.fixedCosts[0],id:'historical-charge',name:'料金改定テスト',merchantKey:cardRecurringKey('rakuten-mizuho','HISTORIC SERVICE'),amount:2000,pricing:[{effectiveOn:past,amount:1500},{effectiveOn:month+'-01',amount:2000}]});
+                          records.push({id:'historical-bill',statement:{provider:'rakuten',cardId:'rakuten-mizuho',sourceKind:'paste',sourceName:'synthetic',billingMonth:prior,paymentDate:prior+'-27',statedTotal:1500,confirmation:'confirmed',warnings:[],rows:[{id:'historical-row',usedOn:prior+'-02',merchant:'HISTORIC SERVICE',amount:1500}]}});subs.render();},
+                        alterCharge(){records[0].statement.statedTotal=1700;records[0].statement.rows[0].amount=1700;subs.render();},
+                        clearCharge(){data.fixedCosts.pop();records.length=0;subs.render();},lock(){vault.unlocked=false;accounts.reset();forecast.reset();cards.reset();subs.reset();}};
                       show('subscriptions-view');subs.render();
                     }''')
                     normal=page.locator('.fixed-cost-item').filter(has_text='通常契約')
                     self.assertNotIn('変更予定：',normal.inner_text())
+                    self.assertNotIn('月額換算',normal.inner_text())
+                    self.assertNotIn('利用中',normal.inner_text())
+                    self.assertIn('毎月25日',normal.inner_text())
+                    self.assertEqual(page.locator('.fixed-cost-metric').count(),2)
                     geometry=normal.evaluate('e=>{const a=e.querySelector(".fixed-cost-item-actions").getBoundingClientRect(),p=e.querySelector(".fixed-cost-item-price").getBoundingClientRect();return {align:Math.abs(a.right-p.right),above:a.top<p.top}}')
                     self.assertLessEqual(geometry['align'],2);self.assertTrue(geometry['above'])
                     normal.get_by_role('button',name='詳細・編集').click()
                     detail=page.locator('.fixed-cost-dialog[open]');self.assertNotIn('支払条件の変更履歴',detail.inner_text());self.assertNotIn('料金変更履歴',detail.inner_text())
                     detail.get_by_role('button',name='閉じる').click()
+                    page.evaluate('polish3.historicalCharge()')
+                    historic=page.locator('.fixed-cost-item').filter(has_text='料金改定テスト')
+                    self.assertIn('2,000円',historic.inner_text())
+                    self.assertNotIn('差額',historic.inner_text())
+                    self.assertNotIn('最新の請求実績',historic.inner_text())
+                    historic.get_by_role('button',name='詳細・編集').click()
+                    self.assertIn('最新の請求実績',detail.inner_text());self.assertIn('1,500円',detail.inner_text())
+                    detail.get_by_role('button',name='閉じる').click()
+                    page.evaluate('polish3.alterCharge()')
+                    self.assertIn('差額 +200円',historic.inner_text())
+                    page.evaluate('polish3.clearCharge()')
                     future=page.locator('.fixed-cost-item').filter(has_text='将来契約')
                     self.assertIn('変更予定：3,000円',future.inner_text())
                     page.get_by_role('button',name='対象外 1').click();ignored=page.locator('.fixed-cost-item').filter(has_text='対象外テスト');self.assertIn('テストカード',ignored.inner_text());self.assertNotIn('rakuten-mizuho',ignored.inner_text())
@@ -1366,8 +1556,10 @@ window.financeImportTest={
                       window.addActualSide=()=>{window.salarySource.payroll.entries.push(pay('actual-side','side',23000));window.salarySummary.render();};
                     }''')
                     metric=page.locator('#monthly-content .monthly-metric').first
+                    self.assertEqual(metric.locator('.monthly-metric-label').inner_text(),'収入')
                     self.assertIn('210,000円',metric.inner_text())
                     self.assertIn('入金予定含む',metric.inner_text())
+                    self.assertNotIn('給与見込みを含む',metric.inner_text())
                     self.assertIn('定期入金 20,000円',metric.inner_text())
                     self.assertIn('副業給与',page.locator('#monthly-content').inner_text())
                     page.evaluate('window.addActualSide()')

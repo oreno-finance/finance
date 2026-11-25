@@ -36,6 +36,7 @@ import { initMonthlyReports } from './ui/monthly-reports.js';
 import { initSubscriptions } from './ui/subscriptions.js';
 import { initCardSettings } from './ui/card-settings.js';
 import { showActivity, simpleActivity, finishActivity, clearActivity, initActivityHistory } from './ui/activity-feedback.js';
+import { initReleaseHistory } from './ui/release-history.js';
 import { statementPoints } from './summary/point-benefits.js';
 import { hasInterruptionRisk, shouldRefreshOnFocus } from './ui/safety-policy.js';
 const $ = (id) => {
@@ -272,15 +273,32 @@ function validDate(value) {
     const d = new Date(`${value}T00:00:00Z`);
     return Number.isFinite(d.valueOf()) && d.toISOString().slice(0, 10) === value;
 }
+const originalDownloadUrls = new Map();
+function revokeOriginalDownloadUrl(url) {
+    const timer = originalDownloadUrls.get(url);
+    if (timer === undefined)
+        return;
+    clearTimeout(timer);
+    originalDownloadUrls.delete(url);
+    URL.revokeObjectURL(url);
+}
+function revokeOriginalDownloadUrls() {
+    for (const url of originalDownloadUrls.keys())
+        revokeOriginalDownloadUrl(url);
+}
 function downloadFile(bytes, mime, filename) {
     const link = document.createElement('a');
     const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
-    link.href = url;
-    link.download = filename;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    originalDownloadUrls.set(url, setTimeout(() => revokeOriginalDownloadUrl(url), 60000));
+    try {
+        link.href = url;
+        link.download = filename;
+        document.body.append(link);
+        link.click();
+    }
+    finally {
+        link.remove();
+    }
 }
 function setBadgeState(className, text) {
     const detailBadge = $('detail-status-pill');
@@ -381,6 +399,7 @@ function broadcastVaultLock() {
 /** Force-close sensitive views on a lock from this tab or another one. */
 function clearUnlockedFinanceViews() {
     lockSequence++;
+    revokeOriginalDownloadUrls();
     $('manage-clear-changes').disabled = true;
     importAbort?.abort();
     clearActivity();
@@ -904,11 +923,10 @@ function makeInput(value, className, update, ariaLabel) {
 /** Bind permanent cloud actions once; rendering must never add event handlers. */
 function initCloudActionControls() {
     const connectionDialog = $('cloud-connect-dialog');
-    $('cloud-connect-later').addEventListener('click', () => {
-        cloudConnectDismissed = true;
-        connectionDialog.close();
-    });
-    connectionDialog.addEventListener('cancel', () => { cloudConnectDismissed = true; });
+    const dismissConnection = () => { cloudConnectDismissed = true; connectionDialog.close(); };
+    $('cloud-connect-later').addEventListener('click', dismissConnection);
+    $('cloud-connect-close').addEventListener('click', dismissConnection);
+    bindModalDismiss(connectionDialog, dismissConnection);
     $('cloud-connect-continue').addEventListener('click', () => {
         const mode = connectionDialog.dataset.mode;
         cloudConnectDismissed = true;
@@ -1329,6 +1347,7 @@ async function startCloud() {
         const client = await measureFinancePhase('startup.auth', () => graphClientWithoutRedirect());
         const vault = new LiveVault(client, message => { if (liveVault === vault)
             operationResult(message, 'warn'); });
+        revokeOriginalDownloadUrls();
         liveVault = vault;
         const authAccountId = activeMicrosoftAccountId();
         liveVaultRememberContext = authAccountId ? { clientId: clientIdForTab(), homeAccountId: authAccountId } : null;
@@ -1523,10 +1542,10 @@ function initLegacyCleanup() {
         reset();
         dialog.showModal();
     });
-    $('legacy-cleanup-close').addEventListener('click', () => { if (!busy)
-        dialog.close(); });
-    dialog.addEventListener('cancel', event => { if (busy)
-        event.preventDefault(); });
+    const dismissCleanup = () => { if (!busy)
+        dialog.close(); };
+    $('legacy-cleanup-close').addEventListener('click', dismissCleanup);
+    bindModalDismiss(dialog, dismissCleanup);
     dialog.addEventListener('close', () => { lockVault(); reset(); });
     const execute = async (work) => {
         if (busy)
@@ -3458,6 +3477,7 @@ function init() {
     $('import-payment-settings').addEventListener('click', () => showView('settings'));
     initCloudActionControls();
     initActivityHistory();
+    initReleaseHistory();
     // storage events fire only in *other* tabs of this origin, never the sender.
     window.addEventListener('storage', event => {
         if (event.key !== CROSS_TAB_LOCK_KEY || !event.newValue)
@@ -3795,6 +3815,7 @@ function init() {
             }
             if (vault !== liveVault || started !== lockSequence || !vault.unlocked)
                 throw new Error('保管庫が変更されました。最新の状態を確認してください。');
+            revokeOriginalDownloadUrls();
             // Other open tabs retain the old in-memory key until explicitly notified.
             try {
                 broadcastVaultLock();
@@ -4123,8 +4144,10 @@ function init() {
         render();
         toast('未保存の明細を破棄しました。');
     });
-    $('vault-cancel').addEventListener('click', () => modalClose(false));
-    $('vault-dialog').addEventListener('cancel', event => { event.preventDefault(); modalClose(false); });
+    const dismissVault = () => modalClose(false);
+    $('vault-cancel').addEventListener('click', dismissVault);
+    $('vault-close').addEventListener('click', dismissVault);
+    bindModalDismiss($('vault-dialog'), dismissVault);
     $('vault-form').addEventListener('submit', event => {
         event.preventDefault();
         void (async () => {

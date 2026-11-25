@@ -7,14 +7,14 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {japanBuildDate,stampHtml,stampAppMeta} from '../scripts/stamp-app-meta.mjs';
 
-const row='<div class="sidebar-meta"><span>Finance v1.9.11</span><time id="app-updated-at" datetime="2026-11-19">更新 2026/11/19 JST</time></div>';
+const row='<div class="sidebar-meta"><span><button type="button" id="release-history-open" aria-haspopup="dialog" aria-controls="release-history-dialog" title="アップデート履歴">Finance v1.9.11</button></span><time id="app-updated-at" datetime="2026-11-19">ビルド 2026/11/19 JST</time></div>';
 
 test('build stamp always uses the package version and JST date, not the stale sidebar literals',()=>{
   assert.equal(japanBuildDate(new Date('2026-11-21T15:10:00Z')),'2026-11-22');
   assert.equal(japanBuildDate(new Date('2026-11-21T14:59:00Z')),'2026-11-21');
   const transformed=stampHtml(row,'1.9.39','2026-11-22');
   assert.match(transformed,/Finance v1\.9\.39/);
-  assert.match(transformed,/datetime="2026-11-22">更新 2026\/11\/22 JST/);
+  assert.match(transformed,/datetime="2026-11-22">ビルド 2026\/11\/22 JST/);
   assert.equal(stampHtml(transformed,'1.9.39','2026-11-22'),transformed);
 });
 
@@ -45,7 +45,7 @@ test('built source and publication carry the same version and day',async()=>{
   const source=await readFile(new URL('../public/index.html',import.meta.url),'utf8');
   const dist=await readFile(new URL('../dist/index.html',import.meta.url),'utf8');
   assert.match(source,new RegExp(`Finance v${pkg.version.replaceAll('.','\\.')}`));
-  assert.match(source,/datetime="\d{4}-\d{2}-\d{2}">更新 \d{4}\/\d{2}\/\d{2} JST/);
+  assert.match(source,/datetime="\d{4}-\d{2}-\d{2}">ビルド \d{4}\/\d{2}\/\d{2} JST/);
   assert.equal(source,dist);
 });
 

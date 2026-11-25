@@ -33,11 +33,11 @@ test('first upload and later modal use one file input; modal never overlays the 
   assert.equal((markup.match(/id="file-input"/g)||[]).length,1);
   assert.equal((markup.match(/id="paste-input"/g)||[]).length,1);
   assert.match(markup,/id="import-inline-entry"/);
-  assert.match(markup,/id="import-add-dialog" class="import-add-dialog"/);
+  assert.match(markup,/id="import-add-dialog" class="import-add-dialog finance-modal"/);
   assert.match(markup,/id="import-add-open"/);
   assert.doesNotMatch(markup,/id="entry-accordion"/);
   assert.doesNotMatch(draftCss,/#entry-accordion|position:absolute;z-index:5/);
-  assert.match(css,/\.import-add-dialog::backdrop/);
+  assert.match(readFileSync(new URL('../public/styles/cloud-gate-v1980.css',import.meta.url),'utf8'),/\.finance-modal::backdrop/);
   assert.match(sourceTs,/\$\('import-dialog-content'\)\.append\(\$\('import-upload-panel'\)\)/);
   assert.match(sourceTs,/\$\('import-inline-entry'\)\.append\(\$\('import-upload-panel'\)\)/);
 });

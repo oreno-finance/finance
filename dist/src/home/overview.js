@@ -1,10 +1,16 @@
-import { changePeriod, monthlyReport, monthlyCashflow, prepareMonthlyReports } from '../summary/monthly-summary.js';
+/** Home uses the unchanged monthlyReport as its only household cashflow source. */
+import { ASSET_ACCOUNTS } from '../cloud/assets.js';
+import { changePeriod, monthlyReport, monthlyCashflow } from '../summary/monthly-summary.js';
+import { lastDayOfNextMonth } from '../cloud/asset-projection.js';
+import { prepareBankForecast, forecastBankBalances } from '../cloud/salary-projection.js';
 import { forecastAccounts } from './account-events.js';
 import { homeActions } from './action-items.js';
 import { pendingCardSubscriptions } from '../subscriptions/detect.js';
 export function homeOverview(source, today) {
     const currentPeriod = today.slice(0, 7);
-    const prepared = prepareMonthlyReports(source.records);
+    const assets = { ...source.assets, snapshots: source.assets.snapshots ?? [] };
+    const work = prepareBankForecast(source.records, assets);
+    const prepared = work.prepared;
     const adjusted = { ...source, currentPeriod };
     const byMonth = new Map();
     const reportForMonth = (period) => {
@@ -25,17 +31,13 @@ export function homeOverview(source, today) {
     const cashflow = monthlyCashflow(report);
     const coverage = cashflow.coverage === 'review' ? 'needs-review' : cashflow.coverage;
     const outflow = cashflow.expense;
-    const bankAccountIds = ['rakuten-bank', 'mizuho-bank', 'cash-savings', 'nisa'];
-    const labels = { 'rakuten-bank': '楽天銀行', 'mizuho-bank': 'みずほ銀行',
-        'cash-savings': '貯金口座', 'nisa': 'NISA' };
-    const accounts = bankAccountIds.map(id => {
-        const snapshot = source.assets.snapshots?.filter(s => s.accountId === id &&
-            new Date(s.observedAt).getTime() <= new Date(`${today}T23:59:59Z`).getTime())
-            .sort((a, b) => b.observedAt.localeCompare(a.observedAt))[0] ?? null;
-        const bank = forecast.accounts.find(item => item.accountId === id);
-        return { id, name: labels[id], snapshot, predicted: bank?.projected ?? null,
-            predictedReliable: bank?.reliable ?? false, projectedAt: bank?.projectedAt ?? null };
-    });
+    // Same projection as account management, including NISA and opted-in Payroll.
+    const income = source.payroll.ready ? [...source.payroll.entries] : [];
+    const deposit = assets.payrollDepositAccount ?? null;
+    const current = forecastBankBalances(assets, today, source.records, income, deposit, today, work).accounts;
+    const next = forecastBankBalances(assets, lastDayOfNextMonth(new Date(`${today}T12:00:00`)), source.records, income, deposit, today, work).accounts;
+    const accounts = ASSET_ACCOUNTS.map(({ id, name }) => ({ id, name, snapshot: current[id].baseline, current: current[id].balance,
+        predicted: next[id].balance, warning: current[id].warning ?? next[id].warning }));
     const cardNames = Object.fromEntries(Object.entries(source.assets.cardPreferences ?? {}).filter(([, preference]) => !!preference.name).map(([id, preference]) => [id, preference.name]));
     const actions = homeActions(source, report, forecast, today);
     const candidates = pendingCardSubscriptions(source, today.slice(0, 7));

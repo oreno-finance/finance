@@ -137,7 +137,7 @@ python3 -m http.server 5173 --directory dist
 
 ビルド・テスト後は、`git diff --cached --check` とステージ対象の内容を確認してからコミットしてください。`local-data/`、`private-data/`、`.env`、PDF/CSVなどは `.gitignore` で除外します。
 
-過去バージョンの技術的な変更記録は、Gitの履歴と既存の `README-v*.md` に保存されています。
+アップデート履歴はメニュー下部のバージョン番号から閲覧できます。正本は [`public/release-notes.json`](public/release-notes.json)、GitHub向けは自動生成の [`CHANGELOG.md`](CHANGELOG.md) です。今後の開発・公開手順は [`AGENTS.md`](AGENTS.md) に従います。初期の詳細な技術記録もGitの履歴と既存の `README-v*.md` に保持しています。
 
 ## 安全性（v1.6.7）
 

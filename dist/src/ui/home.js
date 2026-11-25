@@ -49,17 +49,17 @@ export function initHome(deps) {
     const root = document.getElementById('home-content');
     if (!root)
         throw new Error('ホーム画面が見つかりません。');
-    let showAllActions = false;
+    let showAllActions = false, showAllMovements = false, showCompletedFunding = false;
     let fundingBusy = false, fundingError = '';
     const confirmationOwner = {};
     let epoch = 0;
     const go = (destination, recordId, drilldown) => deps.navigate(destination, recordId, drilldown);
     function fundingPanel(status) {
-        const section = element('section', 'panel home-funding' + (status.overdue && status.billConfirmed ? ' home-funding-overdue' : ''));
+        const section = element('div', 'home-funding' + (status.overdue && status.billConfirmed ? ' home-funding-overdue' : ''));
         const head = element('div', 'home-funding-heading');
-        const state = status.changedSinceCheck ? '要再確認' : status.completed ? '確認済み' : !status.periodOpen ? '12日から確認' : !status.billConfirmed ? '明細未確定' : status.overdue ? '期限超過' : '未確認';
-        head.append(element('h2', 'home-section-title', 'みずほ送金'), element('strong', 'home-funding-state', state));
-        section.append(head, element('p', 'home-muted home-funding-facts', `${Number(status.month.slice(5))}月分 · ${status.dueDate ? shortDay(status.dueDate) + 'まで' : '期限未取得'}${!status.billConfirmed && state !== '明細未確定' ? ' · 明細未確定' : ''}`), element('strong', 'home-funding-amount', yen(status.amount)));
+        const state = status.changedSinceCheck ? '再確認' : status.completed ? '確認済み' : !status.periodOpen ? '12日から確認' : !status.billConfirmed ? '明細確定待ち' : status.overdue ? '期限超過' : '未確認';
+        head.append(element('strong', '', 'みずほ送金'), element('strong', 'home-funding-state', state));
+        section.append(head, element('p', 'home-muted home-funding-facts', `${Number(status.month.slice(5))}月分 · ${status.dueDate ? shortDay(status.dueDate) + 'まで' : '期限未取得'}${!status.billConfirmed && state !== '明細確定待ち' ? ' · 明細確定待ち' : ''}`), element('strong', 'home-funding-amount', yen(status.amount)));
         if (status.changedSinceCheck) {
             const warning = element('p', 'home-funding-error', '以前の「送金済み」確認は無効です。請求額・支払日・送金予定額を確認し、不足額があれば送金してください。');
             warning.setAttribute('role', 'alert');
@@ -69,7 +69,7 @@ export function initHome(deps) {
             section.append(element('p', 'home-muted home-funding-facts', `確認日時：${formatDateTime(status.updatedAt, true)}`));
         const controls = element('div', 'home-funding-controls');
         if (status.periodOpen && deps.saveMizuhoFunding && (status.completed || status.billConfirmed)) {
-            const button = link(fundingBusy ? '保存中…' : status.completed ? '送金済みを取り消す' : status.changedSinceCheck ? '再確認して送金済みにする' : status.overdue ? '送金済みを記録' : '送金済みにする', async () => {
+            const button = link(fundingBusy ? '保存中…' : status.completed ? '確認を取り消す' : status.changedSinceCheck ? '再確認' : '送金済み', async () => {
                 if (fundingBusy || confirmationPending())
                     return;
                 if (!status.completed && (!status.billConfirmed || !status.billSnapshot))
@@ -93,7 +93,7 @@ export function initHome(deps) {
                 if (!await requestConfirmation({ owner: confirmationOwner, title: status.completed ? '送金済み記録を取り消しますか？' : '送金済みとして記録しますか？',
                     message: status.completed ? `${status.month}分の送金済み記録を取り消します。` :
                         `${status.month}分の確定請求額 ${yen(snapshot.billAmount)}、支払日 ${snapshot.paymentDate}、送金目安 ${yen(snapshot.transferAmount)}。\n実際の送金完了後に記録してください。残高や振替実績は変更されません。`,
-                    acceptLabel: status.completed ? '取り消す' : '送金済みを記録', destructive: status.completed }))
+                    acceptLabel: status.completed ? '取り消す' : '送金済み', destructive: status.completed }))
                     return;
                 if (started !== epoch || fundingBusy || !deps.source())
                     return;
@@ -141,23 +141,29 @@ export function initHome(deps) {
         const metrics = element('div', 'home-metrics');
         const dataNotice = model.coverage === 'missing' ? 'カード明細未取得' : model.coverage === 'partial' ? (report.cardLines.length ? '一部カードのみ確認済み' : '一部未取得・銀行支出は反映') : model.coverage === 'needs-review' ? '明細要確認' :
             model.coverage === 'provisional' ? '暫定明細を含む' : '';
-        metrics.append(metric('今月の収入', yen(report.income), report.incomeEstimates.length || report.recurringIncome > 0 ? '給与見込み・入金予定を含む' : '', () => go('summary')), metric('今月の支出', yen(model.outflow), [dataNotice, report.nisaOutflow > 0 ? `NISA積立 ${yen(report.nisaOutflow)} を含む` : ''].filter(Boolean).join(' · '), () => go('summary')), metric('収支見込み', report.monthlyBalance === null ? DATA_STATUS.unavailable : yen(report.monthlyBalance), report.cardOutflow === null ? 'カード明細未取得' : report.income === null ? '収入未取得' : dataNotice, () => go('summary'), report.monthlyBalance !== null && report.monthlyBalance < 0 ? 'home-negative' : ''));
+        metrics.append(metric('収入', yen(report.income), [report.recurringIncome > 0 ? '入金予定含む' : '', report.incomeEstimates.length ? '給与見込みを含む' : ''].filter(Boolean).join(' · '), () => go('summary')), metric('支出', report.cardOutflow === null ? DATA_STATUS.unavailable : yen(model.outflow), [dataNotice, report.cardOutflow === null && model.outflow !== null ? `判明分 ${yen(model.outflow)}` : '', report.nisaOutflow > 0 ? `NISA積立 ${yen(report.nisaOutflow)} を含む` : ''].filter(Boolean).join(' · '), () => go('summary')), metric('収支', report.monthlyBalance === null ? DATA_STATUS.unavailable : yen(report.monthlyBalance), report.cardOutflow === null ? 'カード明細未取得' : report.income === null ? '収入未取得' : dataNotice, () => go('summary'), report.monthlyBalance === null ? '' : report.monthlyBalance < 0 ? 'cashflow-negative' : 'cashflow-positive'));
         root.append(metrics);
         const funding = mizuhoFundingStatus(source, report, model.today);
+        const fundingItems = [], completedItems = [];
         // An unpaid previous month must remain visible after the calendar rolls
         // over. Only show this warning when there really was a card bill.
         if (model.priorFundingReport?.cardLines.some(card => card.cardId === 'rakuten-mizuho')) {
             const previous = mizuhoFundingStatusForMonth(source, model.priorFundingReport, model.today);
-            if (previous && !previous.completed) {
-                const warning = fundingPanel(previous);
-                warning.classList.add('home-funding-prior');
-                root.append(warning);
+            if (previous) {
+                const item = fundingPanel(previous);
+                if (previous.completed)
+                    completedItems.push(item);
+                else {
+                    item.classList.add('home-funding-prior');
+                    fundingItems.push(item);
+                }
             }
         }
         if (funding)
-            root.append(fundingPanel(funding));
-        if (actions.length) {
+            (funding.completed ? completedItems : fundingItems).push(fundingPanel(funding));
+        if (actions.length || fundingItems.length || completedItems.length) {
             const actionSection = section('確認すること');
+            actionSection.body.append(...fundingItems);
             const visible = showAllActions ? actions : actions.slice(0, 6);
             for (const action of visible) {
                 const drilldown = action.kind === 'unclassified'
@@ -178,11 +184,18 @@ export function initHome(deps) {
                     showAllActions = !showAllActions;
                     render();
                 }, 'home-more'));
+            if (completedItems.length) {
+                const done = element('details', 'home-funding-completed');
+                done.open = showCompletedFunding;
+                done.append(element('summary', 'home-muted', 'みずほ送金 · 確認済み'), ...completedItems);
+                done.addEventListener('toggle', () => { showCompletedFunding = done.open; });
+                actionSection.body.append(done);
+            }
             root.append(actionSection.section);
         }
         const debitSection = section('次の入出金');
         const movementRows = [];
-        const next = forecast.debits.slice(0, 3);
+        const next = forecast.debits;
         for (const debit of next) {
             const item = debit.estimated ? element('div', 'home-list-row home-debit') : link('', () => go('manage', debit.id), 'home-list-row home-debit');
             const left = element('span', 'home-debit-main');
@@ -193,34 +206,42 @@ export function initHome(deps) {
             item.append(left, right);
             movementRows.push({ date: debit.date, node: item });
         }
-        // Use the same forecast events as the account cards. Card events already
-        // have their own rows above; transfers are shown per affected account.
-        for (const event of forecast.upcomingMovements.slice(0, 3)) {
+        // Keep the original per-account events for calculations; collapse only the display.
+        const seenTransfers = new Set();
+        for (const event of forecast.upcomingMovements) {
+            if (event.transferId) {
+                if (seenTransfers.has(event.transferId))
+                    continue;
+                seenTransfers.add(event.transferId);
+            }
             const item = link('', () => go('assets'), 'home-list-row home-debit');
             const left = element('span', 'home-debit-main');
             const account = accounts.find(a => a.id === event.accountId);
-            left.append(element('strong', '', event.title), element('small', 'home-muted', `${shortDay(event.date)} · ${event.route ? event.route + ' · ' + (event.amount < 0 ? '出金' : '入金') : account?.name ?? '口座'} · ${event.kind === 'salary' ? '給与実績' : event.kind === 'salary-estimate' || event.movementStatus === 'estimated' ? '見込み' : event.movementStatus === 'done' ? '実行済み' : '予定'}`));
+            left.append(element('strong', '', event.title), element('small', 'home-muted', `${shortDay(event.date)} · ${event.route ?? account?.name ?? '口座'} · ${event.kind === 'salary' ? '給与実績' : event.kind === 'salary-estimate' || event.movementStatus === 'estimated' ? '見込み' : event.movementStatus === 'done' ? '実行済み' : '予定'}`));
             const right = element('span', 'home-debit-amount');
-            right.append(element('b', '', formatSignedYen(event.amount)));
+            right.append(element('b', '', event.transferId ? yen(Math.abs(event.amount)) : formatSignedYen(event.amount)));
             item.append(left, right);
             movementRows.push({ date: event.date, node: item });
         }
         if (!movementRows.length)
             debitSection.body.append(element('p', 'home-empty', '直近の登録済み入出金予定はありません。'));
         movementRows.sort((a, b) => a.date.localeCompare(b.date));
-        debitSection.body.append(...movementRows.map(row => row.node));
+        debitSection.body.append(...(showAllMovements ? movementRows : movementRows.slice(0, 6)).map(row => row.node));
+        if (movementRows.length > 6)
+            debitSection.body.append(link(showAllMovements ? '折りたたむ' : 'すべて表示', () => { showAllMovements = !showAllMovements; render(); }, 'home-more'));
         root.append(debitSection.section);
         const accountSection = section('口座と資産');
         const list = element('div', 'home-account-grid');
         for (const account of accounts) {
             const row = link('', () => go('assets'), 'home-account');
             const title = element('div', 'home-account-title');
-            title.append(element('strong', '', account.name), element('span', `home-account-balance ${account.snapshot ? '' : 'data-status-muted'}`, sharedYen(account.snapshot?.balance ?? null, 0, DATA_STATUS.unregistered)));
+            const currentLabel = account.current === null ? (account.snapshot ? DATA_STATUS.unavailable : DATA_STATUS.unregistered) : yen(account.current);
+            title.append(element('strong', '', account.name), element('span', `home-account-balance ${financialStatusClass(currentLabel)}`, currentLabel));
             const date = account.snapshot ? formatDateTime(account.snapshot.observedAt).split(' ')[0] : null;
-            row.append(title, element('small', 'home-muted', date ? `確認 ${date}` : '残高未登録'));
-            if (account.id !== 'nisa')
-                row.append(element('small', `home-account-forecast ${account.predictedReliable && account.predicted !== null ? '' : 'data-status-muted'}`, account.predictedReliable && account.predicted !== null ?
-                    `今後45日の見込み ${yen(account.predicted)}` : `予測残高：${DATA_STATUS.unavailable}`));
+            row.append(title, element('small', 'home-muted', `現在の推定残高`), element('small', 'home-muted', date ? `最終確認：${yen(account.snapshot.balance)}（${date}）` : '残高未登録'));
+            row.append(element('small', `home-account-forecast ${account.predicted === null ? 'data-status-muted' : ''}`, `来月末の予測：${account.predicted === null ? DATA_STATUS.unavailable : yen(account.predicted)}`));
+            if (account.warning && account.snapshot)
+                row.append(element('small', 'home-muted', account.warning));
             list.append(row);
         }
         accountSection.body.append(list);
@@ -251,5 +272,5 @@ export function initHome(deps) {
             }
         });
     }
-    return { render, isBusy: () => fundingBusy || confirmationPending(confirmationOwner), reset: () => { epoch++; cancelConfirmation(confirmationOwner); showAllActions = false; fundingError = ''; render(); } };
+    return { render, isBusy: () => fundingBusy || confirmationPending(confirmationOwner), reset: () => { epoch++; cancelConfirmation(confirmationOwner); showAllActions = false; showAllMovements = false; showCompletedFunding = false; fundingError = ''; render(); } };
 }

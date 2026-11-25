@@ -318,10 +318,10 @@ body{overflow:hidden}
 .vault-side-controls{display:flex;flex-direction:column;gap:5px;padding:0 9px}
 .vault-side-button{display:block;width:100%;min-height:32px;border:1px solid #40536a;background:transparent;color:#bdccdc;border-radius:8px;text-align:left;font-size:10.5px;padding:7px 10px;font-weight:650}
 .vault-side-button:hover{background:#26394d;color:white}
-.vault-dialog{border:1px solid var(--line);border-radius:18px;background:var(--panel);color:var(--ink);padding:0;box-shadow:0 22px 75px #06112566;width:min(94vw,440px);max-height:90vh}
-.vault-dialog::backdrop{background:rgba(8,17,29,.7);backdrop-filter:blur(3px)}
+.vault-dialog{--modal-width:440px;--modal-inset:0px}
+
 .vault-form{padding:28px;display:flex;flex-direction:column;gap:10px}
-.vault-icon{width:46px;height:46px;display:grid;place-items:center;background:var(--accent-bg);border-radius:12px;color:var(--accent);font-size:26px}
+
 .vault-form h2{margin:6px 0 0;font-size:18px}
 .vault-form p{margin:0 0 10px;font-size:11.5px;line-height:1.65;color:var(--muted)}
 .vault-form input{width:100%;border:1px solid #d2dce5;background:var(--panel);color:var(--ink);border-radius:9px;padding:11px 12px;outline-offset:3px;margin-bottom:4px}
@@ -728,13 +728,12 @@ body{overflow:hidden}
 .rules-pattern-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 7px;color:var(--muted);font-size:11px;font-weight:700}
 .rules-pick-button{padding:5px 10px;border:1px solid var(--line);border-radius:7px;background:var(--panel);font:inherit;font-size:11px;font-weight:700;color:var(--accent);cursor:pointer;white-space:nowrap}
 .rules-pattern-header+.rules-field{margin-bottom:17px}
-.recent-merchants-dialog{width:min(690px,calc(100vw - 28px));max-height:min(80vh,780px);border:1px solid var(--line);border-radius:16px;box-shadow:0 22px 90px #0004;background:var(--panel);color:var(--ink);padding:22px;overflow:hidden}
+.recent-merchants-dialog{--modal-width:690px;overflow:hidden}
 .recent-merchants-dialog[open]{display:flex;flex-direction:column;gap:15px}
-.recent-merchants-dialog::backdrop{background:#102135a8;backdrop-filter:blur(3px)}
-.recent-merchants-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
-.recent-merchants-heading h2{margin:0 0 7px;font-size:19px}
-.recent-merchants-heading p{margin:0;color:var(--muted);font-size:12px}
-.recent-merchants-heading>button{flex:0 0 auto;border:1px solid var(--line);background:var(--bg);border-radius:8px;color:var(--ink);font-size:21px;width:34px;height:34px;cursor:pointer}
+
+
+
+
 .recent-merchants-tools{display:grid;grid-template-columns:1fr 1.4fr;gap:12px}
 .recent-merchants-tools label{display:flex;flex-direction:column;gap:7px;font-size:11px;font-weight:700;color:var(--muted)}
 .recent-merchants-tools input,.recent-merchants-tools select{border:1px solid var(--line);background:var(--bg);border-radius:9px;color:var(--ink);height:40px;padding:7px 10px;font-size:12px;min-width:0}
@@ -802,13 +801,12 @@ body{overflow:hidden}
 .rules-category-select>.rules-category-dot{position:absolute;left:12px;top:50%;transform:translateY(-50%);z-index:1;pointer-events:none;width:11px;height:11px;border:1px solid #0001}
 .rules-category-select>.rules-category-dot.is-empty{opacity:.25}
 .rules-category-select select{padding-left:31px}
-.categories-dialog{width:min(720px,calc(100vw - 26px));height:auto;padding:0;border:1px solid var(--line);border-radius:17px;box-shadow:0 24px 90px #0005;background:var(--panel);color:var(--ink);overflow:hidden}
+.categories-dialog{--modal-width:720px;--modal-inset:0px;overflow:hidden}
 .categories-dialog[open]{display:flex;flex-direction:column}
-.categories-dialog::backdrop{background:#102135ac;backdrop-filter:blur(3px)}
-.categories-dialog-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:22px 24px 17px;border-bottom:1px solid var(--line)}
-.categories-dialog-head h2{font-size:20px;line-height:1.3;margin:4px 0 6px}
-.categories-dialog-head p{font-size:11px;line-height:1.65;color:var(--muted);margin:0}
-.categories-dialog-x{width:35px;height:35px;flex:0 0 auto;cursor:pointer;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:9px;font-size:21px}
+
+.categories-dialog-head{padding:var(--modal-pad);border-bottom:1px solid var(--line)}
+
+
 .categories-dialog-content{overflow:auto;padding:18px 24px;min-height:0}
 .categories-dialog .rules-category-list{display:flex;flex-direction:column;gap:7px}
 .categories-dialog .rules-category-row{grid-template-columns:13px minmax(0,1fr) 122px 48px;gap:10px;padding:7px 10px;border-radius:9px;background:var(--bg)}
@@ -826,7 +824,6 @@ body{overflow:hidden}
   .rules-item-actions{grid-column:1;justify-content:flex-end}
   .rules-item-heading{gap:5px}
   .rules-item-source{flex-basis:100%;font-size:10px}
-  .categories-dialog-head{padding:17px 16px 13px}
   .categories-dialog-content{padding:13px 15px}
   .categories-dialog .rules-category-row{grid-template-columns:12px minmax(0,1fr) 81px 35px;gap:6px;padding:7px}
   .categories-dialog .rules-category-row input,.categories-dialog .rules-category-row select{font-size:11px;padding:5px 6px}
@@ -1094,7 +1091,7 @@ body{overflow:hidden}
 .monthly-heading .eyebrow{font-size:11px;letter-spacing:1.6px;font-weight:800;color:var(--accent)}
 .monthly-heading h1{margin:5px 0;font-size:28px;letter-spacing:-.7px;color:var(--ink)}
 .monthly-heading .lead{color:var(--muted);line-height:1.65;margin:3px 0}
-.monthly-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px;margin-bottom:18px}
+.monthly-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin-bottom:18px}
 .monthly-metric{min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:20px 17px;display:flex;flex-direction:column;gap:12px}
 .monthly-metric-label{font-size:12px;font-weight:700;color:var(--muted)}
 .monthly-metric-value{font-size:clamp(18px,2vw,25px);font-weight:850;letter-spacing:-.6px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
@@ -1148,7 +1145,7 @@ body{overflow:hidden}
 #import-view > .home-return-bar{order:0;flex:0 0 auto}
 
 /* Manual monthly Mizuho funding check: not an account transaction. */
-#home-view .home-funding{display:grid;gap:10px;padding:16px;border:1px solid var(--line,#dde2e8)}
+#home-view .home-funding{display:grid;gap:5px;padding:10px 12px;border:1px solid var(--line,#dde2e8);border-radius:10px}
 #home-view .home-funding-overdue{border-color:var(--danger,#bf4c51)}
 #home-view .home-funding-state{font-size:14px;line-height:1.45}
 #home-view .home-funding-overdue .home-funding-state{color:var(--danger,#bf4c51)}
@@ -1175,8 +1172,8 @@ body{overflow:hidden}
 .import-paste-body{display:grid;gap:10px;padding:13px 15px}
 .import-paste-body textarea{min-height:115px;max-width:100%;width:100%;box-sizing:border-box}
 .import-paste-body .parse-action{justify-self:start}
-.import-revision-dialog{width:min(680px,calc(100% - 24px));max-height:min(86vh,820px);border:1px solid var(--line);border-radius:15px;padding:0;background:var(--bg);color:var(--ink);box-shadow:0 18px 65px #0005}
-.import-revision-dialog::backdrop{background:#0c1c30a8}
+.import-revision-dialog{--modal-width:680px;--modal-inset:0px}
+
 .import-revision-inner{display:grid;gap:14px;padding:20px}
 .import-revision-inner h2{margin:0;font-size:19px}
 .import-revision-summary{margin:0;white-space:pre-line;font-size:13px}
@@ -1201,16 +1198,14 @@ body{overflow:hidden}
 .import-page-heading .import-add-open{width:auto;flex:0 0 auto;min-height:33px;margin:0;padding:7px 12px;font-size:12px;font-weight:700;white-space:nowrap;border-radius:9px}
 .import-page-heading .import-add-open.hidden{display:none!important}
 /* Reuse the established Finance native-dialog visual language. */
-.import-add-dialog{width:min(650px,calc(100vw - 28px));max-height:min(85dvh,740px);padding:0;
-  border:1px solid var(--line);border-radius:16px;background:var(--panel);color:var(--ink);
-  box-shadow:0 24px 90px #0005;overflow:hidden}
+.import-add-dialog{--modal-width:650px;--modal-inset:0px;overflow:hidden}
 .import-add-dialog[open]{display:flex;flex-direction:column}
-.import-add-dialog::backdrop{background:#102135a8;backdrop-filter:blur(3px)}
-.import-add-head{flex:0 0 auto;padding:19px 22px 15px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line)}
-.import-add-head h2{font-size:18px;letter-spacing:-.3px;margin:0}
-.import-add-close{width:35px;height:35px;flex:0 0 auto;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:9px;cursor:pointer;font-size:21px}
-.import-add-close:hover{background:var(--bg);border-color:var(--accent)}
-.import-add-close:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.import-add-head{flex:0 0 auto;padding:var(--modal-pad);border-bottom:1px solid var(--line)}
+
+
+
+
 .import-add-body{padding:20px 22px 23px;overflow-y:auto;min-height:0;overscroll-behavior:contain}
 .import-add-body>.import-panel{padding:0!important;min-height:0!important;border:0!important;box-shadow:none!important;margin:0!important;overflow:visible}
 .import-add-body>.import-panel>.panel-heading{display:none}
@@ -1223,9 +1218,6 @@ body{overflow:hidden}
 @media(max-width:630px){
   .import-page-heading{align-items:center}
   .import-page-heading .import-add-open{min-height:32px;padding:6px 10px;font-size:11px}
-  .import-add-dialog{width:calc(100vw - 20px);max-height:calc(100dvh - 24px);border-radius:14px}
-  .import-add-head{padding:14px 16px 12px}
-  .import-add-body{padding:15px 16px 18px}
   .import-add-body .dropzone{min-height:145px!important}
 }
 
@@ -1881,7 +1873,6 @@ select:not([multiple]){
   .manage-editor .manage-foot{display:flex;flex-wrap:wrap;gap:10px}
   .manage-editor .manage-foot button{min-height:40px}
   .manage-editor .manage-sort-button{white-space:normal}
-  .categories-dialog,.recent-merchants-dialog{width:calc(100vw - 20px)!important;max-width:none}
   .assets-recurring-grid .recurring-schedule-row{grid-template-columns:repeat(2,minmax(0,1fr))}
   .assets-recurring-grid .recurring-top-row{grid-template-columns:minmax(0,1fr)}
 }
@@ -2704,14 +2695,12 @@ details[open] > summary::after{
 .assets-once-more .text-button{margin:0;padding:5px 0}
 .assets-once-more .assets-help{margin:0}
 .assets-one-time-panel .assets-operation-status:empty{display:none}
-.assets-once-dialog{position:fixed;inset:0;width:min(550px,calc(100vw - 26px));max-height:min(91dvh,780px);overflow-y:auto;
-  border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:16px;padding:22px 24px;box-shadow:0 18px 50px rgba(12,24,42,.21)}
-.assets-once-dialog::backdrop{background:rgba(12,24,42,.48)}
+.assets-once-dialog{--modal-width:550px}
+
 .assets-once-dialog:not([open]){display:none}
-.assets-once-modal-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:19px}
-.assets-once-modal-head h2{margin:0;font-size:19px}
-.assets-once-close{border:0!important;background:transparent!important;box-shadow:none!important;padding:0!important;margin:0!important;
-  color:var(--muted);font-size:24px;min-width:35px;min-height:35px;line-height:1;display:grid;place-items:center}
+.assets-once-modal-head{margin-bottom:14px}
+
+
 .assets-once-choice{border:0;padding:0;margin:0 0 19px;display:flex;flex-wrap:wrap;gap:9px 17px;min-width:0}
 .assets-once-choice legend{font-weight:750;font-size:12px;color:var(--muted);margin-bottom:8px}
 .assets-once-choice label{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
@@ -2735,7 +2724,6 @@ details[open] > summary::after{
   .assets-once-item{align-items:flex-start;flex-direction:column;gap:9px}
   .assets-once-item-action{align-self:stretch;justify-content:flex-end;width:100%}
   .assets-once-item-action b{margin-right:auto;text-align:left}
-  .assets-once-dialog{padding:18px 16px;border-radius:13px}
   .assets-once-fields{gap:10px}
   .assets-once-fields > label{font-size:11px}
   .assets-once-choice{gap:10px 12px}
@@ -2793,15 +2781,6 @@ details[open] > summary::after{
 /* An income entry has no withdrawal source or category, so fill the row with two inputs. */
 .assets-recurring-grid .recurring-account-row:has(> .rules-field.hidden[for="assets-recurring-from"]){grid-template-columns:repeat(2,minmax(0,1fr))!important}
 
-/* All modal close crosses have the same unfussy appearance. */
-#assets-once-close,#categories-dialog-close,#recent-merchants-close{
-  width:38px!important;height:38px!important;min-width:38px!important;min-height:38px!important;
-  display:grid!important;place-items:center!important;align-items:center!important;justify-content:center!important;
-  border:none!important;outline-offset:2px;border-radius:8px!important;box-shadow:none!important;
-  background:transparent!important;color:var(--muted)!important;font-size:23px!important;line-height:1!important;
-  padding:0!important;margin:0!important;flex:0 0 38px!important;
-}
-#assets-once-close:hover,#categories-dialog-close:hover,#recent-merchants-close:hover{color:var(--ink)!important;background:transparent!important}
 html.assets-once-page-locked,html.assets-once-page-locked body{overflow:hidden!important;overscroll-behavior:none!important}
 #assets-once-dialog{overscroll-behavior:contain}
 
@@ -3527,9 +3506,9 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 .legacy-cleanup-field input{width:100%;min-width:0}
 .legacy-cleanup-status{font-size:12px;color:var(--muted);line-height:1.6;margin:13px 0 0;overflow-wrap:anywhere}
 .legacy-cleanup-status.error{color:#b94747}
-#legacy-cleanup-dialog{width:min(520px,calc(100vw - 26px));max-height:90dvh;overflow:auto;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:15px;padding:23px;box-shadow:0 18px 50px #101b3030}
-#legacy-cleanup-dialog::backdrop{background:#101b3080}
-#legacy-cleanup-dialog h2{font-size:18px;margin:0}
+#legacy-cleanup-dialog{--modal-width:520px}
+
+
 #legacy-cleanup-dialog input[type=password]{min-height:42px;border:1px solid var(--line);border-radius:9px;padding:10px;background:var(--panel);color:var(--ink)}
 #legacy-cleanup-file{max-width:100%;font-size:12px}
 
@@ -3858,11 +3837,11 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 .settings-card-footer{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 
 /* Icon-only appearance control on desktop. Mobile retains its top-bar icon. */
-.sidebar .desktop-theme-toggle{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;
+.sidebar :is(.desktop-theme-toggle,.activity-history-open){display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;
   border:1px solid #43536b;border-radius:10px;background:transparent;color:#d7e9f6;cursor:pointer;padding:8px}
-.sidebar .desktop-theme-toggle:hover{background:#ffffff14}
-.sidebar .desktop-theme-toggle:focus-visible{outline:2px solid #8bcbbf;outline-offset:2px}
-.sidebar .desktop-theme-toggle svg{display:block;width:22px;height:22px}
+.sidebar :is(.desktop-theme-toggle,.activity-history-open):hover{background:#ffffff14}
+.sidebar :is(.desktop-theme-toggle,.activity-history-open):focus-visible{outline:2px solid #8bcbbf;outline-offset:2px}
+.sidebar :is(.desktop-theme-toggle,.activity-history-open) svg{display:block;width:22px;height:22px;flex:none}
 .sidebar .desktop-theme-toggle .theme-sun{display:none}
 :root[data-theme="dark"] .sidebar .desktop-theme-toggle .theme-sun{display:block}
 :root[data-theme="dark"] .sidebar .desktop-theme-toggle .theme-moon{display:none}
@@ -4112,18 +4091,21 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 @media(max-width:800px){.toast.activity-toast{bottom:calc(12px + env(safe-area-inset-bottom,0px))!important;right:12px!important;max-width:calc(100vw - 24px)}}
 @media(prefers-reduced-motion:reduce){.toast.activity-toast{transition:none!important}.activity-toast[data-kind="working"] .activity-icon{animation-duration:1.8s}}
 
-.activity-history-open{max-width:100%;font-size:12px;cursor:pointer;background:transparent;color:inherit;border:1px solid currentColor;border-radius:6px;padding:6px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.activity-history-open.has-unread{color:#e4ae61;font-weight:700}
-.activity-history-dialog{position:fixed;inset:0;margin:auto;width:min(560px,calc(100vw - 28px));max-height:calc(100dvh - 28px);overflow:auto;overscroll-behavior:contain;padding:20px;border-radius:14px;box-shadow:0 18px 50px #0004}
-.activity-history-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.activity-history-heading h2{margin:0;font-size:18px;line-height:1.5}
+.sidebar .activity-history-open{position:relative;flex:none;align-self:flex-start;overflow:visible}
+.sidebar .activity-history-open.has-unread{color:#e4ae61}
+.activity-history-dialog{--modal-width:560px}
+
+.activity-history-tools{display:flex;justify-content:flex-end;margin:4px 0}
+.activity-history-tools .text-button{font-size:12px;padding:6px 0;min-height:32px;border:0;background:transparent;box-shadow:none}
+.activity-history-tools .text-button:disabled{opacity:.45;cursor:default}
 .activity-history-entry{padding:10px 0;border-bottom:1px solid currentColor;overflow-wrap:anywhere}
 .activity-history-entry p{margin:4px 0;white-space:pre-wrap;user-select:text;-webkit-user-select:text}
 .activity-history-entry[data-kind="bad"],.activity-history-entry[data-kind="warn"]{border-left:3px solid #d97706;padding-left:10px}
 
-.activity-history-open{position:relative;display:grid;place-items:center;width:40px;height:36px;min-width:40px;padding:0;overflow:visible}
-#activity-history-count:not(:empty){position:absolute;top:-4px;right:-6px;border-radius:10px;background:#a33d28;color:white;font-size:10px;padding:1px 4px}
-.activity-history-dialog{background:var(--panel);color:var(--ink);border:1px solid var(--line)}
-.activity-history-dialog::backdrop{background:#102135a8}
+#activity-history-count{position:absolute;top:-3px;right:-3px;min-width:16px;height:16px;display:grid;place-items:center;border-radius:10px;background:#a33d28;color:white;font-size:10px;font-weight:700;line-height:1;padding:0 4px;pointer-events:none}
+#activity-history-count:empty{display:none}
+
+
 .activity-history-entry{border-bottom-color:var(--line)}
 #import-view.has-import-rejections:not(.has-import-drafts)>.results-grid{display:block!important;height:auto!important}
 #import-view.has-import-rejections:not(.has-import-drafts)>.results-grid>.detail-panel{display:none!important}
@@ -4264,10 +4246,11 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
     width:220px;padding:0 1px!important;margin:0!important;
     border:0!important;justify-content:flex-start!important;
   }
-  #finance-sidebar .desktop-theme-toggle{
+  #finance-sidebar :is(.desktop-theme-toggle,.activity-history-open){
     box-sizing:border-box;flex:0 0 42px;width:42px;height:42px;
     margin:0;padding:0;display:inline-flex;align-items:center;justify-content:center;
   }
+  #finance-sidebar .activity-history-open{margin-left:1px}
   /* Keep the appearance control directly below Settings/Payroll; the sidebar's
      bottom navigation already owns the automatic remaining-space margin. */
   #finance-sidebar .sidebar-footer{margin:10px 0 0!important;padding-top:0!important}
@@ -4594,7 +4577,7 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 #summary-view > .monthly-heading.finance-page-heading{display:block!important;align-items:initial!important;justify-content:initial!important;margin-bottom:12px}
 #summary-view > .monthly-controls.finance-period-nav{display:flex;justify-content:flex-start;align-items:center;flex-wrap:wrap;width:fit-content;max-width:100%;margin:0 0 20px}
 #summary-view > .monthly-controls #monthly-report-open{width:auto;flex:0 0 auto}
-.fixed-cost-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.fixed-cost-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .fixed-cost-metric{display:grid;gap:6px;min-width:0;padding:16px;border:1px solid var(--line,#dde2e8);border-radius:12px;background:var(--panel,#fff)}
 .fixed-cost-metric span{font-size:12px;color:var(--muted,#687387)}
 .fixed-cost-metric strong{font-size:clamp(1rem,1.4vw,1.4rem);overflow-wrap:anywhere}
@@ -4607,8 +4590,8 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 .fixed-cost-item-price{display:grid;gap:5px;min-width:90px;text-align:right}
 .fixed-cost-item-actions{display:flex;gap:8px;flex-wrap:wrap}
 .fixed-cost-item-actions button{min-height:38px}
-.fixed-cost-dialog{box-sizing:border-box;width:min(96vw,570px);max-width:570px;max-height:min(90dvh,820px);margin:auto;padding:0;border:1px solid var(--line,#dde2e8);border-radius:15px;background:var(--panel,#fff);color:var(--ink,#1c2739);box-shadow:0 25px 75px #0004}
-.fixed-cost-dialog::backdrop{background:#09152bb8}
+.fixed-cost-dialog{--modal-width:570px;--modal-inset:0px}
+
 .fixed-cost-form{padding:20px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px;overflow-y:auto;max-height:min(90dvh,820px)}
 .fixed-cost-form h2,.fixed-cost-form .fixed-cost-form-actions,.fixed-cost-form .fixed-cost-form-error{grid-column:1/-1;margin:0}
 .fixed-cost-form h2{font-size:1.4rem;margin-bottom:4px}
@@ -4620,8 +4603,8 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 .fixed-cost-form-error{color:var(--danger,#bd3e43);font-size:12px;min-height:0}
 .fixed-cost-form-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:8px}
 .fixed-cost-form-actions button{min-height:40px;padding:8px 18px}
-@media(max-width:620px){.fixed-cost-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.fixed-cost-metric:last-child{grid-column:1/-1}.fixed-cost-toolbar .subscriptions-tabs{flex-wrap:nowrap;overflow-x:auto}.fixed-cost-toolbar .subscriptions-tab{flex:0 0 auto;white-space:nowrap}.fixed-cost-form{padding:15px;gap:10px}.fixed-cost-item{align-items:flex-start}.fixed-cost-item-price{text-align:right}}
-@media(max-width:360px){.fixed-cost-form{grid-template-columns:1fr}.fixed-cost-field{grid-column:1/-1}.fixed-cost-metrics{grid-template-columns:1fr}.fixed-cost-metric:last-child{grid-column:auto}}
+@media(max-width:620px){.fixed-cost-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.fixed-cost-toolbar .subscriptions-tabs{flex-wrap:nowrap;overflow-x:auto}.fixed-cost-toolbar .subscriptions-tab{flex:0 0 auto;white-space:nowrap}.fixed-cost-form{padding:15px;gap:10px}.fixed-cost-item{align-items:flex-start}.fixed-cost-item-price{text-align:right}}
+@media(max-width:360px){.fixed-cost-form{grid-template-columns:1fr}.fixed-cost-field{grid-column:1/-1}.fixed-cost-metrics{grid-template-columns:1fr}}
 .fixed-cost-detail-line{display:flex;gap:12px;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--line,#dde2e8);font-size:13px}
 .fixed-cost-detail-line strong{white-space:nowrap}
 
@@ -4643,7 +4626,6 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 .card-setting-rate-edit[open]>.card-setting-field{margin-top:8px}
 
 /* Shared registration and editing: three peer fields per row. */
-.fixed-cost-dialog:has(>.fixed-cost-create-mode){width:min(calc(100vw - 24px),840px);max-width:840px}
 /* Native select text alignment varies by browser. Keep the shared arrow and
    explicitly align the selected value to the same leading edge as text inputs. */
 .fixed-cost-form .fixed-cost-field select{text-align:left;text-align-last:left}
@@ -4738,22 +4720,30 @@ button.danger-action:not(.manage-row-delete,.rules-remove,.category-delete,.asse
 button.danger-action:not(:disabled):hover{background:var(--action-danger-hover);border-color:var(--action-danger-ink);color:var(--action-danger-ink)}
 button:is(.save-action,.secondary-action,.danger-action,.text-button,.primary-action):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
-/* Shared native-modal headings, actions and safe confirmation surface. */
+/* Shared native-modal surface; individual screens choose width and scroll layout. */
+:root{--modal-pad:20px}
+@media(max-width:630px){:root{--modal-pad:16px}}
+body dialog.finance-modal{box-sizing:border-box;position:fixed;inset:0;margin:auto;width:min(var(--modal-width,460px),calc(100vw - 28px));max-width:calc(100vw - 28px);max-height:calc(100dvh - 28px);padding:var(--modal-inset,var(--modal-pad));border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--ink);box-shadow:0 18px 50px #0004;overscroll-behavior:contain}
+body dialog.finance-modal::backdrop{background:rgba(12,24,42,.52)}
+body dialog.finance-modal:not([open]){display:none}
+body dialog.finance-modal:has(>.fixed-cost-create-mode){--modal-width:840px}
+.finance-modal :is(.vault-form,.fixed-cost-form,.import-revision-inner,.import-add-body,.categories-dialog-content,.categories-dialog-foot){padding:var(--modal-pad)}
+.finance-modal .fixed-cost-form{max-height:calc(100dvh - 30px)}
+.finance-modal .finance-modal-head h2{font-size:18px;line-height:1.5;margin:0;min-width:0;overflow-wrap:anywhere}
+
 .finance-modal-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;grid-column:1/-1}
-.finance-modal-head h2{min-width:0;margin:0;overflow-wrap:anywhere}
-.finance-modal-x{flex:0 0 40px;width:40px;height:40px;display:grid;place-items:center;border:0;background:transparent;color:var(--muted);font-size:25px;line-height:1;padding:0;border-radius:8px}
-.finance-modal-x:hover{color:var(--ink);background:var(--soft)}
-.finance-modal-x:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.finance-confirm-dialog{box-sizing:border-box;position:fixed;inset:0;margin:auto;width:min(460px,calc(100vw - 28px));max-height:calc(100dvh - 28px);overflow:auto;overscroll-behavior:contain;padding:20px;border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--ink);box-shadow:0 18px 50px #0004}
-.finance-confirm-dialog::backdrop{background:rgba(12,24,42,.52)}
+.finance-modal-note{font-size:12px;color:var(--muted);margin:4px 0 0;line-height:1.6}
+.finance-modal-x{cursor:pointer}
+.finance-confirm-dialog{--modal-width:460px}
+
 .finance-confirm-dialog:not([open]){display:none}
 .finance-confirm-dialog h2{font-size:18px;line-height:1.5}
 .finance-confirm-message{margin:12px 0 20px;font-size:14px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
 .finance-confirm-typed{display:grid;gap:8px;margin:0 0 16px;font-size:13px;color:var(--ink)}
 .finance-confirm-typed input{width:100%;min-width:0;box-sizing:border-box;min-height:44px}
 .finance-modal-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:10px}
-.finance-modal-actions button{min-height:44px;padding:9px 16px;max-width:100%;white-space:normal}
-@media(max-width:420px){.finance-confirm-dialog{padding:16px}.finance-modal-actions button{flex:1 1 110px}}
+.finance-modal-actions button{max-width:100%;white-space:normal}
+@media(max-width:420px){.finance-modal-actions button{flex:1 1 110px}}
 
 /* Final UI: action dimensions are shared across workspaces. Compact row controls
    and navigation retain their own sizes; only the action roles are normalized. */
@@ -4765,25 +4755,24 @@ body button:is(.save-action,.secondary-action,.danger-action,.primary-action):no
 }
 /* The dedicated connection grid deliberately keeps its >=44px touch targets. */
 body #cloud-view .cloud-primary-actions button{min-height:44px!important}
-body dialog.finance-confirm-dialog .finance-modal-actions button{min-height:44px!important}
-body dialog :is(.finance-modal-x,#import-add-close,#assets-once-close,#categories-dialog-close,#recent-merchants-close){
+
+body dialog .finance-modal-x{
   width:var(--finance-modal-close-size)!important;height:var(--finance-modal-close-size)!important;
   min-width:var(--finance-modal-close-size)!important;min-height:var(--finance-modal-close-size)!important;
   flex:0 0 var(--finance-modal-close-size)!important;font-size:25px!important;line-height:1!important;
   display:grid!important;place-items:center!important;padding:0!important;margin:0!important;
   border:0!important;background:transparent!important;color:var(--muted)!important;box-shadow:none!important;border-radius:8px!important;
 }
-body dialog :is(.finance-modal-x,#import-add-close,#assets-once-close,#categories-dialog-close,#recent-merchants-close):hover{color:var(--ink)!important;background:var(--bg)!important}
-body dialog :is(.finance-modal-x,#import-add-close,#assets-once-close,#categories-dialog-close,#recent-merchants-close):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-dialog :is(.finance-modal-head,.import-add-head,.categories-dialog-head,.recent-merchants-heading,.assets-once-modal-head){align-items:center;gap:12px}
-dialog :is(.finance-modal-head,.import-add-head,.categories-dialog-head,.recent-merchants-heading,.assets-once-modal-head) h2{font-size:18px;line-height:1.5;margin:0;min-width:0;overflow-wrap:anywhere}
+body dialog .finance-modal-x:hover{color:var(--ink)!important;background:var(--bg)!important}
+body dialog .finance-modal-x:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
 #rules-category-status:empty{margin:0}
 @media(min-width:631px){.categories-dialog-actions{margin-inline-start:auto}}
 .rules-list-tools{justify-content:flex-end}
 
 /* Polish 2: compact financial state and optional details. */
 #home-view .home-funding-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
-#home-view .home-funding-amount{font-size:24px;font-variant-numeric:tabular-nums;line-height:1.3}
+#home-view .home-funding-amount{font-size:17px;font-variant-numeric:tabular-nums;line-height:1.3}
 #home-view .home-funding-controls button{min-height:40px;font-size:13px}
 .monthly-chart-date-controls{margin:6px 0}
 .monthly-chart-date-controls .monthly-chart-dates{margin-top:8px}
@@ -4791,7 +4780,9 @@ dialog :is(.finance-modal-head,.import-add-head,.categories-dialog-head,.recent-
 .reports-revision-bar{flex-wrap:wrap;gap:8px}
 .points-benefits > .points-benefits-empty{margin:8px 0 0}
 @media(max-width:720px){#home-view .home-funding-controls button{min-height:44px}}
-#home-view .home-funding-heading .home-section-title{margin:0}
+#home-view .home-funding-heading>strong:first-child{font-size:13px}
+#home-view .home-funding-completed>summary{cursor:pointer;padding:6px 2px;font-size:12px}
+#home-view .home-funding-completed[open]>summary{margin-bottom:6px}
 
 /* Polish 3: compact account/contract management without changing controls. */
 .fixed-cost-next{white-space:pre-line}
@@ -4885,3 +4876,29 @@ dialog :is(.finance-modal-head,.import-add-head,.categories-dialog-head,.recent-
 /* Align settings form actions with the adjacent fields despite global action sizing. */
 body .settings-payroll-fields>button:is(.save-action,.secondary-action){min-height:42px!important}
 @media(max-width:800px){body .settings-payroll-fields>button:is(.save-action,.secondary-action){min-height:44px!important}}
+
+/* Read-only release history, available without a vault. */
+#release-history-open{display:inline-block;padding:2px 0;border:0;background:none;color:inherit;font:inherit;text-align:inherit;cursor:pointer}
+#release-history-open:hover{text-decoration:underline;text-underline-offset:3px}
+#release-history-open:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:3px}
+.release-history-dialog.finance-confirm-dialog{--modal-width:680px}
+.release-history-dialog .finance-modal-head{position:sticky;top:calc(-1 * var(--modal-pad));background:var(--panel);z-index:1;padding:10px 0;margin:-10px 0 4px}
+.release-history-entry{padding:18px 0;border-top:1px solid var(--line);overflow-wrap:anywhere}
+.release-history-entry:first-child{border-top:0}
+.release-history-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;color:var(--muted);font-size:12px}
+.release-history-meta strong{color:var(--ink);font-size:15px}
+.release-history-latest{background:var(--soft);color:var(--ink);padding:2px 7px;border-radius:5px}
+.release-history-entry h3{font-size:17px;margin:8px 0 6px}
+.release-history-entry h4{font-size:13px;margin:12px 0 4px;color:var(--ink)}
+.release-history-entry p,.release-history-entry li{font-size:13px;line-height:1.75;margin:0}
+.release-history-entry ul{padding-left:1.4em;margin:0;list-style:disc}
+.release-history-entry .release-history-stats{margin-top:12px;color:var(--muted);font-size:12px}
+.release-history-links{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:10px}
+.release-history-links a{font-size:12px;color:var(--accent);text-decoration:underline;text-underline-offset:3px}
+
+
+@media(min-width:801px){.app-shell.nav-collapsed:not(.nav-peeking) #release-history-open,html.finance-nav-boot-collapsed .app-shell:not(.nav-collapsed) #release-history-open{visibility:hidden}}
+
+/* Consistent cashflow balance tones, shared across the four views. */
+.workspace .cashflow-positive>strong{color:var(--accent)}
+.workspace .cashflow-negative>strong{color:var(--danger,#bf4c51)}

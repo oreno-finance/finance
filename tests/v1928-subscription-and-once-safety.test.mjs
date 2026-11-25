@@ -84,6 +84,28 @@ test('registered UI labels current contract amount and latest charge separately 
   assert.match(code,/latestRegisteredCardCharges\(source\)/);
   assert.match(code,/現在の契約額/);
   assert.match(code,/最新の請求実績/);
-  assert.match(code,/現在の契約額との差額/);
+  assert.match(code,/請求時の契約額/);
+  assert.match(code,/priceOnDay\(origin.pricing\?\?\[\],observation.usedOn,origin.amount\)/);
   assert.doesNotMatch(code,/setCardRecurringDecision\(key,\s*latest/);
+});
+
+test('registered charge compares usage-day price including boundary, never guesses missing history',async()=>{
+  const {runInNewContext}=await import('node:vm');
+  const {priceOnDay}=await import('../dist/src/fixed-costs/contracts.js');
+  const {latestContractCardCharge}=await import('../dist/src/subscriptions/detect.js');
+  const code=readFileSync(new URL('../dist/src/ui/subscriptions.js',import.meta.url),'utf8');
+  const body=code.slice(code.indexOf('function latestEvidence('),code.indexOf('function itemsFromSource('));
+  assert.ok(body.includes('lastDifference'));
+  const compare=runInNewContext(body+'\nlatestEvidence',{priceOnDay,latestContractCardCharge});
+  const origin={amount:3000,pricing:[{effectiveOn:'2026-11-01',amount:2000},{effectiveOn:'2026-12-01',amount:3000}]};
+  const obs=(usedOn,amount)=>[{usedOn,amount,paymentDate:'2026-12-27',period:'2026-12'}];
+  assert.equal(compare(origin,obs('2026-11-10',2000)).lastDifference,0);
+  assert.equal(compare(origin,obs('2026-11-30',2200)).lastDifference,200);
+  assert.equal(compare(origin,obs('2026-12-01',3000)).lastDifference,0);
+  assert.equal(compare(origin,obs('2026-12-01',2000)).lastDifference,-1000);
+  assert.equal(compare(origin,obs('2026-10-31',2000)).lastDifference,undefined);
+  assert.equal(compare({amount:3000},obs('2026-11-10',2000)).lastDifference,undefined);
+  assert.equal(compare({amount:3000,pricing:[]},obs('2026-11-10',2000)).lastDifference,undefined);
+  assert.equal(compare(origin,[...obs('2026-12-01',3000),...obs('2026-12-02',3000)]).lastDifference,undefined);
+  assert.equal(compare(origin,obs('2026-10-31',2000)).lastAmount,2000);
 });

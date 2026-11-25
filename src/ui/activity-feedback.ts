@@ -1,3 +1,4 @@
+import {bindModalDismiss} from './modal.js';
 /** Finance-wide, ephemeral feedback. No financial information is persisted here. */
 export type ActivityKind = 'working' | 'good' | 'warn' | 'bad' | 'info';
 let dismissal: ReturnType<typeof setTimeout> | undefined;
@@ -15,6 +16,8 @@ function updateHistory():void{
   const button=document.getElementById('activity-history-open');
   if(button){button.setAttribute('aria-label',count?`通知履歴（未確認 ${count}件）`:'通知履歴');button.classList.toggle('has-unread',count>0);}
   const badge=document.getElementById('activity-history-count');if(badge)badge.textContent=count?String(count):'';
+  const markRead=document.getElementById('activity-history-read') as HTMLButtonElement|null;
+  if(markRead)markRead.disabled=count===0;
   const dialog=document.getElementById('activity-history-dialog') as HTMLDialogElement|null;
   const list=document.getElementById('activity-history-list');
   if(!list||!dialog?.open)return;
@@ -33,7 +36,9 @@ export function initActivityHistory():void{
   const button=document.getElementById('activity-history-open');
   if(!dialog||!button)return;
   button.addEventListener('click',()=>{if(!dialog.open){dialog.showModal();updateHistory();}});
-  document.getElementById('activity-history-close')?.addEventListener('click',()=>dialog.close());
+  const close=()=>dialog.close();
+  document.getElementById('activity-history-close')?.addEventListener('click',close);
+  bindModalDismiss(dialog,close);
   document.getElementById('activity-history-read')?.addEventListener('click',()=>{for(const entry of history)entry.unread=false;updateHistory();});
   updateHistory();
 }

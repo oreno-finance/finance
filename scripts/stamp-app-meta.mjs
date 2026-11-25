@@ -6,7 +6,7 @@ import {realpathSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-const SIDEBAR_META=/(<div class="sidebar-meta"><span>)Finance v[^<]*(<\/span><time id="app-updated-at" datetime=")[^"]*(">)更新 [^<]*(<\/time><\/div>)/g;
+const SIDEBAR_META=/(<div class="sidebar-meta"><span><button type="button" id="release-history-open" aria-haspopup="dialog" aria-controls="release-history-dialog" title="アップデート履歴">)Finance v[^<]*(<\/button><\/span><time id="app-updated-at" datetime=")[^"]*(">)ビルド [^<]*(<\/time><\/div>)/g;
 
 /** Build day in Japan. Use a fixed time zone so CI and Macs agree. */
 export function japanBuildDate(now=new Date()) {
@@ -24,7 +24,7 @@ export function stampHtml(html,version,day) {
   let found=0;
   const result=html.replace(SIDEBAR_META,(_whole,prefix,middle,end,suffix)=>{
     found++;
-    return `${prefix}Finance v${version}${middle}${day}${end}更新 ${day.replaceAll('-','/')} JST${suffix}`;
+    return `${prefix}Finance v${version}${middle}${day}${end}ビルド ${day.replaceAll('-','/')} JST${suffix}`;
   });
   if(found!==1)throw new Error(`メニューのバージョン表示は1か所必要です（検出${found}件）。`);
   return result;
@@ -47,5 +47,5 @@ if(process.argv[1] && realpathSync(process.argv[1])===realpathSync(fileURLToPath
   if(day!==undefined&&(!/^\d{4}-\d{2}-\d{2}$/.test(day)||japanBuildDate(now)!==day))
     throw new Error('FINANCE_BUILD_DATE が不正です。');
   const meta=await stampAppMeta(undefined,now);
-  console.log(`Finance sidebar: v${meta.version} / 更新 ${meta.day} JST${meta.changed?'':' (already current)'}`);
+  console.log(`Finance sidebar: v${meta.version} / ビルド ${meta.day} JST${meta.changed?'':' (already current)'}`);
 }

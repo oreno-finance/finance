@@ -1,13 +1,15 @@
 /** Home uses the unchanged monthlyReport as its only household cashflow source. */
-import type { AssetAccountId, BalanceSnapshot } from '../cloud/assets.js';
-import { changePeriod, monthlyReport, monthlyCashflow, prepareMonthlyReports, type MonthlyReport, type MonthlySource } from '../summary/monthly-summary.js';
+import { ASSET_ACCOUNTS, type AssetsDocument, type AssetAccountId, type BalanceSnapshot } from '../cloud/assets.js';
+import { changePeriod, monthlyReport, monthlyCashflow, type MonthlyReport, type MonthlySource } from '../summary/monthly-summary.js';
+import { lastDayOfNextMonth } from '../cloud/asset-projection.js';
+import { prepareBankForecast, forecastBankBalances } from '../cloud/salary-projection.js';
 import { forecastAccounts, type AccountForecasts } from './account-events.js';
 import { homeActions, type HomeAction } from './action-items.js';
 import {pendingCardSubscriptions} from '../subscriptions/detect.js';
 export type HomeCoverage='missing'|'partial'|'needs-review'|'provisional'|'registered';
 export interface HomeAccount {
   id:AssetAccountId; name:string; snapshot:BalanceSnapshot|null;
-  predicted:number|null; predictedReliable:boolean; projectedAt:string|null;
+  current:number|null; predicted:number|null; warning:string|null;
 }
 export interface HomeOverview {
   today:string; period:string; report:MonthlyReport; coverage:HomeCoverage;
@@ -17,7 +19,9 @@ export interface HomeOverview {
 }
 export function homeOverview(source:MonthlySource,today:string):HomeOverview {
   const currentPeriod=today.slice(0,7);
-  const prepared=prepareMonthlyReports(source.records);
+  const assets={...source.assets,snapshots:source.assets.snapshots??[]} as AssetsDocument;
+  const work=prepareBankForecast(source.records,assets);
+  const prepared=work.prepared;
   const adjusted={...source,currentPeriod};
   const byMonth=new Map<string,MonthlyReport>();
   const reportForMonth=(period:string):MonthlyReport=>{
@@ -35,17 +39,13 @@ export function homeOverview(source:MonthlySource,today:string):HomeOverview {
   const cashflow=monthlyCashflow(report);
   const coverage:HomeCoverage=cashflow.coverage==='review'?'needs-review':cashflow.coverage;
   const outflow=cashflow.expense;
-  const bankAccountIds:AssetAccountId[]=['rakuten-bank','mizuho-bank','cash-savings','nisa'];
-  const labels:Record<AssetAccountId,string>={'rakuten-bank':'楽天銀行','mizuho-bank':'みずほ銀行',
-    'cash-savings':'貯金口座','nisa':'NISA'};
-  const accounts=bankAccountIds.map(id=>{
-    const snapshot=source.assets.snapshots?.filter(s=>s.accountId===id&&
-      new Date(s.observedAt).getTime()<=new Date(`${today}T23:59:59Z`).getTime())
-      .sort((a,b)=>b.observedAt.localeCompare(a.observedAt))[0]??null;
-    const bank=forecast.accounts.find(item=>item.accountId===id);
-    return {id,name:labels[id],snapshot,predicted:bank?.projected??null,
-      predictedReliable:bank?.reliable??false,projectedAt:bank?.projectedAt??null};
-  });
+  // Same projection as account management, including NISA and opted-in Payroll.
+  const income=source.payroll.ready?[...source.payroll.entries]:[];
+  const deposit=assets.payrollDepositAccount??null;
+  const current=forecastBankBalances(assets,today,source.records,income,deposit,today,work).accounts;
+  const next=forecastBankBalances(assets,lastDayOfNextMonth(new Date(`${today}T12:00:00`)),source.records,income,deposit,today,work).accounts;
+  const accounts=ASSET_ACCOUNTS.map(({id,name})=>({id,name,snapshot:current[id].baseline,current:current[id].balance,
+    predicted:next[id].balance,warning:current[id].warning??next[id].warning}));
   const cardNames=Object.fromEntries(Object.entries(source.assets.cardPreferences??{}).filter(([,preference])=>!!preference.name).map(([id,preference])=>[id,preference.name!]));
   const actions=homeActions(source,report,forecast,today);
   const candidates=pendingCardSubscriptions(source,today.slice(0,7));

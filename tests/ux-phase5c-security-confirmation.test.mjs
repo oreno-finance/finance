@@ -44,3 +44,37 @@ test('アプリの標準確認ダイアログを廃止し、ブラウザ離脱�
  assert.match(cloud,/requiredText:'削除'/);assert.match(cloud,/cleanupContext\?\.\(\)/);
  assert.match(cloud,/if\(cleanupCounts!==preview\|\|!cleanupContext\?\.\(\)\|\|!backupConfirmed.checked/);
 });
+
+test('PDF download URLs are revoked on timeout or vault lock and never retained twice',()=>{
+ const start=main.indexOf('const originalDownloadUrls ='),end=main.indexOf('function setBadgeState(',start);
+ assert.ok(start>=0&&end>start);
+ const timers=new Map(),revoked=[],clicked=[];let seq=0,urlSeq=0;
+ const env={Map,Blob,URL:{createObjectURL:()=>`blob:synthetic-${++urlSeq}`,revokeObjectURL:u=>revoked.push(u)},
+  setTimeout(fn,ms){assert.equal(ms,60000);timers.set(++seq,fn);return seq;},clearTimeout(id){timers.delete(id);},
+  document:{createElement:()=>({click(){clicked.push(this.href);},remove(){}}),body:{append(){}}}};
+ const ctx=vm.createContext(env);vm.runInContext(main.slice(start,end),ctx);
+ ctx.downloadFile('synthetic','application/pdf','sample.pdf');ctx.downloadFile('synthetic','application/pdf','sample.pdf');
+ assert.equal(clicked.length,2);assert.equal(timers.size,2);
+ timers.get(1)();assert.deepEqual(revoked,['blob:synthetic-1']);assert.equal(timers.size,1);
+ ctx.revokeOriginalDownloadUrls();assert.deepEqual(revoked,['blob:synthetic-1','blob:synthetic-2']);assert.equal(timers.size,0);
+ ctx.revokeOriginalDownloadUrls();assert.equal(revoked.length,2);
+ assert.match(main,/function clearUnlockedFinanceViews\(\) \{\s*lockSequence\+\+;\s*revokeOriginalDownloadUrls\(\)/);
+ assert.match(main,/revokeOriginalDownloadUrls\(\);\s*liveVault = vault;/);
+});
+
+test('a PDF read completed after vault lock or replacement cannot create a download URL',async()=>{
+ const start=main.indexOf('async function downloadManagedOriginal('),end=main.indexOf('async function clearManagerChanges(',start);
+ assert.ok(start>=0&&end>start);
+ for(const mode of ['locked','replaced','normal']){
+  let resolve;const s={};const btn={disabled:false};let downloads=0;
+  const vault={unlocked:true,original:()=>new Promise(r=>resolve=r)};
+  const env={active:()=>s,savedIds:new Map([[s,'sample']]),liveVault:vault,lockSequence:0,filesBusy:false,cloudRefreshing:false,$:()=>btn,
+    Uint8Array,downloadFile:()=>downloads++,canonicalStatementFilename:()=> 'sample.pdf',toast(){}};
+  const ctx=vm.createContext(env);vm.runInContext(main.slice(start,end),ctx);
+  const promise=ctx.downloadManagedOriginal();
+  if(mode==='locked'){ctx.lockSequence++;vault.unlocked=false;}
+  if(mode==='replaced')ctx.liveVault={unlocked:true};
+  resolve(new Uint8Array([37,80,68,70]));await promise;
+  assert.equal(downloads,mode==='normal'?1:0,mode);assert.equal(ctx.filesBusy,false);
+ }
+});

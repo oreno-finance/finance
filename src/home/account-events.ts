@@ -14,7 +14,7 @@ export type CashEventKind = 'card' | 'card-estimate' | 'transfer' | 'recurring' 
 export interface AccountCashEvent {
   id: string; date: string; accountId: BankAccountId; amount: number; title: string;
   kind: CashEventKind; recordId?: string; cardId?: string; confirmation?: SummaryCard['confirmation']; estimated?:boolean;
-  movementStatus?:'planned'|'done'|'estimated';route?:string;
+  movementStatus?:'planned'|'done'|'estimated';route?:string;transferId?:string;
 }
 export interface AccountBalanceForecast {
   accountId: BankAccountId; name: string; observed: BalanceSnapshot | null;
@@ -77,8 +77,9 @@ export function forecastAccounts(source:MonthlySource,today:string,horizonDays=4
   const addMovement=(id:string,date:string,title:string,amount:number,kind:CashEventKind,from:AssetAccountId|null,to:AssetAccountId|null,movementStatus:AccountCashEvent['movementStatus']='planned')=>{
     const name=(id:AssetAccountId)=>ASSET_ACCOUNTS.find(account=>account.id===id)?.name??'口座';
     const route=from&&to?`${name(from)} → ${name(to)}`:undefined;
-    if(from&&from!=='nisa')push({id:`${id}:from`,date,title,amount:-amount,kind,accountId:from,movementStatus,route});
-    if(to&&to!=='nisa')push({id:`${id}:to`,date,title,amount,kind,accountId:to,movementStatus,route});
+    const transferId=route?id:undefined;
+    if(from&&from!=='nisa')push({id:`${id}:from`,date,title,amount:-amount,kind,accountId:from,movementStatus,route,transferId});
+    if(to&&to!=='nisa')push({id:`${id}:to`,date,title,amount,kind,accountId:to,movementStatus,route,transferId});
   };
   const missingCardIds=new Set<string>();
   const cardLines:(SummaryCard&{paymentDate:string})[]=[];
@@ -131,7 +132,7 @@ export function forecastAccounts(source:MonthlySource,today:string,horizonDays=4
   for(const funding of estimatedMizuhoFunding(source.assets as import('../cloud/assets.js').AssetsDocument,source.records,today,until)){
     for(const [accountId,sign] of [['rakuten-bank',-1],['mizuho-bank',1]] as const)
       push({id:`${funding.id}:${accountId}`,date:funding.date,title:'みずほ銀行へ送金（見込み）',amount:sign*funding.amount,
-        kind:'transfer',accountId,estimated:true,movementStatus:'estimated',route:'楽天銀行 → みずほ銀行'});
+        kind:'transfer',accountId,estimated:true,movementStatus:'estimated',transferId:funding.id,route:'楽天銀行 → みずほ銀行'});
   }
   for(const entry of source.assets.oneTime??[])addMovement(`once:${entry.id}`,entry.date,entry.name,entry.amount,'one-time',entry.fromAccountId,entry.toAccountId,entry.status);
   const payrollAccount=source.assets.payrollDepositAccount;

@@ -21,8 +21,8 @@
 .legacy-cleanup-field input{width:100%;min-width:0}
 .legacy-cleanup-status{font-size:12px;color:var(--muted);line-height:1.6;margin:13px 0 0;overflow-wrap:anywhere}
 .legacy-cleanup-status.error{color:#b94747}
-#legacy-cleanup-dialog{width:min(520px,calc(100vw - 26px));max-height:90dvh;overflow:auto;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:15px;padding:23px;box-shadow:0 18px 50px #101b3030}
-#legacy-cleanup-dialog::backdrop{background:#101b3080}
-#legacy-cleanup-dialog h2{font-size:18px;margin:0}
+#legacy-cleanup-dialog{--modal-width:520px}
+
+
 #legacy-cleanup-dialog input[type=password]{min-height:42px;border:1px solid var(--line);border-radius:9px;padding:10px;background:var(--panel);color:var(--ink)}
 #legacy-cleanup-file{max-width:100%;font-size:12px}

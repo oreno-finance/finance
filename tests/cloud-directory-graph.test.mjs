@@ -292,3 +292,29 @@ test('Payroll new generation income uses listed versions folder and never calls 
   assert.ok(calls.some(c=>c.url.includes('/payroll-id/children?$select=id,name,folder&$top=200')));
   assert.ok(calls.every(c=>c.method==='GET'));
 });
+
+test('fresh index reads supersede older jobs without publishing stale ciphertext or joining an old request',{timeout:5000},async()=>{
+  const f=drive();await f.client.writeFinanceIndex('old-index',null);
+  const entry=[...f.entries.values()].find(x=>x.name==='index.enc');
+  let release,started;const entered=new Promise(r=>started=r);
+  let delayed=true;
+  const client=new OneDriveTestClient('token',async(url,init={})=>{
+    if(delayed&&url.startsWith('https://download.test/')){
+      delayed=false;const old=entry.text;started();await new Promise(r=>release=r);return new Response(old);
+    }
+    return f.http(url,init);
+  });
+  const older=client.readFinanceIndex();await entered;
+  entry.text='new-index';entry.revision++;
+  const newer=await client.readFinanceIndex(true);
+  assert.equal(newer.text,'new-index');assert.equal(newer.etag,'"2"');
+  assert.ok(f.calls.some(c=>c.url.endsWith(':/index.enc')&&c.init.cache==='no-store'));
+  // A normal read after a completed fresh read must not join the older job.
+  assert.equal((await client.readFinanceIndex()).text,'new-index');
+  release();assert.equal((await older).text,'old-index');
+  assert.deepEqual([...client.encryptedReadCache.values()].map(x=>[x.text,x.etag]),[['new-index','"2"']]);
+  assert.equal(client.encryptedReadJobs.size,0);
+  const count=f.calls.filter(c=>c.url.startsWith('https://download.test/')).length;
+  assert.equal((await client.readFinanceIndex(true)).text,'new-index');
+  assert.equal(f.calls.filter(c=>c.url.startsWith('https://download.test/')).length,count,'fresh ETag match may reuse verified ciphertext');
+});
