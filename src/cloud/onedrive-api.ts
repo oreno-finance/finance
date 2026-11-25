@@ -660,11 +660,14 @@ export class OneDriveTestClient {
     const epoch=this.encryptedReadEpoch;
     const waiting=this.encryptedReadJobs.get(key);
     if(waiting&&!fresh)return waiting;
+    // A newer fresh read supersedes the earlier job for cache publication.
+    // Older callers may finish, but cannot publish over the newer observation.
+    const ownsRead=():boolean=>epoch===this.encryptedReadEpoch&&this.encryptedReadJobs.get(key)===job;
     const job=(async()=>{
       const item=await this.findNamedFile(parts,name,fresh);
-      if(!item){if(epoch===this.encryptedReadEpoch)this.encryptedReadCache.delete(key);return null;}
+      if(!item){if(ownsRead())this.encryptedReadCache.delete(key);return null;}
       const useCache=!parts.includes('originals')&&name.endsWith('.enc')&&maxBytes<=25_000_000;
-      const cached=(!fresh||reuseVerified)&&useCache&&epoch===this.encryptedReadEpoch?this.encryptedReadCache.get(key):undefined;
+      const cached=(!fresh||reuseVerified)&&useCache&&ownsRead()?this.encryptedReadCache.get(key):undefined;
       if(cached&&cached.id===item.id&&cached.etag===item.eTag){
         // Simple LRU: ETag-verified hits move to the end of the bounded map.
         this.encryptedReadCache.delete(key);this.encryptedReadCache.set(key,cached);
@@ -672,7 +675,7 @@ export class OneDriveTestClient {
       }
       const downloaded=await this.downloadItemInfo(item.id,maxBytes,item,fresh);
       const value={text:downloaded.text,id:item.id,etag:downloaded.item.eTag??item.eTag};
-      if(epoch===this.encryptedReadEpoch){
+      if(ownsRead()){
         this.encryptedReadCache.delete(key);
         const limit=OneDriveTestClient.MAX_ENCRYPTED_CACHE_BYTES;
         if(useCache&&value.text.length*2<=limit){
@@ -688,7 +691,7 @@ export class OneDriveTestClient {
       }
       return {...value};
     })();
-    if(!fresh)this.encryptedReadJobs.set(key,job);
+    this.encryptedReadJobs.set(key,job);
     try{return await job;}
     finally {if(this.encryptedReadJobs.get(key)===job)this.encryptedReadJobs.delete(key);}
   }
@@ -705,7 +708,8 @@ export class OneDriveTestClient {
       // Upload sessions retain the documented If-Match/409/412 flow for live data.
       // Direct PUT on Personal OneDrive lacks a documented final-boundary ETag guarantee.
       const result=await measureFinancePhase('vault.encrypted-upload',()=>this.uploadSession(path,bytes,existing?.etag));
-      this.encryptedReadCache.delete(JSON.stringify([parts,name,maxBytes]));
+      const key=JSON.stringify([parts,name,maxBytes]);
+      this.encryptedReadCache.delete(key);this.encryptedReadJobs.delete(key);
       // Some Graph variants omit ETag on upload completion. The caller will
       // perform a safe read-back only in that case.
       return result.eTag?{id:result.id,etag:result.eTag}:null;

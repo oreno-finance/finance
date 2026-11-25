@@ -44,11 +44,11 @@
 .settings-card-footer{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 
 /* Icon-only appearance control on desktop. Mobile retains its top-bar icon. */
-.sidebar .desktop-theme-toggle{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;
+.sidebar :is(.desktop-theme-toggle,.activity-history-open){display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;
   border:1px solid #43536b;border-radius:10px;background:transparent;color:#d7e9f6;cursor:pointer;padding:8px}
-.sidebar .desktop-theme-toggle:hover{background:#ffffff14}
-.sidebar .desktop-theme-toggle:focus-visible{outline:2px solid #8bcbbf;outline-offset:2px}
-.sidebar .desktop-theme-toggle svg{display:block;width:22px;height:22px}
+.sidebar :is(.desktop-theme-toggle,.activity-history-open):hover{background:#ffffff14}
+.sidebar :is(.desktop-theme-toggle,.activity-history-open):focus-visible{outline:2px solid #8bcbbf;outline-offset:2px}
+.sidebar :is(.desktop-theme-toggle,.activity-history-open) svg{display:block;width:22px;height:22px;flex:none}
 .sidebar .desktop-theme-toggle .theme-sun{display:none}
 :root[data-theme="dark"] .sidebar .desktop-theme-toggle .theme-sun{display:block}
 :root[data-theme="dark"] .sidebar .desktop-theme-toggle .theme-moon{display:none}

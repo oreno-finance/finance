@@ -1,3 +1,4 @@
+import { bindModalDismiss } from './modal.js';
 let dismissal;
 let previousMessage = '';
 let previousKind = '';
@@ -18,6 +19,9 @@ function updateHistory() {
     const badge = document.getElementById('activity-history-count');
     if (badge)
         badge.textContent = count ? String(count) : '';
+    const markRead = document.getElementById('activity-history-read');
+    if (markRead)
+        markRead.disabled = count === 0;
     const dialog = document.getElementById('activity-history-dialog');
     const list = document.getElementById('activity-history-list');
     if (!list || !dialog?.open)
@@ -54,7 +58,9 @@ export function initActivityHistory() {
         dialog.showModal();
         updateHistory();
     } });
-    document.getElementById('activity-history-close')?.addEventListener('click', () => dialog.close());
+    const close = () => dialog.close();
+    document.getElementById('activity-history-close')?.addEventListener('click', close);
+    bindModalDismiss(dialog, close);
     document.getElementById('activity-history-read')?.addEventListener('click', () => { for (const entry of history)
         entry.unread = false; updateHistory(); });
     updateHistory();

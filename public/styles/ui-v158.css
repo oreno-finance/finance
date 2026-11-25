@@ -26,14 +26,12 @@
 .assets-once-more .text-button{margin:0;padding:5px 0}
 .assets-once-more .assets-help{margin:0}
 .assets-one-time-panel .assets-operation-status:empty{display:none}
-.assets-once-dialog{position:fixed;inset:0;width:min(550px,calc(100vw - 26px));max-height:min(91dvh,780px);overflow-y:auto;
-  border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:16px;padding:22px 24px;box-shadow:0 18px 50px rgba(12,24,42,.21)}
-.assets-once-dialog::backdrop{background:rgba(12,24,42,.48)}
+.assets-once-dialog{--modal-width:550px}
+
 .assets-once-dialog:not([open]){display:none}
-.assets-once-modal-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:19px}
-.assets-once-modal-head h2{margin:0;font-size:19px}
-.assets-once-close{border:0!important;background:transparent!important;box-shadow:none!important;padding:0!important;margin:0!important;
-  color:var(--muted);font-size:24px;min-width:35px;min-height:35px;line-height:1;display:grid;place-items:center}
+.assets-once-modal-head{margin-bottom:14px}
+
+
 .assets-once-choice{border:0;padding:0;margin:0 0 19px;display:flex;flex-wrap:wrap;gap:9px 17px;min-width:0}
 .assets-once-choice legend{font-weight:750;font-size:12px;color:var(--muted);margin-bottom:8px}
 .assets-once-choice label{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
@@ -57,7 +55,6 @@
   .assets-once-item{align-items:flex-start;flex-direction:column;gap:9px}
   .assets-once-item-action{align-self:stretch;justify-content:flex-end;width:100%}
   .assets-once-item-action b{margin-right:auto;text-align:left}
-  .assets-once-dialog{padding:18px 16px;border-radius:13px}
   .assets-once-fields{gap:10px}
   .assets-once-fields > label{font-size:11px}
   .assets-once-choice{gap:10px 12px}

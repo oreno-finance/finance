@@ -61,10 +61,11 @@ export function forecastAccounts(source, today, horizonDays = 45, reportForMonth
     const addMovement = (id, date, title, amount, kind, from, to, movementStatus = 'planned') => {
         const name = (id) => ASSET_ACCOUNTS.find(account => account.id === id)?.name ?? '口座';
         const route = from && to ? `${name(from)} → ${name(to)}` : undefined;
+        const transferId = route ? id : undefined;
         if (from && from !== 'nisa')
-            push({ id: `${id}:from`, date, title, amount: -amount, kind, accountId: from, movementStatus, route });
+            push({ id: `${id}:from`, date, title, amount: -amount, kind, accountId: from, movementStatus, route, transferId });
         if (to && to !== 'nisa')
-            push({ id: `${id}:to`, date, title, amount, kind, accountId: to, movementStatus, route });
+            push({ id: `${id}:to`, date, title, amount, kind, accountId: to, movementStatus, route, transferId });
     };
     const missingCardIds = new Set();
     const cardLines = [];
@@ -131,7 +132,7 @@ export function forecastAccounts(source, today, horizonDays = 45, reportForMonth
     for (const funding of estimatedMizuhoFunding(source.assets, source.records, today, until)) {
         for (const [accountId, sign] of [['rakuten-bank', -1], ['mizuho-bank', 1]])
             push({ id: `${funding.id}:${accountId}`, date: funding.date, title: 'みずほ銀行へ送金（見込み）', amount: sign * funding.amount,
-                kind: 'transfer', accountId, estimated: true, movementStatus: 'estimated', route: '楽天銀行 → みずほ銀行' });
+                kind: 'transfer', accountId, estimated: true, movementStatus: 'estimated', transferId: funding.id, route: '楽天銀行 → みずほ銀行' });
     }
     for (const entry of source.assets.oneTime ?? [])
         addMovement(`once:${entry.id}`, entry.date, entry.name, entry.amount, 'one-time', entry.fromAccountId, entry.toAccountId, entry.status);

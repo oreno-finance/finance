@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+import {bindModalDismiss} from '../dist/src/ui/modal.js';
 
 const main=readFileSync(new URL('../src/main.ts',import.meta.url),'utf8');
 const compiled=readFileSync(new URL('../dist/src/main.js',import.meta.url),'utf8');
@@ -31,14 +32,14 @@ test('cloud connection and pending-save controls are registered once, not per re
     };
   };
   const $=(id)=>{if(!nodes.has(id))nodes.set(id,create(id));return nodes.get(id);};
-  const context={$,
+  const context={$,bindModalDismiss,
     previewSort:null,cloudConnectDismissed:false,
     liveVault:null,batchBusy:false,filesBusy:false,
   };
   vm.createContext(context);
   vm.runInContext(src,context);
   vm.runInContext('initCloudActionControls(); for(let i=0;i<30;i++)renderSortControls();',context);
-  for(const [id,name] of [['cloud-connect-later','click'],['cloud-connect-dialog','cancel'],['cloud-connect-continue','click'],['cloud-resume-batch','click']]){
+  for(const [id,name] of [['cloud-connect-later','click'],['cloud-connect-close','click'],['cloud-connect-dialog','cancel'],['cloud-connect-continue','click'],['cloud-resume-batch','click']]){
     assert.equal(nodes.get(id).listeners.get(name)?.length,1,`${id} must have exactly one listener`);
   }
   const dialog=nodes.get('cloud-connect-dialog');

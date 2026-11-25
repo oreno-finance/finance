@@ -1,14 +1,14 @@
 {
   "name": "finance-importer-starter",
-  "version": "2.0.3",
+  "version": "2.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
     "build:meta": "node scripts/stamp-app-meta.mjs",
-    "release:patch": "npm version patch --no-git-tag-version && npm run build",
+    "build:releases": "node scripts/build-release-notes.mjs",
     "build:styles": "node scripts/build-styles.mjs",
-    "build": "npm run build:meta && npm run build:styles && node scripts/clean-dist.mjs && tsc && node scripts/copy-static.mjs && node scripts/build-msal.mjs",
+    "build": "npm run build:releases && npm run build:meta && npm run build:styles && node scripts/clean-dist.mjs && tsc && node scripts/copy-static.mjs && node scripts/build-msal.mjs",
     "test": "npm run build && node --test tests/*.test.mjs",
     "verify:cloud": "node scripts/check-cloud-asset.mjs",
     "audit:staged": "node scripts/audit-publication.mjs --staged",

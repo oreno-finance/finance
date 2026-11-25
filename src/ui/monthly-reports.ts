@@ -14,7 +14,18 @@ export interface MonthlyReportsDeps { source():MonthlySource|null; vault():LiveV
 const today=localMonth;
 const yen=(value:number|null)=>sharedYen(value,0,DATA_STATUS.missing);
 const month=formatMonth;
-const metricValue=(label:string,value:number|null)=>label==='収支'?sharedYen(value,0,DATA_STATUS.unavailable):yen(value);
+const metricValue=(label:string,value:number|null,snapshot:ReportSnapshot)=>label==='収支'?sharedYen(value,0,DATA_STATUS.unavailable):label==='支出'&&snapshot.cardOutflow===null?DATA_STATUS.unavailable:yen(value);
+function reportMetrics(snapshot:ReportSnapshot):HTMLElement {
+  const metrics=el('div','reports-metrics');
+  for(const [label,value] of [['収入',snapshot.income],['支出',snapshot.expense],['収支',snapshot.balance]] as const){
+    const tone=label==='収支'&&value!==null?(value<0?' cashflow-negative':' cashflow-positive'):'';
+    const item=el('div',`reports-metric${tone}`),text=metricValue(label,value,snapshot);
+    item.append(el('span','',label),el('strong',financialStatusClass(text),text));
+    if(label==='支出'&&snapshot.cardOutflow===null&&value!==null)item.append(el('small','reports-muted',`判明分 ${yen(value)}`));
+    metrics.append(item);
+  }
+  return metrics;
+}
 function el<K extends keyof HTMLElementTagNameMap>(tag:K,cls='',content?:string):HTMLElementTagNameMap[K]{
   const node=document.createElement(tag);node.className=cls;if(content!==undefined)node.textContent=content;return node;
 }
@@ -28,11 +39,7 @@ function row(parent:HTMLElement,label:string,value:string):void {
   const root=el('div','reports-row');root.append(el('span','',label),el('strong',financialStatusClass(value),value));parent.append(root);
 }
 function renderSnapshot(root:HTMLElement,snapshot:ReportSnapshot,showMetrics=true):void {
-  const metrics=el('div','reports-metrics');
-  for(const [label,value] of [['収入',snapshot.income],['支出',snapshot.expense],['収支',snapshot.balance]] as const){
-    const item=el('div','reports-metric');item.append(el('span','',label),el('strong',financialStatusClass(metricValue(label,value)),metricValue(label,value)));metrics.append(item);
-  }
-  if(showMetrics)root.append(metrics);
+  if(showMetrics)root.append(reportMetrics(snapshot));
   if(showMetrics&&snapshot.quality.length){const note=el('p','reports-quality',snapshot.quality.join(' · '));root.append(note);}
   if(snapshot.reasons.length){const block=section('この月の特徴');for(const text of snapshot.reasons)block.body.append(el('p','reports-insight',text));root.append(block.root);}
   const cards=section('カード請求');
@@ -192,11 +199,7 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
       if(revision)heading.append(el('span','reports-muted',`保存：${formatDateTime(revision.savedAt,true)}`));
       if(chosenRevision)heading.append(button('最新版へ戻る',()=>{chosenRevision=null;render();}));
       container.append(heading);
-      const metrics=el('div','reports-metrics');
-      for(const [label,value] of [['収入',snapshot.income],['支出',snapshot.expense],['収支',snapshot.balance]] as const){
-        const item=el('div','reports-metric');item.append(el('span','',label),el('strong',financialStatusClass(metricValue(label,value)),metricValue(label,value)));metrics.append(item);
-      }
-      container.append(metrics);
+      container.append(reportMetrics(snapshot));
       if(snapshot.quality.length)container.append(el('p','reports-quality',snapshot.quality.join(' · ')));
       if(chosenRevision&&revision)container.append(el('p','reports-insight',revision.note||'この版のメモはありません。'));
       else container.append(control.root);

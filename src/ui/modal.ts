@@ -44,7 +44,7 @@ export function modalHeader(title:HTMLElement,requestClose:()=>void):HTMLElement
 export function requestConfirmation(options:ConfirmationOptions):Promise<boolean> {
   if(active||options.parent&&!options.parent.open)return Promise.resolve(false);
   return new Promise(resolve=>{
-    const dialog=document.createElement('dialog');dialog.className='finance-confirm-dialog';
+    const dialog=document.createElement('dialog');dialog.className='finance-confirm-dialog finance-modal';
     dialog.setAttribute('aria-label',options.title);dialog.setAttribute('role','alertdialog');
     const title=document.createElement('h2');title.textContent=options.title;
     const message=document.createElement('p');message.className='finance-confirm-message';message.id='finance-confirm-message';message.textContent=options.message;

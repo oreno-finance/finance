@@ -1,6 +1,6 @@
 import {bindModalDismiss,requestConfirmation,confirmationPending,cancelConfirmation} from './modal.js';
 import {DATA_STATUS,formatYen as sharedYen,formatDate,formatDateTime} from './formatters.js';
-import { ASSET_ACCOUNTS, latestBalance, validateRecurring, validateSnapshot, validateNisaCardRule, validateOneTime,
+import { ASSET_ACCOUNTS, validateRecurring, validateSnapshot, validateNisaCardRule, validateOneTime,
   type AssetAccountId, type BalanceSnapshot, type RecurringEntry, type RecurringKind, type RecurringFrequency, type OneTimeEntry, type OneTimeKind, type OneTimeStatus } from '../cloud/assets.js';
 import { CloudWriteUncertainError, type LiveVault } from '../cloud/live-vault.js';
 import type { CategoryDefinition } from '../cloud/merchant-rules.js';
@@ -409,15 +409,15 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
     const data=vault.assetSettings(),records=vault.readonlyRecords();
     const work=prepareBankForecast(records,data);
     const today=new Date();
-    const available=payrollSynced||(payrollStale&&payrollUseStale&&payrollOwner===vault)?payrollIncome:[];
+    const available=payrollOwner===vault&&(payrollSynced||(payrollStale&&payrollUseStale))?payrollIncome:[];
     const currentReport=forecastBankBalances(data,localDay(today),records,available,data.payrollDepositAccount,localDay(today),work),
       nextReport=forecastBankBalances(data,lastDayOfNextMonth(today),records,available,data.payrollDepositAccount,localDay(today),work);
     const now=currentReport.accounts,next=nextReport.accounts;
     for(const account of ASSET_ACCOUNTS){
-      const latest=latestBalance(data,account.id),current=now[account.id],upcoming=next[account.id];
+      const current=now[account.id],latest=current.baseline,upcoming=next[account.id];
       const label=latestTexts.get(account.id)!;
       label.replaceChildren();
-      label.append(make('small','assets-balance-caption','現在の推定残高'),make('strong',`assets-balance ${current.balance===null?'data-status-muted':''}`,current.balance!==null?yen(current.balance):DATA_STATUS.unregistered));
+      label.append(make('small','assets-balance-caption','現在の推定残高'),make('strong',`assets-balance ${current.balance===null?'data-status-muted':''}`,current.balance!==null?yen(current.balance):current.baseline?DATA_STATUS.unavailable:DATA_STATUS.unregistered));
       if(latest){
         label.append(make('small','assets-balance-date',`最終確認：${yen(latest.balance)}（${formatDateTime(latest.observedAt,true)}）`));
         const parts=[];

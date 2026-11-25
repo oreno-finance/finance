@@ -33,8 +33,8 @@ function panel(heading:string):{root:HTMLElement;body:HTMLElement}{
 }
 const quality=(month:AnalysisMonth):string=>month.coverage==='missing'?DATA_STATUS.missing:month.coverage==='partial'?'一部未取得':month.coverage==='provisional'?DATA_STATUS.provisional:month.coverage==='review'?DATA_STATUS.review:'登録済み';
 const amountText=(value:number|null)=>value===null?DATA_STATUS.missing:formatYen(value);
-function metric(label:string,value:string,sub:string):HTMLElement{
-  const root=el('div','analysis-metric');root.append(el('span','analysis-muted',label),el('strong',financialStatusClass(value),value));if(sub)root.append(el('small','analysis-muted',sub));return root;
+function metric(label:string,value:string,sub:string,tone=''):HTMLElement{
+  const root=el('div',`analysis-metric ${tone}`);root.append(el('span','analysis-muted',label),el('strong',financialStatusClass(value),value));if(sub)root.append(el('small','analysis-muted',sub));return root;
 }
 function note(text:string):HTMLElement{return el('p','analysis-muted analysis-note',text);}
 export function initAnalysis(deps:AnalysisDeps):AnalysisUi{
@@ -73,9 +73,10 @@ export function initAnalysis(deps:AnalysisDeps):AnalysisUi{
   function summary(data:PeriodAnalytics):HTMLElement{
     const result=el('div','analysis-metrics');const totals=data.totals;
     const range=`${data.months[0]!.period}〜${data.months.at(-1)!.period}`;
-    result.append(metric('収入（実績・見込み）',formatYen(totals.income),`${totals.knownIncomeMonths}/${data.months.length}か月 · ${range}`),
-      metric('支出（明細・予定）',formatYen(totals.expense),`${totals.knownExpenseMonths}/${data.months.length}か月 · NISAを含む`),
-      metric('収支（実績・見込み）',sharedYen(totals.balance,0,DATA_STATUS.unavailable),totals.comparable?'':'欠測・暫定などを含む参考値'),
+    const partial=data.months.some(m=>m.report.cardOutflow===null);
+    result.append(metric('収入',formatYen(totals.income),`${totals.knownIncomeMonths}/${data.months.length}か月 · ${range} · 実績・見込み`),
+      metric('支出',partial?DATA_STATUS.unavailable:formatYen(totals.expense),[partial&&totals.expense!==null?`判明分 ${formatYen(totals.expense)}（一部未取得）`:'',`${totals.knownExpenseMonths}/${data.months.length}か月 · NISAを含む`].filter(Boolean).join(' · ')),
+      metric('収支',sharedYen(totals.balance,0,DATA_STATUS.unavailable),totals.comparable?'':'欠測・暫定などを含む参考値',totals.balance===null?'':totals.balance<0?'cashflow-negative':'cashflow-positive'),
       metric('平均支出',sharedYen(totals.avgExpense,0,DATA_STATUS.unavailable),`${totals.knownExpenseMonths}か月分の平均`));
     return result;
   }

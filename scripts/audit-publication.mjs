@@ -243,7 +243,7 @@ const disallowedFilename=(path)=>{
   if(/(^|\/)(?:\.env(?:\..*)?|\.npmrc|\.netrc|id_rsa|id_ed25519|credentials?(?:\.|$)|private-data|local-data|backups?|exports?|secrets?)(?:\/|$)/i.test(path))return true;
   if(/(?:^|\/)(?:statement[-_]?(?:20\d\d)?|financial[-_]?(?:data|export)|payroll[-_]?(?:data|statement))\.(?:json|txt)$/i.test(path))return true;
   if(ext==='.ico')return !/^(public|dist)\/favicon\.ico$/.test(path);
-  if(ext==='.json')return !['package.json','package-lock.json','tsconfig.json','scripts/publication-policy.json'].includes(path);
+  if(ext==='.json')return !['package.json','package-lock.json','tsconfig.json','scripts/publication-policy.json','public/release-notes.json','dist/release-notes.json'].includes(path);
   if(ext==='.txt')return !/^README-v[0-9]+\.txt$/.test(path);
   if(['.bcmap','.pfb','.ttf'].includes(ext))return !path.startsWith('dist/vendor/pdfjs/');
   // Permit only the four official PDF.js WASM decoder names under its vendor directory.

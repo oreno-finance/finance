@@ -59,7 +59,7 @@
             </svg>
           </button>
         </div>
-        <div class="sidebar-meta"><span>Finance v2.0.3</span><time id="app-updated-at" datetime="2026-11-25">更新 2026/11/25 JST</time></div>
+        <div class="sidebar-meta"><span><button type="button" id="release-history-open" aria-haspopup="dialog" aria-controls="release-history-dialog" title="アップデート履歴">Finance v2.1.0</button></span><time id="app-updated-at" datetime="2026-11-25">ビルド 2026/11/25 JST</time></div>
       </div>
       </div>
     </aside>
@@ -145,11 +145,11 @@
           <div class="import-batch-actions"><button type="button" id="import-payment-settings" class="secondary-action hidden">引落日を設定</button><button type="button" id="import-inspect-batch" class="secondary-action hidden">保存結果を確認</button><button type="button" id="import-resume-batch" class="secondary-action hidden">残りの保存を再開</button><button type="button" id="batch-import" class="save-action" disabled>保存</button></div>
         </div>
         </div>
-        <dialog id="import-add-dialog" class="import-add-dialog" aria-labelledby="import-add-title">
-          <div class="import-add-head"><h2 id="import-add-title">明細を追加</h2><button id="import-add-close" type="button" aria-label="閉じる" class="import-add-close finance-modal-x">×</button></div>
+        <dialog id="import-add-dialog" class="import-add-dialog finance-modal" aria-labelledby="import-add-title">
+          <div class="import-add-head finance-modal-head"><h2 id="import-add-title">明細を追加</h2><button id="import-add-close" type="button" aria-label="閉じる" class="import-add-close finance-modal-x">×</button></div>
           <div id="import-dialog-content" class="import-add-body"></div>
         </dialog>
-        <dialog id="import-revision-dialog" class="import-revision-dialog" aria-labelledby="import-revision-title">
+        <dialog id="import-revision-dialog" class="import-revision-dialog finance-modal" aria-labelledby="import-revision-title">
           <div class="import-revision-inner">
             <div class="finance-modal-head"><h2 id="import-revision-title">既存明細との差分確認</h2><button id="import-revision-close" type="button" class="finance-modal-x" aria-label="閉じる">×</button></div>
             <p id="import-revision-summary" class="import-revision-summary"></p>
@@ -157,7 +157,7 @@
             <div id="import-revision-stats" class="import-revision-stats"></div>
             <div id="import-revision-details" class="import-revision-details"></div>
             <label id="import-revision-override-warning" class="import-revision-override-warning hidden"><input type="checkbox" id="import-revision-override-accept">引き継げない表示名・補足を確認しました</label>
-            <div class="import-revision-actions">
+            <div class="import-revision-actions finance-modal-actions">
               <button type="button" id="import-revision-cancel" class="secondary-action">差し替えない</button>
               <button type="button" id="import-revision-accept" class="save-action">差し替える</button>
             </div>
@@ -291,9 +291,9 @@
           </div>
         </section>
 
-        <dialog id="categories-dialog" class="categories-dialog" aria-labelledby="categories-dialog-title">
-          <div class="categories-dialog-head">
-            <div><div class="eyebrow">CATEGORY SETTINGS</div><h2 id="categories-dialog-title">カテゴリーを管理</h2></div>
+        <dialog id="categories-dialog" class="categories-dialog finance-modal" aria-labelledby="categories-dialog-title">
+          <div class="categories-dialog-head finance-modal-head">
+            <h2 id="categories-dialog-title">カテゴリーを管理</h2>
             <button type="button" id="categories-dialog-close" class="categories-dialog-x finance-modal-x" aria-label="閉じる">×</button>
           </div>
           <div class="categories-dialog-content">
@@ -311,12 +311,13 @@
           </div>
           <div class="categories-dialog-foot">
             <p id="rules-category-status" role="status" aria-live="polite"></p>
-            <div class="categories-dialog-actions"><button type="button" id="categories-dialog-cancel" class="secondary-action">キャンセル</button><button type="button" id="categories-dialog-save" class="save-action">保存</button></div>
+            <div class="categories-dialog-actions finance-modal-actions"><button type="button" id="categories-dialog-cancel" class="secondary-action">キャンセル</button><button type="button" id="categories-dialog-save" class="save-action">保存</button></div>
           </div>
         </dialog>
 
-        <dialog id="recent-merchants-dialog" class="recent-merchants-dialog" aria-labelledby="recent-merchants-title">
-          <div class="recent-merchants-heading"><div><h2 id="recent-merchants-title">最近の利用先から選択</h2><p>過去に保存したカード明細の元の利用先を表示します。</p></div><button type="button" id="recent-merchants-close" class="finance-modal-x" aria-label="閉じる">×</button></div>
+        <dialog id="recent-merchants-dialog" class="recent-merchants-dialog finance-modal" aria-labelledby="recent-merchants-title">
+          <div class="finance-modal-head"><h2 id="recent-merchants-title">最近の利用先から選択</h2><button type="button" id="recent-merchants-close" class="finance-modal-x" aria-label="閉じる">×</button></div>
+          <p class="finance-modal-note">過去に保存したカード明細の元の利用先を表示します。</p>
           <div class="recent-merchants-tools"><label>対象カード<select id="recent-merchants-card"><option value="">すべてのカード</option></select></label><label>利用先を検索<input id="recent-merchants-search" type="search" placeholder="店名などで検索"></label></div>
           <div id="recent-merchants-count" class="recent-merchants-count"></div>
           <div id="recent-merchants-list" class="recent-merchants-list"></div>
@@ -365,7 +366,7 @@
               <div class="assets-once-more"><button id="assets-once-toggle" type="button" class="text-button hidden">すべて表示</button><span id="assets-once-count" class="assets-help"></span></div>
               <p id="assets-once-status" class="assets-operation-status" role="status" aria-live="polite"></p>
             </section>
-            <dialog id="assets-once-dialog" class="assets-once-dialog" aria-labelledby="assets-once-dialog-title">
+            <dialog id="assets-once-dialog" class="assets-once-dialog finance-modal" aria-labelledby="assets-once-dialog-title">
               <form id="assets-once-form" autocomplete="off">
                 <div class="assets-once-modal-head finance-modal-head"><h2 id="assets-once-dialog-title">入出金を登録</h2><button id="assets-once-close" type="button" aria-label="閉じる" class="assets-once-close finance-modal-x">×</button></div>
                 <fieldset class="assets-once-choice"><legend>種類</legend>
@@ -388,7 +389,7 @@
                   <label><input type="radio" name="assets-once-status" value="planned">予定</label>
                 </fieldset>
                 <p id="assets-once-error" class="assets-operation-status" role="alert"></p>
-                <div class="assets-once-actions"><button type="button" id="assets-once-cancel" class="secondary-action">キャンセル</button><button type="submit" id="assets-once-save" class="save-action">保存</button></div>
+                <div class="assets-once-actions finance-modal-actions"><button type="button" id="assets-once-cancel" class="secondary-action">キャンセル</button><button type="submit" id="assets-once-save" class="save-action">保存</button></div>
               </form>
             </dialog>
             <details class="panel mizuho-plan-panel" id="mizuho-plan-panel">
@@ -751,39 +752,36 @@
       </div>
     </main>
   </div>
-  <dialog id="legacy-cleanup-dialog" aria-labelledby="legacy-cleanup-title">
-    <h2 id="legacy-cleanup-title">旧データを整理</h2>
+  <dialog id="legacy-cleanup-dialog" aria-labelledby="legacy-cleanup-title" class="finance-modal">
+    <div class="finance-modal-head"><h2 id="legacy-cleanup-title">旧データを整理</h2><button type="button" class="finance-modal-x" id="legacy-cleanup-close" aria-label="閉じる">×</button></div>
     <label class="legacy-cleanup-field" for="legacy-cleanup-secret">旧パスフレーズ
       <input id="legacy-cleanup-secret" type="password" autocomplete="current-password" minlength="12">
     </label>
     <p class="legacy-cleanup-status" id="legacy-cleanup-status" role="status" aria-live="polite"></p>
-    <div class="legacy-cleanup-actions">
+    <div class="legacy-cleanup-actions finance-modal-actions">
       <button type="button" class="secondary-action" id="legacy-cleanup-check">OneDriveと照合</button>
       <button type="button" class="secondary-action hidden" id="legacy-cleanup-download">バックアップを保存</button>
     </div>
     <label class="legacy-cleanup-field hidden" id="legacy-cleanup-file-label" for="legacy-cleanup-file">保存したバックアップを選択
       <input id="legacy-cleanup-file" type="file" accept="application/json,.json">
     </label>
-    <div class="legacy-cleanup-actions">
+    <div class="legacy-cleanup-actions finance-modal-actions">
       <button type="button" class="secondary-action hidden danger-action" id="legacy-cleanup-delete" disabled>旧データを削除</button>
-      <button type="button" class="secondary-action" id="legacy-cleanup-close">閉じる</button>
     </div>
   </dialog>
-  <dialog id="cloud-connect-dialog" class="vault-dialog cloud-connect-dialog" aria-labelledby="cloud-connect-title" aria-describedby="cloud-connect-copy">
+  <dialog id="cloud-connect-dialog" class="vault-dialog cloud-connect-dialog finance-modal" aria-labelledby="cloud-connect-title" aria-describedby="cloud-connect-copy">
     <div class="vault-form">
-      <div class="vault-icon" aria-hidden="true">☁</div>
-      <h2 id="cloud-connect-title">OneDriveに接続</h2>
+      <div class="finance-modal-head"><h2 id="cloud-connect-title">OneDriveに接続</h2><button type="button" id="cloud-connect-close" class="finance-modal-x" aria-label="閉じる">×</button></div>
       <p id="cloud-connect-copy">Microsoftアカウントで接続してください。</p>
-      <div class="vault-form-actions">
+      <div class="vault-form-actions finance-modal-actions">
         <button type="button" id="cloud-connect-later" class="secondary-action">あとで</button>
         <button type="button" id="cloud-connect-continue" class="save-action">Microsoftアカウントで接続</button>
       </div>
     </div>
   </dialog>
-  <dialog id="vault-dialog" class="vault-dialog" aria-labelledby="vault-dialog-title">
+  <dialog id="vault-dialog" class="vault-dialog finance-modal" aria-labelledby="vault-dialog-title">
     <form id="vault-form" class="vault-form">
-      <div class="vault-icon" aria-hidden="true">⌑</div>
-      <h2 id="vault-dialog-title">保存領域のロック解除</h2>
+      <div class="finance-modal-head"><h2 id="vault-dialog-title">保存領域のロック解除</h2><button type="button" id="vault-close" class="finance-modal-x" aria-label="閉じる">×</button></div>
       <p id="vault-dialog-copy" class="hidden"></p>
       <label class="field-label" for="vault-passphrase">専用パスフレーズ</label>
       <div class="password-control">
@@ -810,10 +808,10 @@
         <p class="vault-retention-help">「記憶する」は設定から解除できます。手動ロック後は再入力が必要です。</p>
       </fieldset>
       <p id="vault-error" class="vault-error" role="alert"></p>
-      <div class="vault-form-actions"><button type="button" id="vault-cancel" class="secondary-action">キャンセル</button><button type="submit" id="vault-submit" class="save-action">解除する</button></div>
+      <div class="vault-form-actions finance-modal-actions"><button type="button" id="vault-cancel" class="secondary-action">キャンセル</button><button type="submit" id="vault-submit" class="save-action">解除する</button></div>
     </form>
   </dialog>
-  <dialog id="activity-history-dialog" aria-labelledby="activity-history-title" class="activity-history-dialog"><div class="activity-history-heading"><h2 id="activity-history-title">通知履歴</h2><button type="button" id="activity-history-close" class="secondary-action" aria-label="通知履歴を閉じる">閉じる</button></div><p>このタブ内の通知を保持します。ロック・再読み込みで消去されます。</p><button type="button" id="activity-history-read" class="secondary-action">すべて確認済みにする</button><div id="activity-history-list"></div></dialog>
+  <dialog id="activity-history-dialog" aria-labelledby="activity-history-title" class="activity-history-dialog finance-modal"><div class="finance-modal-head"><h2 id="activity-history-title">通知履歴</h2><button type="button" id="activity-history-close" class="finance-modal-x" aria-label="閉じる">×</button></div><p class="finance-modal-note">このタブ内の通知を保持します。ロック・再読み込みで消去されます。</p><div class="activity-history-tools"><button type="button" id="activity-history-read" class="text-button">すべて確認済みにする</button></div><div id="activity-history-list"></div></dialog>
   <div id="toast" class="toast activity-toast" role="status" aria-live="polite" aria-atomic="true"><span class="activity-icon" aria-hidden="true"></span><span class="activity-message"></span><button type="button" class="activity-dismiss" aria-label="通知を閉じる" title="通知を閉じる">×</button></div>
   <div id="sidebar-tooltip" class="sidebar-tooltip" role="tooltip" hidden></div>
   <script src="./scripts/startup-recovery.js"></script>

@@ -21,7 +21,7 @@ test('パスフレーズは常時表示し整理は詳細設定内、安全確�
 test('固定費・資産予測の表示変更は契約履歴の更新経路とロック時の消去を維持する',()=>{
   const costs=ui('subscriptions'),future=ui('future-projection'),assets=ui('assets-settings');
   assert.match(costs,/const routes=contractPaymentHistory\(origin\);[\s\S]*?routes.length>1/);
-  assert.match(costs,/delta!==0\?/);
+  assert.match(costs,/item.lastDifference!==undefined&&item.lastDifference!==0/);
   assert.match(costs,/edit\.payment=\{cancelDate:futurePaymentDate\}[\s\S]*?await vault\.editContract\(existing,edit\)/);
   assert.match(costs,/priceOnDay\(contract\.pricing\?\?\[\],next,contract\.amount\)/);
   assert.match(future,/yearListOpen=false/);

@@ -3,7 +3,7 @@ import {requestConfirmation,confirmationPending,cancelConfirmation} from './moda
 import {DATA_STATUS,financialStatusClass,formatYen as sharedYen,formatSignedYen,formatMonth,formatDate,formatShortDate,formatDateTime} from './formatters.js';
 import {bindMonthNavigator,localMonth,monthInRange} from './period-navigator.js';
 /** Monthly summary view. DOM updates only; all financial figures are computed from vault snapshots. */
-import { monthlyReport, prepareMonthlyReports, changePeriod, type MonthlyReport, type PreparedMonthlyReports, type MonthlySource, type SummaryCard } from '../summary/monthly-summary.js';
+import { monthlyReport, monthlyCashflow, prepareMonthlyReports, changePeriod, type MonthlyReport, type PreparedMonthlyReports, type MonthlySource, type SummaryCard } from '../summary/monthly-summary.js';
 import { payrollRoleLabel } from '../cloud/payroll-income.js';
 import { PALETTE } from '../cloud/merchant-rules.js';
 import { pointBenefitsFromMonthlyReport } from '../summary/point-benefits.js';
@@ -199,13 +199,16 @@ export function initMonthlySummary(deps:MonthlySummaryDeps):MonthlySummaryUi {
       report=monthlyReport(period,source,prepared);prev=monthlyReport(changePeriod(period,-1),source,prepared);}
     catch(err){main.append(element('div','panel monthly-lock',`集計できませんでした：${err instanceof Error?err.message:'データエラー'}`));return;}
     const grid=element('div','monthly-metrics');main.append(grid);
-    metric(grid,(report.incomeEstimates.length||report.recurringIncome>0)?'月間収入（入金予定含む）':'月間収入',yen(report.income),
-      [report.recurringIncome?`定期入金 ${yen(report.recurringIncome)}`:'',report.oneTimeIncome?`単発入金 ${yen(report.oneTimeIncome)}`:''].filter(Boolean).join(' · '));
-    metric(grid,'カード引落予定額',yen(report.cardOutflow),report.cardNoUseConfirmed?'利用なし確認済み':report.provisional.length?'暫定明細を含む':report.cardOutflow===null?(report.cardLines.length?'一部カードのみ確認済み':'明細未取得'):'');
-    metric(grid,'定期・単発支出',yen(report.recurringExpense+report.oneTimeExpense),[report.recurringExpense?`定期予定 ${yen(report.recurringExpense)}`:'',report.oneTimeExpense?`単発実行済み ${yen(report.oneTimeExpense)}`:''].filter(Boolean).join(' · '));
+    const cashflow=monthlyCashflow(report);
+    metric(grid,'収入',yen(report.income),
+      [report.recurringIncome>0?'入金予定含む':'',report.incomeEstimates.length?'給与見込みを含む':'',report.recurringIncome?`定期入金 ${yen(report.recurringIncome)}`:'',report.oneTimeIncome?`単発入金 ${yen(report.oneTimeIncome)}`:''].filter(Boolean).join(' · '));
+    metric(grid,'支出',report.cardOutflow===null?DATA_STATUS.unavailable:yen(cashflow.expense),
+      [`カード引落 ${yen(report.cardOutflow)}`,`定期・単発支出 ${yen(report.recurringExpense+report.oneTimeExpense)}`,
+      report.cardNoUseConfirmed?'利用なし確認済み':report.cardOutflow===null?(report.cardLines.length?'一部カードのみ確認済み':'明細未取得'):cashflow.coverage==='provisional'?'暫定明細を含む':cashflow.coverage==='review'?'明細要確認':'',
+      report.nisaOutflow>0?`NISA積立 ${yen(report.nisaOutflow)} を含む`:''].filter(Boolean).join(' · '));
     const delta=report.monthlyBalance===null||prev.monthlyBalance===null?null:report.monthlyBalance-prev.monthlyBalance;
-    metric(grid,'月間収支',report.monthlyBalance===null?DATA_STATUS.unavailable:yen(report.monthlyBalance),
-      `前月比：${delta===null?'比較不可':formatSignedYen(delta)}`,report.monthlyBalance!==null?(report.monthlyBalance>=0?'monthly-positive':'monthly-negative'):'');
+    metric(grid,'収支',report.monthlyBalance===null?DATA_STATUS.unavailable:yen(report.monthlyBalance),
+      `前月比：${delta===null?'比較不可':formatSignedYen(delta)}`,report.monthlyBalance===null?'':report.monthlyBalance<0?'cashflow-negative':'cashflow-positive');
     const alert=element('div','monthly-alert');const status=statusText(report);if(status)alert.append(element('p','',status));
     if(report.cardOutflow===null)alert.append(element('p','',
       report.cardLines.length?'一部カードの明細が未取得のため、支出総額は算出できません。':'カード明細未取得。登録済みの銀行・現金支出は内訳で確認できます。'));

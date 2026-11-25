@@ -4,7 +4,7 @@
 .monthly-heading .eyebrow{font-size:11px;letter-spacing:1.6px;font-weight:800;color:var(--accent)}
 .monthly-heading h1{margin:5px 0;font-size:28px;letter-spacing:-.7px;color:var(--ink)}
 .monthly-heading .lead{color:var(--muted);line-height:1.65;margin:3px 0}
-.monthly-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px;margin-bottom:18px}
+.monthly-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin-bottom:18px}
 .monthly-metric{min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:20px 17px;display:flex;flex-direction:column;gap:12px}
 .monthly-metric-label{font-size:12px;font-weight:700;color:var(--muted)}
 .monthly-metric-value{font-size:clamp(18px,2vw,25px);font-weight:850;letter-spacing:-.6px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}

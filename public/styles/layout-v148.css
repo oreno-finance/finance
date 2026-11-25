@@ -114,7 +114,6 @@
   .manage-editor .manage-foot{display:flex;flex-wrap:wrap;gap:10px}
   .manage-editor .manage-foot button{min-height:40px}
   .manage-editor .manage-sort-button{white-space:normal}
-  .categories-dialog,.recent-merchants-dialog{width:calc(100vw - 20px)!important;max-width:none}
   .assets-recurring-grid .recurring-schedule-row{grid-template-columns:repeat(2,minmax(0,1fr))}
   .assets-recurring-grid .recurring-top-row{grid-template-columns:minmax(0,1fr)}
 }

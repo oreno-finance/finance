@@ -57,5 +57,6 @@ test('one-time modal confirms changed drafts on close and freezes background scr
   assert.match(assetUi, /onceDialog\.showModal\(\);\s*lockOncePage\(\)/);
   assert.match(assetUi, /async function closeOnce\(\):Promise<void> \{[\s\S]*?if\(onceHasChanges\(\)\)\{[\s\S]*?await requestConfirmation/);
   assert.match(css, /html\.assets-once-page-locked,html\.assets-once-page-locked body\{overflow:hidden!important/);
-  assert.match(css, /#categories-dialog-close,#recent-merchants-close/);
+  assert.match(read('public/styles/cloud-gate-v1980.css'), /body dialog \.finance-modal-x\{/);
+  assert.doesNotMatch(css, /#categories-dialog-close,#recent-merchants-close/);
 });
