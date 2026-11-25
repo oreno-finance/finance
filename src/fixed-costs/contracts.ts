@@ -1,6 +1,6 @@
 /** Unified fixed-cost metadata. Bank standing orders remain canonical in assets.recurring. */
 import { CARDS } from '../models/types.js';
-import type { AssetsDocument, RecurringEntry } from '../cloud/assets.js';
+import type { RecurringEntry } from '../cloud/assets.js';
 import {validatePaymentHistory,type PaymentChange} from './payment-history.js';
 
 export type CostFrequency = 'monthly'|'yearly'|'weekly';
@@ -185,4 +185,3 @@ export function fixedCostState(item:Pick<FixedCostEntry,'startOn'|'endOn'|'pause
   if(pausedOnDay(item.pauses,day))return 'paused';
   return 'active';
 }
-export function costFromAssets(doc:Pick<AssetsDocument,'fixedCosts'>):FixedCostEntry[]{return doc.fixedCosts??[];}

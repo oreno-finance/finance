@@ -8,7 +8,7 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 .settings-nisa-panel .assets-nisa-link{margin:0;padding:0;overflow:visible}
 .settings-nisa-panel .assets-nisa-link h3{font-size:13px;margin:0 0 10px}
 .settings-nisa-panel .assets-nisa-link>form{padding:0;max-width:none}
-.settings-nisa-panel .assets-nisa-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.settings-nisa-panel .assets-nisa-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));}
 .settings-nisa-panel .assets-nisa-actions{margin-top:11px}
 .settings-nisa-birth-form{display:flex;gap:10px;align-items:end;margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}
 .settings-nisa-birth-form label{display:flex;flex-direction:column;gap:7px;min-width:0;font-size:11px;font-weight:650;color:var(--ink)}

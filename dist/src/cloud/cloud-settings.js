@@ -127,6 +127,8 @@ function updateUi() {
     $('cloud-logout').toggleAttribute('disabled', busy || !connected);
     $('cloud-logout').hidden = !connected;
     $('cloud-folder-check').toggleAttribute('disabled', busy || !connected);
+    $('cloud-lock-check').toggleAttribute('disabled', busy || !connected);
+    $('cloud-lock-recover').toggleAttribute('disabled', busy || !connected);
     $('cloud-vault-diagnose').toggleAttribute('disabled', busy || !connected);
     $('cloud-diagnostic-copy').toggleAttribute('disabled', busy || !$('cloud-diagnostic-report').textContent?.trim());
     $('cloud-upload').toggleAttribute('disabled', busy || !connected);
@@ -432,6 +434,42 @@ export function initCloudSettings(handlers) {
                 if (timer)
                     clearTimeout(timer);
                 button.textContent = '保存先を確認';
+            }
+        });
+    });
+    $('cloud-lock-check').addEventListener('click', () => {
+        void action(async () => {
+            const target = $('cloud-lock-check-result');
+            target.textContent = '読み取り専用で確認中…';
+            const auth = authContext(), valid = handlers.confirmationContext();
+            try {
+                const result = await (await graphClientWithoutRedirect()).inspectVaultMutationLock();
+                if (!auth() || !valid())
+                    return;
+                target.textContent = result.state === 'absent' ? '保存ロックは見つかりませんでした（確認時点）。' : `保存ロックが存在します。作成日時：${result.createdAt ? new Date(result.createdAt).toLocaleString('ja-JP') : '不明'}。稼働中か残留かは判定できません。全端末の処理を確認してください。`;
+            }
+            catch {
+                if (auth() && valid())
+                    target.textContent = '保存ロックを確認できませんでした。通信・認証・形式を確認してください。';
+            }
+        });
+    });
+    $('cloud-lock-recover').addEventListener('click', () => {
+        void action(async () => {
+            const target = $('cloud-lock-check-result');
+            target.textContent = '保存ロックの復旧準備中…';
+            const auth = authContext(), valid = handlers.confirmationContext();
+            try {
+                const result = await handlers.onRecoverSaveLock(createdAt => confirmAction({ title: '中断した保存ロックを復旧しますか？', message: `作成日時：${createdAt ? new Date(createdAt).toLocaleString('ja-JP') : '不明'}。他のすべてのFinanceタブを閉じ、実行中・未完了のアップロードや再暗号化がないことを確認してください。現在の保管庫を読み取り・復号確認し、同じ空の操作ロックだけを解除します。処理が停止したかを自動判定する機能ではありません。`, acceptLabel: '復旧する', destructive: true, requiredText: '解除' }));
+                if (!auth() || !valid())
+                    return;
+                target.textContent = result === 'released' ? '保存ロックを解除しました。未確認の明細は保存結果を照合して再開してください。' : result === 'absent' ? '保存ロックは存在しません。' : '復旧を取り消しました。';
+                status(target.textContent, result === 'released' ? 'ok' : 'neutral');
+            }
+            catch (error) {
+                if (auth() && valid())
+                    target.textContent = `復旧できませんでした：${error instanceof Error ? error.message : '不明なエラー'}`;
+                throw error;
             }
         });
     });

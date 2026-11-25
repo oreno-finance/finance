@@ -18,14 +18,18 @@ test('a different recurring edit cannot discard the unsaved form without confirm
   assert.match(source,/\('assets-recurring-clear'\)[\s\S]*?if\(recurringHasChanges\(\)\)\{[\s\S]*?!await requestConfirmation/);
 });
 
-test('asset errors persist at form and disappear on next progress/success, while warnings remain',()=>{
+test('asset operation errors use toast outside dialogs, validation remains inside dialogs and financial warnings stay visible',()=>{
   const original=globalThis.document;
   const attrs=new Map();
   const styles=new Set();
-  const node={textContent:'',classList:{toggle(name,enabled){if(enabled)styles.add(name);else styles.delete(name)}},setAttribute(k,v){attrs.set(k,v)},removeAttribute(k){attrs.delete(k)}};
+  let modal=false;
+  const node={textContent:'',closest(){return modal?{}:null;},classList:{toggle(name,enabled){if(enabled)styles.add(name);else styles.delete(name)}},setAttribute(k,v){attrs.set(k,v)},removeAttribute(k){attrs.delete(k)}};
   globalThis.document={getElementById:()=>null};
   try {
     status(node,'保存結果未確認：再取得してください。',true);
+    assert.equal(node.textContent,'');
+    assert.equal(attrs.has('role'),false);
+    modal=true;status(node,'保存結果未確認：再取得してください。',true);
     assert.match(node.textContent,/保存結果未確認/);
     assert.equal(attrs.get('role'),'alert');
     assert.equal(styles.has('bad'),true);

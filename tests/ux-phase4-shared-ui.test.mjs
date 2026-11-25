@@ -45,3 +45,18 @@ test('既存四画面は共通の年月操作を使い、明細管理はタイ�
  assert.match(html,/id="manage-delete" class="danger-action"/);assert.match(reports,/レポートを作成[\s\S]*?'save-action'/);
  for(const file of ['home','monthly-summary','monthly-reports','analysis','assets-settings','subscriptions','future-projection','card-settings','point-benefits'])assert.match(read(`src/ui/${file}.ts`),/from '\.\/formatters\.js'/);
 });
+
+
+test('financial display statuses distinguish zero, absent inputs and calculation failures',async()=>{
+ const {DATA_STATUS,financialStatusClass,formatYen}=await import('../dist/src/ui/formatters.js');
+ assert.deepEqual(Object.values(DATA_STATUS),['未設定','未登録','未取得','算出不可','見込み','暫定','要確認']);
+ for(const key of ['unset','unregistered','missing','unavailable']){
+   assert.equal(formatYen(null,0,DATA_STATUS[key]),DATA_STATUS[key]);
+   assert.equal(formatYen(0,0,DATA_STATUS[key]),'0円');
+   assert.equal(financialStatusClass(DATA_STATUS[key]),'data-status-muted');
+ }
+ assert.equal(financialStatusClass('0円'),'');
+ assert.equal(financialStatusClass(DATA_STATUS.provisional),'data-status-warning');
+ assert.equal(financialStatusClass(DATA_STATUS.review),'data-status-warning');
+ assert.equal(financialStatusClass(DATA_STATUS.estimate),'data-status-estimate');
+});

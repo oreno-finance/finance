@@ -9,9 +9,11 @@ export function availableMonths(statements, year) {
                 ? [month.slice(5)] : [];
         }))].sort((a, b) => b.localeCompare(a));
 }
-export function filteredStatementIndices(statements, year, month) {
-    return statements.map((s, index) => ({ billingMonth: s.billingMonth, index }))
-        .filter(({ billingMonth }) => {
+export function filteredStatementIndices(statements, year, month, provisionalOnly = false) {
+    return statements.map((s, index) => ({ billingMonth: s.billingMonth, confirmation: s.confirmation, index }))
+        .filter(({ billingMonth, confirmation }) => {
+        if (provisionalOnly && confirmation !== 'provisional')
+            return false;
         if (year === 'all' && month === 'all')
             return true; // Includes statements without a known billing month.
         if (!billingMonth || !/^\d{4}-(0[1-9]|1[0-2])$/.test(billingMonth))

@@ -182,3 +182,57 @@ test('Round4C historical merge exception rejects an imitation with identical cus
   assert.notEqual(r.status,0);
   assert.match(r.stderr,/コミット履歴のCommitter/);
 });
+
+
+test('push audits new branch commits once, not unrelated local notes or local-only history',()=>{
+  const f=setup();f.git('config','core.hooksPath','.githooks');
+  const remote=join(f.base,'remote.git');
+  execFileSync('git',['init','--bare','-q',remote]);
+  const calls=join(f.base,'scanner-calls');
+  const mock=join(f.base,'bin','gitleaks');
+  writeFileSync(mock,'#!/bin/sh\nprintf "%s\\n" "$*" >> "$FINANCE_TEST_SCAN_LOG"\n');
+  const env={...f.env,FINANCE_TEST_SCAN_LOG:calls};
+  const push=(...args)=>spawnSync('git',['push',remote,...args],{cwd:f.cwd,env,encoding:'utf8'});
+  assert.equal(push('HEAD:refs/heads/main').status,0);
+  const base=f.git('rev-parse','HEAD');
+  f.git('switch','-qc','private-local');
+  writeFileSync(join(f.cwd,'README.md'),['06','1234','5678'].join('-'));
+  f.git('add','README.md');f.git('-c','core.hooksPath=/dev/null','commit','-qm','local only');
+  f.git('switch','-qc','feature',base);
+  writeFileSync(join(f.cwd,'local.pdf'),'not part of the commit');
+  writeFileSync(join(f.cwd,'README.md'),'first safe change');f.git('add','README.md');assert.equal(spawnSync('git',['commit','-qm','日本語の変更'],{cwd:f.cwd,env,encoding:'utf8'}).status,0);
+  const first=f.git('rev-parse','HEAD');
+  writeFileSync(join(f.cwd,'README.md'),'second safe change');f.git('add','README.md');assert.equal(spawnSync('git',['commit','-qm','二件目'],{cwd:f.cwd,env,encoding:'utf8'}).status,0);
+  const second=f.git('rev-parse','HEAD');
+  writeFileSync(calls,'');
+  const accepted=push('HEAD:refs/heads/feature','HEAD:refs/heads/other');
+  assert.equal(accepted.status,0,accepted.stderr);
+  assert.match(accepted.stderr+accepted.stdout,/push対象: 2コミット/);
+  const scans=readFileSync(calls,'utf8').trim().split('\n');
+  assert.equal(scans.length,1,'one scan for overlapping outgoing ranges');
+  assert.ok(scans[0].includes(second)&&scans[0].includes('^'+base));
+  assert.ok(!scans[0].includes('--all'));
+  assert.equal(f.audit(['--commit',first]).status,0);
+  assert.notEqual(f.audit().status,0,'explicit worktree audit still diagnoses local notes');
+});
+
+test('outgoing message and identity checks reject private values without echoing them',()=>{
+  const f=setup();
+  const base=f.git('rev-parse','HEAD');
+  const secret=['06','1234','5678'].join('-');
+  f.git('commit','--allow-empty','-qm',`private ${secret}`);
+  const head=f.git('rev-parse','HEAD');
+  const r=f.audit(['--range',base,head]);
+  assert.notEqual(r.status,0);assert.match(r.stderr,/コミットメッセージ: 電話番号/);
+  assert.ok(!r.stderr.includes(secret));
+  const staged=f.audit(['--staged'],{GIT_AUTHOR_NAME:'private local',GIT_AUTHOR_EMAIL:['private','invalid.test'].join('@')});
+  assert.notEqual(staged.status,0);assert.match(staged.stderr,/現在のGit AUTHOR/);
+});
+
+test('push stops on unknown old object rather than silently omitting the range',()=>{
+  const f=setup();const head=f.git('rev-parse','HEAD');
+  const r=spawnSync(process.execPath,['scripts/audit-publication.mjs','--push','unused'],{
+    cwd:f.cwd,env:f.env,encoding:'utf8',input:`refs/heads/main ${head} refs/heads/main ${'f'.repeat(40)}\n`,
+  });
+  assert.notEqual(r.status,0);assert.match(r.stderr,/push対象の履歴を確認できません/);
+});

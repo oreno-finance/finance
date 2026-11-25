@@ -2,6 +2,7 @@
  * No client-side dependency, network request, or manually maintained version in HTML.
  */
 import {readFile, writeFile} from 'node:fs/promises';
+import {realpathSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -39,7 +40,12 @@ export async function stampAppMeta(root=resolve(fileURLToPath(new URL('..',impor
   return {version:pkg.version,day,changed:before!==after};
 }
 
-if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)){
-  const meta=await stampAppMeta();
+if(process.argv[1] && realpathSync(process.argv[1])===realpathSync(fileURLToPath(import.meta.url))){
+  // Explicit build input for reproducible patch validation; normal builds use JST today.
+  const day=process.env.FINANCE_BUILD_DATE;
+  const now=day===undefined?new Date():new Date(`${day}T00:00:00+09:00`);
+  if(day!==undefined&&(!/^\d{4}-\d{2}-\d{2}$/.test(day)||japanBuildDate(now)!==day))
+    throw new Error('FINANCE_BUILD_DATE が不正です。');
+  const meta=await stampAppMeta(undefined,now);
   console.log(`Finance sidebar: v${meta.version} / 更新 ${meta.day} JST${meta.changed?'':' (already current)'}`);
 }

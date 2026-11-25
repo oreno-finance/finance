@@ -42,7 +42,7 @@ test('import parser does not turn expected Rakuten choice into a warning',()=>{
 test('import summary, list, management and batch bar distinguish choices from red errors',()=>{
   assert.match(main,/const validationIssues=displayIssues\(s\)/);
   assert.match(main,/else if \(cardSelectionPending\(s\)\) setBadgeState\('pill info', 'カード選択待ち'\)/);
-  assert.match(main,/const state = displayIssues\(statement\)\.length \? 'review' : cardSelectionPending\(statement\) \? 'selection'/);
+  assert.match(main,/const state = collision==='duplicate'\?'duplicate':collision\?'conflict':displayIssues\(statement\)\.length \? 'review' : cardSelectionPending\(statement\) \? 'selection'/);
   assert.match(main,/const selectionOnly = blocked\.filter/);
   assert.match(main, /selectionOnly\.length \? `\$\{selectionOnly\.length\}件のカード選択待ち`/);
   assert.match(main, /\$\('manage-validation'\)\.textContent=errors\.length\?/);

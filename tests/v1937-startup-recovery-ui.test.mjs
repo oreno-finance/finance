@@ -32,6 +32,7 @@ test('startup fallback keeps its diagnostic and recovery actions without using m
     querySelector(selector){return selector==='.startup-recovery-note'?this.children.find(item=>item.className==='startup-recovery-note'):null;}
   }
   const document={
+    querySelector(selector){return selector==='.sidebar-meta > span'?{textContent:'Finance v2.0.2'}:null;},
     documentElement:{dataset:{}},body:new FakeElement(),
     addEventListener(type,handler){handlers[type]=handler;},
     getElementById(id){return elements.get(id)??null;},
@@ -57,6 +58,10 @@ test('startup fallback keeps its diagnostic and recovery actions without using m
   await copy.events.click();
   assert.match(clipboardContent,/Finance 起動診断/);
   assert.match(clipboardContent,/appReady: false/);
+  assert.match(clipboardContent,/version: 2\.0\.2/);
+  document.querySelector=()=>({textContent:'unexpected diagnostic value'});
+  await copy.events.click();assert.match(clipboardContent,/version: unknown/);
+  assert.doesNotMatch(clipboardContent,/unexpected diagnostic value/);
   assert.doesNotMatch(clipboardContent,/token|passphrase|clientId|メール/);
 });
 

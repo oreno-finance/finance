@@ -19,9 +19,6 @@ export function isoDate(year, month, day) {
     return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 export function paymentMonth(iso) { return iso?.slice(0, 7) ?? null; }
-export function firstMatch(text, pattern, group = 1) {
-    return pattern.exec(text)?.[group];
-}
 export function matchPaymentDate(text) {
     const n = normalize(text);
     // The date precedes the payment label on SMBC / Gold Point statements.

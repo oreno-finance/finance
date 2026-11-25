@@ -24,35 +24,53 @@ export function statementSignature(s: ParsedStatement): string {
 export type ImportDecision =
   | { kind: 'duplicate'; index: number }
   | { kind: 'revision'; index: number }
+  | { kind: 'blocked'; index: number }
   | { kind: 'add' };
 
-/**
- * Exact repeats are ignored. A changed statement is a revision only when both
- * the card and its billing month are known, preventing cross-card replacement.
- * getSignature can return the original import signature to preserve edits.
- */
+/** A known card and billing month identify a bill across import and storage. */
+export function statementMonthKey(s: ParsedStatement): string | null {
+  return s.cardId && s.billingMonth ? `${s.cardId}|${s.billingMonth}` : null;
+}
+
+export function isConfirmationRegression(previous: ParsedStatement | undefined, incoming: ParsedStatement): boolean {
+  return previous?.confirmation === 'confirmed' && incoming.confirmation !== 'confirmed';
+}
+
+/** Decide once for both preview and acceptance. Never choose an ambiguous target. */
 export function planStatementImport(
   statements: readonly ParsedStatement[],
   incoming: ParsedStatement,
   getSignature: (s: ParsedStatement) => string = statementSignature,
 ): ImportDecision {
-  const incomingSignature = statementSignature(incoming);
-  // Two different unselected cards can issue identical empty PDFs. Let the
-  // explicit card selection and duplicate-month gate resolve their identity.
-  const exactIndex = statements.findIndex(existing =>
-    !(incoming.zeroUsage===true&&incoming.cardId===null) &&
-    existing.provider === incoming.provider &&
-    existing.cardId === incoming.cardId &&
-    getSignature(existing) === incomingSignature,
-  );
-  if (exactIndex !== -1) return { kind: 'duplicate', index: exactIndex };
-
-  if (incoming.cardId && incoming.billingMonth) {
-    const revisionIndex = statements.findIndex(existing =>
-      existing.cardId === incoming.cardId &&
-      existing.billingMonth === incoming.billingMonth,
-    );
-    if (revisionIndex !== -1) return { kind: 'revision', index: revisionIndex };
+  if (!incoming.cardId) return { kind: 'add' };
+  const key = statementMonthKey(incoming);
+  let revisionIndex = -1;
+  if (key) {
+    for (const [index, existing] of statements.entries()) {
+      if (statementMonthKey(existing) !== key) continue;
+      if (revisionIndex !== -1) return { kind: 'blocked', index: revisionIndex };
+      revisionIndex = index;
+    }
+    if (revisionIndex === -1) return { kind: 'add' };
+    if (isConfirmationRegression(statements[revisionIndex], incoming))
+      return { kind: 'blocked', index: revisionIndex };
   }
-  return { kind: 'add' };
+
+  const sameIdentity = (existing: ParsedStatement) =>
+    existing.provider === incoming.provider && existing.cardId === incoming.cardId &&
+    existing.billingMonth === incoming.billingMonth && existing.confirmation === incoming.confirmation;
+  // Delay the (sorted) signature until a possible identical bill is found.
+  let signature: string | undefined;
+  const exact = (existing: ParsedStatement) => sameIdentity(existing) &&
+    getSignature(existing) === (signature ??= statementSignature(incoming));
+  const exactIndex = revisionIndex !== -1
+    ? (exact(statements[revisionIndex]!) ? revisionIndex : -1)
+    : statements.findIndex(exact);
+  if (exactIndex !== -1) {
+    // Preserve the existing CSV source-promotion workflow.
+    if (revisionIndex !== -1 && incoming.sourceKind === 'csv' && statements[exactIndex]!.sourceKind !== 'csv')
+      return { kind: 'revision', index: exactIndex };
+    return { kind: 'duplicate', index: exactIndex };
+  }
+  return revisionIndex === -1 ? { kind: 'add' } : { kind: 'revision', index: revisionIndex };
 }

@@ -6,7 +6,7 @@
   .assets-account-layout .assets-account-group{align-self:stretch}
   .assets-account-layout .assets-main-grid,.assets-account-layout .assets-savings-grid{height:100%!important}
 }
-.assets-account-layout .assets-account-card{display:flex;flex-direction:column;gap:0}
+.assets-account-layout .assets-account-card{gap:0}
 .assets-account-layout .assets-account-card .assets-latest{flex:0 0 auto;min-height:140px;justify-content:flex-start}
 .assets-account-layout .assets-latest .assets-balance-caption{font-size:11px}
 .assets-account-layout .assets-latest .assets-balance-date{font-size:10px;line-height:1.55}
@@ -23,7 +23,7 @@
 .assets-card-debits>summary{font-size:13px;font-weight:750;padding:16px 0;cursor:pointer}
 .assets-card-debits form{border-top:1px solid var(--line);padding:16px 0}
 .assets-card-debits-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px 18px}
-.assets-card-debits-item{display:flex;flex-direction:column;gap:7px;min-width:0;font-size:11px;font-weight:700;color:var(--muted)}
+.assets-card-debits-item{display:flex;flex-direction:column;gap:7px;font-size:11px;font-weight:700;color:var(--muted)}
 .assets-card-debits-item select{width:100%;height:41px;min-width:0;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:8px 36px 8px 11px}
 .assets-card-debits-actions{display:flex;align-items:center;gap:12px;margin-top:15px;flex-wrap:wrap}
 /* Navigation disclosure: no vertical branch line, no glyph triangle. */
@@ -31,25 +31,25 @@
 .sidebar .sidebar-group>summary{position:relative;background:transparent!important}
 .sidebar .sidebar-group>summary:hover{background:#273750!important}
 /* Desktop ledger: one clear merchant field, metadata below, rule action stays discoverable. */
-.manage-editor .transaction-table{table-layout:fixed;min-width:730px}
+.manage-editor .transaction-table{min-width:730px}
 .manage-editor .transaction-table .col-date{width:16%}
 .manage-editor .transaction-table .col-merchant{width:39%}
 .manage-editor .transaction-table .col-amount{width:16%}
 .manage-editor .transaction-table .col-note{width:19%}
 .manage-editor .transaction-table .col-operation{width:10%}
 .manage-editor #manage-rows td{vertical-align:middle;padding:11px 9px}
-.manage-editor .manage-merchant-control{min-width:0;gap:6px}
+.manage-editor .manage-merchant-control{gap:6px}
 .manage-editor .manage-merchant-main{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center}
-.manage-editor .manage-merchant-main>input{width:100%;min-width:0;grid-column:1/-1;flex:none;font-size:13px}
+.manage-editor .manage-merchant-main>input{width:100%;grid-column:1/-1;flex:none;font-size:13px}
 .manage-editor .manage-merchant-main>.category-chip{grid-column:1;justify-self:start;white-space:normal;line-height:1.3;font-size:10px;padding:4px 8px}
 .manage-editor .manage-merchant-main>.manage-rule-action{grid-column:2;grid-row:2;border:1px solid var(--line);border-radius:7px;color:var(--accent);background:var(--panel);font-size:10px;font-weight:750;min-height:30px;padding:5px 10px}
-.manage-editor .manage-merchant-secondary{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0;color:var(--muted);font-size:10px;line-height:1.4}
+.manage-editor .manage-merchant-secondary{flex-direction:column;align-items:flex-start;gap:2px;color:var(--muted);font-size:10px;line-height:1.4}
 .manage-editor .manage-source-text,.manage-editor .manage-rule-text{display:block;min-width:0;max-width:100%;overflow-wrap:anywhere;white-space:normal;text-overflow:clip}
 .manage-editor .manage-rule-text{color:var(--muted)}
 .manage-editor .transaction-table td input{font-size:12px;min-width:0;max-width:100%;box-sizing:border-box}
 /* Bank forecast graph: event-date step line and zero line. */
 .monthly-chart{margin:14px 0;padding:13px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);min-width:0}
-.monthly-balance-svg{display:block;width:100%;height:auto;min-height:170px;overflow:visible}
+.monthly-balance-svg{width:100%;height:auto;min-height:170px;overflow:visible}
 .monthly-chart-grid{stroke:var(--line);stroke-width:1}
 .monthly-chart-zero{stroke:#ad727a;stroke-dasharray:5 5;stroke-width:1.5}
 .monthly-chart-label{fill:var(--muted);font-size:12px;font-family:inherit}
@@ -70,9 +70,9 @@
 @media(max-width:800px){
   .assets-account-layout .assets-account-card{height:auto!important}
   .manage-editor .transaction-table{min-width:0!important;width:100%!important;table-layout:auto}
-  .manage-editor .manage-merchant-main{display:grid!important;grid-template-columns:minmax(0,1fr) auto!important}
+  .manage-editor .manage-merchant-main{display:grid!important;}
   .manage-editor .manage-merchant-main>input{grid-column:1/-1!important;flex:none!important;width:100%!important}
-  .manage-editor .manage-merchant-secondary{display:flex!important;flex-direction:column!important;gap:3px!important}
+  .manage-editor .manage-merchant-secondary{flex-direction:column!important;gap:3px!important}
   .manage-editor #manage-rows td{padding:7px 11px!important}
   .assets-info-row{grid-template-columns:1fr;gap:5px}
   .assets-card-debits-list{grid-template-columns:1fr}

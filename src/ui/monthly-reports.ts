@@ -1,6 +1,6 @@
 import {requestConfirmation,confirmationPending,cancelConfirmation} from './modal.js';
 import {localDay} from '../cloud/asset-projection.js';
-import {formatYen as sharedYen,formatMonth,formatDateTime,formatDate} from './formatters.js';
+import {DATA_STATUS,financialStatusClass,formatYen as sharedYen,formatMonth,formatDateTime,formatDate} from './formatters.js';
 import { showActivity, finishActivity } from './activity-feedback.js';
 /** P1-B monthly report archive. Nothing is written without pressing Save. */
 import { reportSnapshot, snapshotHash, type MonthlyReportDocument, type ReportSnapshot } from '../reports/monthly-report.js';
@@ -12,8 +12,9 @@ import { pointBenefitsSection,archivedPointCoverage } from './point-benefits.js'
 export interface MonthlyReportsUi { render():void; openPeriod(period:string):void; reset():void; isBusy():boolean; isDirty():boolean }
 export interface MonthlyReportsDeps { source():MonthlySource|null; vault():LiveVault|null; openMonth(period:string):void }
 const today=localMonth;
-const yen=(value:number|null)=>sharedYen(value,0,'未取得');
+const yen=(value:number|null)=>sharedYen(value,0,DATA_STATUS.missing);
 const month=formatMonth;
+const metricValue=(label:string,value:number|null)=>label==='収支'?sharedYen(value,0,DATA_STATUS.unavailable):yen(value);
 function el<K extends keyof HTMLElementTagNameMap>(tag:K,cls='',content?:string):HTMLElementTagNameMap[K]{
   const node=document.createElement(tag);node.className=cls;if(content!==undefined)node.textContent=content;return node;
 }
@@ -24,12 +25,12 @@ function section(title:string):{root:HTMLElement;body:HTMLElement}{
   const root=el('section','panel reports-panel'),body=el('div','reports-panel-body');root.append(el('h2','',title),body);return {root,body};
 }
 function row(parent:HTMLElement,label:string,value:string):void {
-  const root=el('div','reports-row');root.append(el('span','',label),el('strong','',value));parent.append(root);
+  const root=el('div','reports-row');root.append(el('span','',label),el('strong',financialStatusClass(value),value));parent.append(root);
 }
 function renderSnapshot(root:HTMLElement,snapshot:ReportSnapshot,showMetrics=true):void {
   const metrics=el('div','reports-metrics');
   for(const [label,value] of [['収入',snapshot.income],['支出',snapshot.expense],['収支',snapshot.balance]] as const){
-    const item=el('div','reports-metric');item.append(el('span','',label),el('strong','',yen(value)));metrics.append(item);
+    const item=el('div','reports-metric');item.append(el('span','',label),el('strong',financialStatusClass(metricValue(label,value)),metricValue(label,value)));metrics.append(item);
   }
   if(showMetrics)root.append(metrics);
   if(showMetrics&&snapshot.quality.length){const note=el('p','reports-quality',snapshot.quality.join(' · '));root.append(note);}
@@ -69,6 +70,7 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
       const [list,document]=await Promise.all([vault.listArchivedMonths(),vault.loadArchivedReport(selected)]);
       if(id!==request)return;
       periods=list;archive=document;loadedPeriod=selected;
+      if(drafts.get(selected)?.note===(document?.current.note??''))drafts.delete(selected);
       const held=drafts.get(selected);
       draftConflict=!!held&&held.revision!==(document?.current.id??null);
       draft=held?.note??document?.current.note??'';changed=false;loadFailed=false;chosenRevision=null;
@@ -93,8 +95,12 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
   async function compareSource():Promise<void>{
     const id=request;
     const source=deps.source();if(!source||!archive)return;
-    try {const hash=await snapshotHash(reportSnapshot(selected,source));if(id===request){changed=hash!==archive.current.sourceHash;render();}}
-    catch {if(id===request){changed=false;}}
+    try {const hash=await snapshotHash(reportSnapshot(selected,source));if(id===request){changed=hash!==archive.current.sourceHash;syncSourceNotice();}}
+    catch {if(id===request){changed=false;syncSourceNotice();}}
+  }
+  function syncSourceNotice():void {
+    const notice=container.querySelector<HTMLElement>('.reports-source-changed');
+    if(notice)notice.hidden=!changed;
   }
   function selectPeriod(period:string):boolean {
     // A cloud save must finish against its original month. Loading requests may
@@ -154,10 +160,10 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
     const control=section('メモ・保存');
     if(message){const error=el('p','reports-feedback-error',message);error.setAttribute('role','alert');control.body.append(error);}
     const state=archive?.current;
-    if(changed&&state)control.body.append(el('p','reports-quality','明細や設定に変更があります。レポートを更新できます。'));
+    if(state){const notice=el('p','reports-quality reports-source-changed','明細や設定に変更があります。レポートを更新できます。');notice.hidden=!changed;control.body.append(notice);}
     if(draftConflict){
       control.body.append(el('p','reports-quality','別の端末でメモが更新されました。編集中の内容を確認してください。'));
-      control.body.append(button('編集内容を破棄して最新を表示',async()=>{
+      control.body.append(button('編集を破棄',async()=>{
         const id=request,period=selected,vault=deps.vault(),note=draft,revision=archive?.current.id;
         if(!await requestConfirmation({owner:confirmationOwner,title:'編集中のメモを破棄しますか？',message:'保存済みの最新レポートを表示します。',acceptLabel:'破棄する',destructive:true}))return;
         if(id!==request||period!==selected||vault!==deps.vault()||!vault?.unlocked||busy||!draftConflict||draft!==note||archive?.current.id!==revision)return;
@@ -166,11 +172,17 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
     }
     const noteLabel=el('label','reports-memo-label','メモ');noteLabel.htmlFor='reports-memo';control.body.append(noteLabel);
     const memo=el('textarea','reports-memo');memo.id='reports-memo';memo.rows=3;memo.maxLength=2000;memo.value=draft;
-    memo.placeholder='今月の振り返り';memo.addEventListener('input',()=>{draft=memo.value;drafts.set(selected,{note:draft,revision:archive?.current.id??null});});
+    memo.placeholder='今月の振り返り';memo.addEventListener('input',()=>{
+      if(!memo.isConnected||busy||!active()||loadedPeriod!==selected)return;
+      draft=memo.value;
+      // Keep the original revision during a conflict; typing cannot approve a remote overwrite.
+      if(!draftConflict&&draft===(archive?.current.note??''))drafts.delete(selected);
+      else {const held=drafts.get(selected);drafts.set(selected,{note:draft,revision:held?held.revision:archive?.current.id??null});}
+    });
     control.body.append(memo);
     const submit=button(state?'レポートを更新':'レポートを作成',()=>{void save();},'save-action');
     submit.disabled=draftConflict;control.body.append(submit);
-    control.body.append(button('月別サマリーを開く',()=>deps.openMonth(selected)));
+    control.body.append(button('月別サマリー',()=>deps.openMonth(selected)));
     const revision=chosenRevision?archive?.history.find(item=>item.id===chosenRevision)??state:state;
     let preview:ReportSnapshot|null=null;
     if(!revision){const source=deps.source();if(source)try{preview=reportSnapshot(selected,source);}catch{control.body.append(el('p','reports-feedback-error','プレビューを算出できません。集計データを確認してください。'));submit.disabled=true;}}
@@ -182,7 +194,7 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
       container.append(heading);
       const metrics=el('div','reports-metrics');
       for(const [label,value] of [['収入',snapshot.income],['支出',snapshot.expense],['収支',snapshot.balance]] as const){
-        const item=el('div','reports-metric');item.append(el('span','',label),el('strong','',yen(value)));metrics.append(item);
+        const item=el('div','reports-metric');item.append(el('span','',label),el('strong',financialStatusClass(metricValue(label,value)),metricValue(label,value)));metrics.append(item);
       }
       container.append(metrics);
       if(snapshot.quality.length)container.append(el('p','reports-quality',snapshot.quality.join(' · ')));
@@ -205,6 +217,5 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
     selectPeriod(period);
   }
   return {render:()=>{render();if(archive&&!busy)void compareSource();},openPeriod,reset,
-    isBusy:()=>busy||confirmationPending(confirmationOwner),isDirty:()=>[...drafts].some(([period,entry])=>
-      entry.note!==((period===selected&&loadedPeriod===selected)?archive?.current.note??'':''))};
+    isBusy:()=>busy||confirmationPending(confirmationOwner),isDirty:()=>drafts.size>0};
 }

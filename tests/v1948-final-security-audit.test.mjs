@@ -129,3 +129,17 @@ test('GitHub CI audits incoming commit range and pins official Actions to full S
   }
   assert.doesNotMatch(workflow,/uses:\s*actions\/[^\s@]+@v\d+/);
 });
+
+
+test('CI builds and typechecks once; weekly inspection never builds or deploys',()=>{
+  assert.doesNotMatch(workflow,/npm run check/);
+  assert.equal((workflow.match(/npm test/g)??[]).length,1);
+  for(const name of ['Build once, typecheck and run regressions','Audit actual published files','Install pinned Playwright in an isolated Python environment','Exercise real desktop and mobile interactions (headless Chromium)','Gitleaks scan of actual published build']){
+    const start=workflow.indexOf(`- name: ${name}\n`);
+    assert.ok(start>=0,name);
+    assert.match(workflow.slice(start,workflow.indexOf('\n      - name:',start+1)),/if: github.event_name != 'schedule'/);
+  }
+  assert.match(workflow,/node scripts\/audit-publication\.mjs --source/);
+  assert.match(workflow,/node scripts\/audit-publication\.mjs --dist/);
+  assert.match(workflow,/Periodic full tree and author history inspection\s+if: github.event_name == 'schedule'\s+run: npm run audit:tree/);
+});

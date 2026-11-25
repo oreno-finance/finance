@@ -16,7 +16,6 @@
 }
 /* Rakuten issuer identity is chosen at import, not guessed from ETC purchases. */
 #import-view .import-rakuten-choice{border:1px solid var(--line);border-radius:9px;margin:8px 0 0;padding:8px 10px;display:flex;align-items:center;flex-wrap:wrap;gap:10px 16px;min-width:0}
-#import-view .import-rakuten-choice.hidden{display:none!important}
 #import-view .import-rakuten-choice legend{font-size:11px;font-weight:700;color:var(--muted);padding:0 4px}
 #import-view .import-rakuten-choice label{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-size:12px;cursor:pointer}
 #import-view .import-rakuten-choice input{accent-color:var(--accent);width:16px;height:16px;margin:0}

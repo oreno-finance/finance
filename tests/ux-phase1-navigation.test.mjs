@@ -21,7 +21,7 @@ test('インポートだけにSTEPを残し、両方の明細テーブルで見�
  assert.equal((main.match(/renderStatementSortControl\(id,label,/g)??[]).length,2);
  assert.match(main,/button.textContent = batchBusy \? '保存中…' : '保存'/);
  assert.match(main,/\$\{drafts.length\}件の明細/);
- assert.match(main,/await liveVault!\.saveBatch/);
+ assert.match(main,/await vault\.saveBatch/);
 });
 test('ホームは収支、確認、入出金、資産、ポイントの順で描画する',()=>{
  const markers=['root!.append(metrics)','fundingPanel(previous)',"section('確認すること')","section('次の入出金')","section('口座と資産')","pointBenefitsSection('今月の推定ポイント'"];

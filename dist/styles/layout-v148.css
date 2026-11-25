@@ -6,7 +6,6 @@
 
 /* Desktop: inputs start on the same top edge even when the merchant has metadata. */
 .manage-editor #manage-rows td{vertical-align:top;padding-top:12px;padding-bottom:12px}
-.manage-editor .manage-merchant-control{display:grid;gap:7px;min-width:0}
 .manage-editor .manage-merchant-input-row{display:flex;gap:7px;min-width:0;align-items:center}
 .manage-editor .manage-merchant-input-row>input{min-width:0;flex:1 1 0;width:0}
 .manage-editor .manage-merchant-input-row .manage-rule-action{
@@ -59,7 +58,7 @@
     margin:0!important;font-size:11px;line-height:1.4;gap:5px;
   }
   .sidebar .nav-entry .nav-symbol{font-size:14px}
-  .sidebar .sidebar-footer{order:10;width:100%;margin:7px 0 0!important;min-width:0;padding:8px 0 0!important}
+  .sidebar .sidebar-footer{width:100%;margin:7px 0 0!important;min-width:0;padding:8px 0 0!important}
   .sidebar #nav-payroll{margin:0!important}
   .sidebar .sidebar-meta{overflow-wrap:anywhere}
   .workspace{height:auto!important;min-height:0!important;width:100%;overflow:visible!important;display:block!important}
@@ -72,7 +71,6 @@
   }
   .metrics,.monthly-metrics{grid-template-columns:repeat(2,minmax(0,1fr))!important}
   .monthly-paired,.monthly-insights{grid-template-columns:minmax(0,1fr)!important}
-  .assets-recurring-grid{grid-template-columns:minmax(0,1fr)!important}
   .assets-account-layout .assets-savings-grid{grid-template-columns:minmax(0,1fr)!important}
   .future-controls{grid-template-columns:minmax(0,1fr)!important}
   .future-cards{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px}
@@ -108,7 +106,7 @@
   .manage-editor .transaction-table tbody td:nth-child(3){grid-column:2;grid-row:1}
   .manage-editor .transaction-table tbody td:nth-child(2){grid-column:1/-1;grid-row:2}
   .manage-editor .transaction-table tbody td:nth-child(4){grid-column:1/-1;grid-row:3}
-  .manage-editor .transaction-table tbody td:nth-child(5){grid-column:1/-1;grid-row:4;align-items:flex-end}
+  .manage-editor .transaction-table tbody td:nth-child(5){grid-column:1/-1;grid-row:4;}
   .manage-editor .transaction-table tbody td input{width:100%;min-width:0;border:1px solid var(--line);border-radius:8px;background:var(--bg);padding:9px;font-size:13px}
   .manage-editor .manage-merchant-input-row{flex-direction:row;align-items:center}
   .manage-editor .manage-merchant-input-row>input{width:0;min-width:0;flex:1 1 0}

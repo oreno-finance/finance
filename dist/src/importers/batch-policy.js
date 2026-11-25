@@ -1,3 +1,4 @@
+import { statementMonthKey, planStatementImport, statementSignature } from './import-policy.js';
 import { CARDS, calculatedTotal, isZeroUsage } from '../models/types.js';
 function realDate(value) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value))
@@ -46,9 +47,9 @@ export function duplicateMonths(statements) {
     const seen = new Map();
     const conflicts = new Set();
     for (const [index, statement] of statements.entries()) {
-        if (!statement.cardId || !statement.billingMonth)
+        const key = statementMonthKey(statement);
+        if (!key)
             continue;
-        const key = `${statement.cardId}|${statement.billingMonth}`;
         const first = seen.get(key);
         if (first === undefined)
             seen.set(key, index);
@@ -58,4 +59,33 @@ export function duplicateMonths(statements) {
         }
     }
     return conflicts;
+}
+/** Only discard redundant drafts. Keep one usable original per card/month;
+ * never choose a winner among mixed versions, unknown states or edited drafts. */
+export function redundantImportDrafts(statements, isDraft, isEligible) {
+    const groups = new Map();
+    for (const s of statements) {
+        const key = statementMonthKey(s);
+        if (!key)
+            continue;
+        const group = groups.get(key) ?? [];
+        group.push(s);
+        groups.set(key, group);
+    }
+    const redundant = [];
+    for (const group of groups.values()) {
+        if (group.length < 2 || group.some(s => s.confirmation === 'unknown' || !isEligible(s)))
+            continue;
+        const saved = group.filter(s => !isDraft(s));
+        if (saved.length > 1)
+            continue;
+        // The queue is newest-first: retain the earlier import when none is stored.
+        const keep = saved[0] ?? group.at(-1);
+        const signature = statementSignature(keep);
+        const extras = group.filter(s => s !== keep);
+        if (extras.every(s => isDraft(s) && s.sourceKind === keep.sourceKind &&
+            planStatementImport([keep], s, () => signature).kind === 'duplicate'))
+            redundant.push(...extras);
+    }
+    return redundant;
 }

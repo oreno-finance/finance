@@ -21,9 +21,9 @@ function isCompact(hasDrafts,hasImportedInThisSession) {
 test('new visit opens a full-width inline uploader even when OneDrive already has statements',()=>{
   assert.equal(isCompact(false,false),false);
   assert.equal(isCompact(true,false),true);
-  assert.equal(isCompact(false,true),true);
+  assert.equal(isCompact(false,true),false);
   assert.equal(isCompact(true,true),true);
-  assert.match(source,/const compact=hasDrafts\|\|hasImportedInThisSession;/);
+  assert.match(source,/const compact=hasDrafts;/);
   assert.match(source,/\$\('import-inline-entry'\)\.classList\.toggle\('hidden',compact\)/);
   assert.match(source,/\$\('import-add-open'\)\.classList\.toggle\('hidden',!compact\)/);
   assert.match(markup,/id="import-add-open"[^>]*class="[^"]*hidden/);
@@ -78,6 +78,6 @@ test('generated build matches version metadata and modular CSS sources',()=>{
   assert.match(markup,new RegExp(`Finance v${JSON.parse(read('package.json')).version.replaceAll('.','\\.')}`));
   assert.equal(read('public/index.html'),read('dist/index.html'));
   assert.equal(read('public/styles/app.css'),read('dist/styles/app.css'));
-  assert.equal(read('src/main.ts').includes('const compact=hasDrafts||hasImportedInThisSession'),true);
-  assert.match(read('dist/src/main.js'),/const compact = hasDrafts \|\| hasImportedInThisSession/);
+  assert.equal(read('src/main.ts').includes('const compact=hasDrafts;'),true);
+  assert.match(read('dist/src/main.js'),/const compact = hasDrafts;/);
 });

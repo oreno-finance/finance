@@ -45,7 +45,9 @@
       const copy=document.createElement('button');copy.type='button';copy.textContent='起動診断をコピー';
       copy.addEventListener('click',async()=>{
         // No account names, client IDs, authentication responses or vault data.
-        const report=['Finance 起動診断','version: 1.6.13','appReady: false',`errorType: ${failureKind}`,`online: ${navigator.onLine}`].join('\n');
+        const versionText=document.querySelector?.('.sidebar-meta > span')?.textContent??'';
+        const version=/^Finance v(\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?)$/.exec(versionText.trim())?.[1]??'unknown';
+        const report=['Finance 起動診断',`version: ${version}`,'appReady: false',`errorType: ${failureKind}`,`online: ${navigator.onLine}`].join('\n');
         try{await navigator.clipboard.writeText(report);copy.textContent='コピーしました';}
         catch{note.textContent=report;}
       });

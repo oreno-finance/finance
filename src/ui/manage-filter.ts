@@ -1,5 +1,5 @@
 /** Filtering is view-only: indices always refer to the original statement array. */
-export interface BillableStatement { billingMonth: string | null }
+export interface BillableStatement { billingMonth: string | null; confirmation?:string }
 
 export function availableYears(statements: readonly BillableStatement[]): string[] {
   return [...new Set(statements.flatMap(s => /^\d{4}-\d{2}$/.test(s.billingMonth ?? '') ? [s.billingMonth!.slice(0, 4)] : []))]
@@ -15,10 +15,11 @@ export function availableMonths(statements: readonly BillableStatement[], year: 
 }
 
 export function filteredStatementIndices(
-  statements: readonly BillableStatement[], year: string, month: string,
+  statements: readonly BillableStatement[], year: string, month: string, provisionalOnly=false,
 ): number[] {
-  return statements.map((s, index) => ({ billingMonth: s.billingMonth, index }))
-    .filter(({ billingMonth }) => {
+  return statements.map((s, index) => ({ billingMonth: s.billingMonth, confirmation:s.confirmation,index }))
+    .filter(({ billingMonth,confirmation }) => {
+      if(provisionalOnly&&confirmation!=='provisional')return false;
       if (year === 'all' && month === 'all') return true; // Includes statements without a known billing month.
       if (!billingMonth || !/^\d{4}-(0[1-9]|1[0-2])$/.test(billingMonth)) return false;
       return (year === 'all' || billingMonth.slice(0, 4) === year)

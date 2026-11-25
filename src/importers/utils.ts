@@ -21,10 +21,6 @@ export function isoDate(year: number, month: number, day: number): string | null
 
 export function paymentMonth(iso: string | null): string | null { return iso?.slice(0, 7) ?? null; }
 
-export function firstMatch(text: string, pattern: RegExp, group = 1): string | undefined {
-  return pattern.exec(text)?.[group];
-}
-
 export function matchPaymentDate(text: string): string | null {
   const n = normalize(text);
   // The date precedes the payment label on SMBC / Gold Point statements.

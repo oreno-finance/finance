@@ -41,11 +41,14 @@ test('all major sections and connection status share one outer gutter',()=>{
   for(const id of ['#home-view','#summary-view','#manage-view','#settings-view'])assert.ok(css.includes(id));
   assert.match(styleOrder,/styles\/layout-v172.css/);
 });
-test('GitHub Pages deploy depends on full-history Gitleaks and custom scan',()=>{
+test('GitHub Pages deploy depends on incoming history Gitleaks and artifact scan',()=>{
   const yml=readFileSync('.github/workflows/pages.yml','utf8');
   assert.match(yml,/needs: security/);
   assert.match(yml,/fetch-depth: 0/);
-  assert.match(yml,/node scripts\/audit-publication.mjs --tree/);
+  assert.match(yml,/node scripts\/audit-publication.mjs --source/);
+  assert.match(yml,/node scripts\/audit-publication.mjs --dist/);
+  assert.match(yml,/npm run audit:tree/);
+  assert.match(yml,/git --redact --no-banner --log-opts="\$range"/);
   assert.match(yml,/ghcr.io\/gitleaks\/gitleaks@sha256:/);
   const hook=readFileSync('.githooks/pre-commit','utf8');
   assert.match(hook,/audit-publication.mjs --staged/);

@@ -75,9 +75,9 @@
 
 /* Detailed settings keeps its outer grouping, but no nested disclosure cards. */
 .settings-view .cloud-advanced-content .cloud-grid{
-  display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
-  gap:14px;
+
+
+
   align-items:stretch;
 }
 .settings-view .cloud-advanced-content .cloud-grid>.cloud-panel{min-width:0;height:100%}
@@ -127,7 +127,6 @@
 }
 @media(max-width:900px){
   .settings-view #cloud-view.settings-cloud-section{grid-template-columns:minmax(0,1fr)}
-  .settings-view .cloud-advanced-content .cloud-grid{grid-template-columns:minmax(0,1fr)}
 }
 @media(max-width:720px){
   .settings-view .assets-payroll-layout{grid-template-columns:minmax(0,1fr)}

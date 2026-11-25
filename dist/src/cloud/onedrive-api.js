@@ -18,8 +18,21 @@ export class GraphError extends Error {
  * uses conflictBehavior=fail, not an upload session or a read-then-write lock.
  * No lease expiry: a suspended tab must never regain permission after expiry. */
 const MUTATION_LOCK_NAME = 'finance-operation-lock';
+/** Honor an explicit throttling response, without replaying an ambiguous write. */
+function throttlingDelay(response, attempt) {
+    const value = response.headers.get('Retry-After');
+    const delay = value === null ? 1000 * 2 ** attempt : /^\d+$/.test(value) ? Number(value) * 1000 : Date.parse(value) - Date.now();
+    if (!Number.isFinite(delay) || delay > 60000)
+        return null;
+    return Math.max(0, delay);
+}
+const wait = (ms) => ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve();
 export class VaultOperationBusyError extends Error {
-    constructor() { super('別の端末で保管庫を保存・整理中です。完了後に再試行してください。処理が中断された場合はすべての端末を閉じ、OneDriveの保存状態と未完了のアップロードを確認してから finance/finance-operation-lock を手動で解除してください。'); this.name = 'VaultOperationBusyError'; }
+    constructor(message = '別の端末で保存中か、前回の通信中断で保存ロックが残っています。時間を置いて再試行してください。続く場合は設定の「保存ロックを確認」を利用してください。') { super(message); this.name = 'VaultOperationBusyError'; }
+}
+/** A data write is still unconfirmed, not merely a failed lock DELETE. */
+export class VaultMutationUncertainError extends Error {
+    constructor() { super('OneDriveの書込み結果が不明なため操作ロックを保持しました。設定の保存ロック復旧で保存結果を確認してください。'); this.name = 'VaultMutationUncertainError'; }
 }
 export class OneDriveTestClient {
     tokenSource;
@@ -27,6 +40,8 @@ export class OneDriveTestClient {
     onUnauthorized;
     mutationLease = null;
     mutationAcquiring = false;
+    // Only a marker created by this client, after a known-ended write.
+    completedMarker = null;
     async acquireVaultMutation(guard) {
         if (this.mutationLease || this.mutationAcquiring)
             throw new VaultOperationBusyError();
@@ -37,20 +52,38 @@ export class OneDriveTestClient {
             if (!parent)
                 throw new Error('保管庫の操作領域を確認できません。');
             guard();
+            if (this.completedMarker?.parent === parent) {
+                const previous = this.completedMarker;
+                const current = await this.readRecoveryMarker(parent, previous.id);
+                guard();
+                if (current)
+                    await this.releaseMutationMarker(current, guard);
+                this.completedMarker = null;
+            }
+            guard();
             let item;
             try {
                 const response = await this.graph(`/me/drive/items/${encodeURIComponent(parent)}/children`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name: MUTATION_LOCK_NAME, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }),
-                }, false, true);
+                }, false, true, false, guard);
                 if (response.status !== 201)
                     throw new Error('操作ロックの新規作成を確認できません。');
                 item = await response.json();
+                if (typeof item?.id === 'string' && item.id && item.name === MUTATION_LOCK_NAME && item.folder && !item.eTag) {
+                    const createdId = item.id;
+                    const metadata = await this.graph(`/me/drive/items/${encodeURIComponent(createdId)}?$select=id,name,eTag,folder`, { cache: 'no-store' });
+                    item = await metadata.json();
+                    if (item.id !== createdId)
+                        throw new Error('作成したロックのIDが一致しません。');
+                }
             }
             catch (error) {
                 if (error instanceof GraphError && [409, 412].includes(error.status))
                     throw new VaultOperationBusyError();
-                throw new Error('保管庫の操作権を確認できません。再接続後も操作できない場合はすべての端末を閉じ、OneDrive上の操作ロックを確認してください。');
+                if (error instanceof GraphError && error.status === 429)
+                    throw new Error('OneDriveの通信制限（HTTP 429）により保存を開始できませんでした。時間を置いて再試行してください。');
+                throw new Error('保管庫の操作権を確認できません。設定の保存ロックを確認し、中断した操作だけを復旧してください。');
             }
             if (typeof item.id !== 'string' || !item.id || typeof item.eTag !== 'string' || !item.eTag || item.name !== MUTATION_LOCK_NAME || !item.folder || typeof item.folder !== 'object' || Array.isArray(item.folder) || (item.folder.childCount !== undefined && item.folder.childCount !== 0))
                 throw new Error('OneDriveの操作ロック作成結果が不明です。保存は開始しません。');
@@ -63,14 +96,134 @@ export class OneDriveTestClient {
                     // A lost final response might mean the server is still committing.
                     // Do not make a destructive operation possible by releasing its fence.
                     if (lease.uncertain)
-                        throw new Error('OneDriveの書込み結果が不明なため操作ロックを保持しました。すべての端末を閉じ、保存結果と未完了のアップロードを確認してから finance/finance-operation-lock を手動で解除してください。');
-                    await this.graph(`/me/drive/items/${encodeURIComponent(item.id)}`, { method: 'DELETE', headers: { 'If-Match': item.eTag } }, false, true);
+                        throw new VaultMutationUncertainError();
+                    const marker = { id: item.id, etag: item.eTag, createdAt: null };
+                    this.completedMarker = { parent, id: marker.id };
+                    try {
+                        await this.releaseMutationMarker(marker, () => { });
+                    }
+                    catch (error) {
+                        // OneDrive may update the empty coordination folder's metadata after
+                        // creation. Only the client that created this exact ID may refresh
+                        // its ETag, and only after a definite conditional DELETE rejection.
+                        // Never transfer ownership to a successor or bypass If-Match.
+                        if (!(error instanceof GraphError && error.status === 412 && error.code.toLowerCase() === 'resourcemodified'))
+                            throw error;
+                        const current = await this.readRecoveryMarker(parent, marker.id);
+                        if (!current) {
+                            this.completedMarker = null;
+                            return;
+                        }
+                        if (current.id !== marker.id || current.etag === marker.etag)
+                            throw error;
+                        // This is a single revalidation, not an unbounded 412 retry loop.
+                        await this.releaseMutationMarker(current, () => { });
+                    }
+                    this.completedMarker = null;
                 }
                 finally {
                     lease.released = true;
                     this.mutationLease = null;
                 }
             };
+        }
+        finally {
+            this.mutationAcquiring = false;
+        }
+    }
+    /** Read-only inspection. Never infer ownership or expiry from the marker age. */
+    async inspectVaultMutationLock() {
+        const parent = await this.folderPath([FINANCE_DIR], false);
+        if (!parent)
+            return { state: 'absent', createdAt: null };
+        try {
+            const response = await this.graph(`/me/drive/items/${encodeURIComponent(parent)}:/${MUTATION_LOCK_NAME}?$select=id,name,folder,createdDateTime`);
+            const item = await response.json();
+            if (!item || typeof item.id !== 'string' || !item.id || item.name !== MUTATION_LOCK_NAME || !item.folder || typeof item.folder !== 'object' || Array.isArray(item.folder))
+                throw new Error('保存ロックの形式を確認できません。');
+            const created = typeof item.createdDateTime === 'string' ? new Date(item.createdDateTime) : null;
+            return { state: 'present', createdAt: created && Number.isFinite(created.valueOf()) ? created.toISOString() : null };
+        }
+        catch (error) {
+            if (error instanceof GraphError && error.status === 404)
+                return { state: 'absent', createdAt: null };
+            throw error;
+        }
+    }
+    /** Delete only this exact marker. Replaying a conditional DELETE cannot
+     * delete a successor (which has a different ID). A 412 is not retried by this helper. */
+    async releaseMutationMarker(marker, guard) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+            guard();
+            try {
+                const response = await this.graph(`/me/drive/items/${encodeURIComponent(marker.id)}`, { method: 'DELETE', headers: { 'If-Match': marker.etag } }, false, true, false, guard);
+                if (response.status !== 204)
+                    throw new Error('操作ロックの削除応答が不明です。');
+                return;
+            }
+            catch (error) {
+                if (error instanceof GraphError && error.status === 404)
+                    return; // this exact ID is already gone
+                if (attempt || error instanceof GraphError && error.status < 500 && error.status !== 408)
+                    throw error;
+                await wait(500);
+            }
+        }
+    }
+    async readRecoveryMarker(parent, expectedId) {
+        let item;
+        try {
+            item = await (await this.graph(`/me/drive/items/${encodeURIComponent(parent)}:/${MUTATION_LOCK_NAME}?$select=id,name,folder,eTag,createdDateTime`, { cache: 'no-store' })).json();
+        }
+        catch (error) {
+            if (error instanceof GraphError && error.status === 404)
+                return null;
+            throw error;
+        }
+        if (!item || typeof item.id !== 'string' || !item.id || typeof item.eTag !== 'string' || !item.eTag || item.name !== MUTATION_LOCK_NAME || !item.folder || typeof item.folder !== 'object' || Array.isArray(item.folder) || (item.folder.childCount !== undefined && item.folder.childCount !== 0))
+            throw new Error('空の保存ロックと更新情報を確認できません。解除しません。');
+        if (expectedId !== undefined && item.id !== expectedId) {
+            this.completedMarker = null;
+            throw new VaultOperationBusyError('保存ロックのIDが変化しました。別の操作のロックは解除しません。');
+        }
+        const children = await (await this.graph(`/me/drive/items/${encodeURIComponent(item.id)}/children?$select=id&$top=1`, { cache: 'no-store' })).json();
+        if (!Array.isArray(children.value) || children.value.length || children['@odata.nextLink'])
+            throw new Error('保存ロックが空ではない、または一覧を確認できません。解除しません。');
+        const date = typeof item.createdDateTime === 'string' ? new Date(item.createdDateTime) : null;
+        return { id: item.id, etag: item.eTag, createdAt: date && Number.isFinite(date.valueOf()) ? date.toISOString() : null };
+    }
+    /** Explicit recovery only. No expiry or takeover of an active lease.
+     * User must stop other clients and confirm interrupted writes; an unchanged
+     * marker is not proof that another device has stopped. */
+    async recoverVaultMutationLock(guard, verify, approve) {
+        if (this.mutationLease || this.mutationAcquiring)
+            throw new VaultOperationBusyError();
+        this.mutationAcquiring = true;
+        try {
+            guard();
+            this.clearDirectoryCache();
+            const parent = await this.folderPath([FINANCE_DIR], false);
+            guard();
+            if (!parent)
+                return 'absent';
+            const marker = await this.readRecoveryMarker(parent);
+            guard();
+            if (!marker)
+                return 'absent';
+            if (!await approve(marker.createdAt))
+                return 'cancelled';
+            guard();
+            await verify();
+            guard();
+            const current = await this.readRecoveryMarker(parent);
+            guard();
+            if (!current || current.id !== marker.id || current.etag !== marker.etag)
+                throw new Error('確認中に保存ロックが変化しました。解除せず停止しました。');
+            await this.releaseMutationMarker(marker, guard);
+            guard();
+            if (this.completedMarker?.id === marker.id)
+                this.completedMarker = null;
+            return 'released';
         }
         finally {
             this.mutationAcquiring = false;
@@ -211,16 +364,19 @@ export class OneDriveTestClient {
             });
         });
     }
-    async graph(path, init = {}, allowNotModified = false, lockRequest = false) {
+    async graph(path, init = {}, allowNotModified = false, lockRequest = false, nonCommitting = false, requestGuard = () => { }) {
         const method = (init.method ?? 'GET').toUpperCase();
         let sent = false;
         const request = async (forceRefresh = false) => {
             // An old client remains usable after the access token expires; MSAL owns
             // every token's lifetime. Never hold a bearer token inside this client.
+            sent = false;
+            requestGuard();
             if (method !== 'GET' && !lockRequest)
                 this.checkMutationGuard();
             const token = typeof this.tokenSource === 'string'
                 ? this.tokenSource : await this.tokenSource(forceRefresh);
+            requestGuard();
             if (method !== 'GET' && !lockRequest)
                 this.checkMutationGuard();
             sent = true;
@@ -232,27 +388,28 @@ export class OneDriveTestClient {
             }));
         };
         let response;
-        try {
-            response = await request();
-        }
-        catch (error) {
-            if (sent && method !== 'GET' && !lockRequest)
-                this.markMutationUncertain();
-            throw error;
-        }
-        if (!lockRequest && method !== 'GET' && (response.status === 408 || response.status === 429 || response.status >= 500))
-            this.markMutationUncertain();
-        // Only GET may be replayed on transient throttling. Never repeat a write,
-        // upload-session request or chunk: its outcome could already be committed.
-        if (method === 'GET')
-            for (let attempt = 0; attempt < 2 && (response.status === 429 || response.status === 503); attempt++) {
-                const value = response.headers.get('Retry-After');
-                const numeric = value !== null && /^\d{1,3}$/.test(value) ? Number(value) : null;
-                const delayMs = numeric === null ? 200 * (attempt + 1) : Math.min(3000, numeric * 1000);
-                if (delayMs > 0)
-                    await new Promise(resolve => setTimeout(resolve, delayMs));
-                response = await request();
+        const send = async () => {
+            try {
+                return await request();
             }
+            catch (error) {
+                if (sent && method !== 'GET' && !lockRequest && !nonCommitting)
+                    this.markMutationUncertain();
+                throw error;
+            }
+        };
+        response = await send();
+        // 429 is an explicit throttling rejection. Honor Retry-After; never replay
+        // ambiguous 408/5xx or transport failures for a data write.
+        for (let attempt = 0; attempt < 3 && (response.status === 429 || (method === 'GET' && response.status === 503)); attempt++) {
+            const delay = response.status === 429 ? throttlingDelay(response, attempt) : 200 * (attempt + 1);
+            if (delay === null)
+                break;
+            await wait(delay);
+            response = await send();
+        }
+        if (!lockRequest && !nonCommitting && method !== 'GET' && (response.status === 408 || response.status >= 500))
+            this.markMutationUncertain();
         // One read-only 401 recovery is safe. Never replay writes, upload-session
         // creation, chunk uploads, or any uncertain operation after a 401.
         if (response.status === 401 && method === 'GET' && typeof this.tokenSource !== 'string') {
@@ -271,12 +428,12 @@ export class OneDriveTestClient {
         }
         return response;
     }
-    async downloadItemInfo(id, maxBytes, supplied) {
+    async downloadItemInfo(id, maxBytes, supplied, fresh = false) {
         let item = supplied;
         // Named-path lookups often already include the temporary download URL.
         // Otherwise fetch by ID exactly once (also gets the freshest ETag).
         if (!item?.['@microsoft.graph.downloadUrl'] || !item.eTag) {
-            const response = await this.graph(`/me/drive/items/${encodeURIComponent(id)}`);
+            const response = await this.graph(`/me/drive/items/${encodeURIComponent(id)}`, fresh ? { cache: 'no-store' } : {});
             item = await response.json();
         }
         if (!item?.id)
@@ -292,11 +449,28 @@ export class OneDriveTestClient {
             ? Math.min(180000, Math.max(90000, Math.ceil((item.size ?? maxBytes) / (1024 * 1024)) * 1000))
             : 30000;
         countFinanceRequest('graph.download');
-        const bytes = await measureFinancePhase('graph.encrypted-download', () => this.withReadDeadline(url, { method: 'GET', credentials: 'omit' }, async (response) => {
-            if (!response.ok)
-                throw new Error(`OneDriveからの取得に失敗しました (HTTP ${response.status})。`);
-            return this.readResponseBytes(response, maxBytes);
-        }, timeoutMs));
+        const bytes = await measureFinancePhase('graph.encrypted-download', async () => {
+            for (let attempt = 0;; attempt++) {
+                const result = await this.withReadDeadline(url, { method: 'GET', credentials: 'omit', ...(fresh ? { cache: 'no-store' } : {}) }, async (response) => {
+                    if (response.status === 429 && attempt < 3) {
+                        const delay = throttlingDelay(response, attempt);
+                        if (delay !== null) {
+                            try {
+                                await response.body?.cancel();
+                            }
+                            catch { /* no retry body is needed */ }
+                            return { delay };
+                        }
+                    }
+                    if (!response.ok)
+                        throw new Error(`OneDriveからの取得に失敗しました (HTTP ${response.status})。`);
+                    return { bytes: await this.readResponseBytes(response, maxBytes) };
+                }, timeoutMs);
+                if ('bytes' in result && result.bytes)
+                    return result.bytes;
+                await wait(result.delay ?? 0);
+            }
+        });
         return { text: new TextDecoder('utf-8', { fatal: true }).decode(bytes), item };
     }
     async downloadItem(id, maxBytes) {
@@ -398,7 +572,7 @@ export class OneDriveTestClient {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...(etag ? { 'If-Match': etag } : {}) },
             body: JSON.stringify({ item: { '@microsoft.graph.conflictBehavior': etag ? 'replace' : 'fail' } }),
-        });
+        }, false, false, true);
         const session = await response.json();
         if (!session.uploadUrl || new URL(session.uploadUrl).protocol !== 'https:')
             throw new Error('安全なアップロードセッションを取得できません。');
@@ -407,29 +581,41 @@ export class OneDriveTestClient {
         for (let start = 0; start < bytes.byteLength; start += size) {
             const end = Math.min(start + size, bytes.byteLength);
             countFinanceRequest('graph.upload-chunk');
-            this.checkMutationGuard();
             let part;
-            try {
-                part = await this.http(session.uploadUrl, {
-                    method: 'PUT', credentials: 'omit',
-                    headers: { 'Content-Range': `bytes ${start}-${end - 1}/${bytes.byteLength}` },
-                    body: bytes.slice(start, end),
-                });
+            const final = end === bytes.byteLength;
+            for (let attempt = 0;; attempt++) {
+                this.checkMutationGuard();
+                try {
+                    part = await this.http(session.uploadUrl, {
+                        method: 'PUT', credentials: 'omit',
+                        headers: { 'Content-Range': `bytes ${start}-${end - 1}/${bytes.byteLength}` },
+                        body: bytes.slice(start, end),
+                    });
+                }
+                catch (error) {
+                    if (final)
+                        this.markMutationUncertain();
+                    throw error;
+                }
+                if (part.status !== 429 || attempt >= 3)
+                    break;
+                const delay = throttlingDelay(part, attempt);
+                if (delay === null)
+                    break;
+                await wait(delay);
             }
-            catch (error) {
-                this.markMutationUncertain();
-                throw error;
-            }
-            if (part.status === 408 || part.status === 429 || part.status >= 500)
+            if (final && (part.status === 408 || part.status >= 500))
                 this.markMutationUncertain();
             if (!part.ok) {
-                if (part.status === 409 || part.status === 412)
-                    throw new GraphError(part.status, 'conflict');
+                if (part.status >= 400 && part.status < 500)
+                    throw new GraphError(part.status, part.status === 429 ? 'throttled' : 'uploadRejected');
                 throw new Error(`OneDriveへのアップロードが失敗しました (HTTP ${part.status})。`);
             }
             if (end < bytes.byteLength) {
-                if (part.status !== 202)
+                if (part.status !== 202) {
+                    this.markMutationUncertain();
                     throw new Error('OneDriveのアップロードが途中で終了しました。');
+                }
             }
             else {
                 if (part.status !== 200 && part.status !== 201) {
@@ -472,7 +658,7 @@ export class OneDriveTestClient {
             const response = await this.graph(`/me/drive/items/${encodeURIComponent(parent)}/children`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: 'finance-v1-originals', folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }),
-            });
+            }, false, false, true);
             const item = await response.json();
             if (!item.id)
                 throw new Error('PDF保存フォルダの作成を確認できません。');
@@ -575,7 +761,7 @@ export class OneDriveTestClient {
                 const response = await this.graph(`/me/drive/items/${encodeURIComponent(parent)}/children`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }),
-                });
+                }, false, false, true);
                 item = await response.json();
             }
             catch (collision) {
@@ -675,28 +861,28 @@ export class OneDriveTestClient {
             throw new Error('OneDriveの更新情報を取得できません。');
         return item;
     }
-    async readNamedFile(parts, name, maxBytes, fresh = false) {
+    async readNamedFile(parts, name, maxBytes, fresh = false, reuseVerified = false) {
         const key = JSON.stringify([parts, name, maxBytes]);
         const epoch = this.encryptedReadEpoch;
         const waiting = this.encryptedReadJobs.get(key);
         if (waiting && !fresh)
             return waiting;
         const job = (async () => {
-            const item = await this.findNamedFile(parts, name);
+            const item = await this.findNamedFile(parts, name, fresh);
             if (!item) {
                 if (epoch === this.encryptedReadEpoch)
                     this.encryptedReadCache.delete(key);
                 return null;
             }
             const useCache = !parts.includes('originals') && name.endsWith('.enc') && maxBytes <= 25_000_000;
-            const cached = useCache && epoch === this.encryptedReadEpoch ? this.encryptedReadCache.get(key) : undefined;
+            const cached = (!fresh || reuseVerified) && useCache && epoch === this.encryptedReadEpoch ? this.encryptedReadCache.get(key) : undefined;
             if (cached && cached.id === item.id && cached.etag === item.eTag) {
                 // Simple LRU: ETag-verified hits move to the end of the bounded map.
                 this.encryptedReadCache.delete(key);
                 this.encryptedReadCache.set(key, cached);
                 return { ...cached };
             }
-            const downloaded = await this.downloadItemInfo(item.id, maxBytes, item);
+            const downloaded = await this.downloadItemInfo(item.id, maxBytes, item, fresh);
             const value = { text: downloaded.text, id: item.id, etag: downloaded.item.eTag ?? item.eTag };
             if (epoch === this.encryptedReadEpoch) {
                 this.encryptedReadCache.delete(key);
@@ -735,6 +921,7 @@ export class OneDriveTestClient {
         const path = existing
             ? `/me/drive/items/${encodeURIComponent(existing.id)}/createUploadSession`
             : `/me/drive/items/${encodeURIComponent(parent)}:/${encodeURIComponent(name)}:/createUploadSession`;
+        const lease = this.mutationLease, wasUncertain = lease?.uncertain;
         try {
             // Upload sessions retain the documented If-Match/409/412 flow for live data.
             // Direct PUT on Personal OneDrive lacks a documented final-boundary ETag guarantee.
@@ -749,19 +936,36 @@ export class OneDriveTestClient {
             // re-resolve its path rather than keep an invalid directory ID.
             if (error instanceof GraphError && error.status === 404)
                 this.clearDirectoryCache();
+            if (lease && this.mutationLease === lease && !wasUncertain && lease.uncertain && !lease.released) {
+                // A final response can be lost after Graph committed the encrypted file.
+                // Read the precise target, never resend an ambiguous write. The ETag
+                // must have advanced for a replacement; do not clear prior uncertainty.
+                try {
+                    this.checkMutationGuard();
+                    const verified = await this.readNamedFile(parts, name, maxBytes, true);
+                    this.checkMutationGuard();
+                    if (verified && verified.text === text && (!existing || (verified.id === existing.id && verified.etag !== existing.etag))) {
+                        lease.uncertain = false;
+                        return { id: verified.id, etag: verified.etag };
+                    }
+                }
+                catch { /* Keep the original failure and fence. */ }
+            }
             throw error;
         }
     }
     /** finance/index.enc contains only encrypted shard discovery metadata. */
-    async readFinanceIndex() {
-        return this.readNamedFile([FINANCE_DIR], 'index.enc', 1_000_000);
+    async readFinanceIndex(fresh = false) {
+        // A fresh metadata lookup must not join an earlier in-flight read.
+        // Identical ID/ETag still proves the cached encrypted index is current.
+        return this.readNamedFile([FINANCE_DIR], 'index.enc', 1_000_000, fresh, true);
     }
     async writeFinanceIndex(text, existing) {
         await this.writeNamedFile([FINANCE_DIR], 'index.enc', text, existing, 1_000_000);
     }
     /** Independent encrypted merchant display rules, shared across billing years. */
-    async readMerchantRules() {
-        return this.readNamedFile(this.financeDataPath('rules'), 'merchants.enc', 2_000_000);
+    async readMerchantRules(fresh = false) {
+        return this.readNamedFile(this.financeDataPath('rules'), 'merchants.enc', 2_000_000, fresh);
     }
     async writeMerchantRules(text, existing) {
         return this.writeNamedFile(this.financeDataPath('rules'), 'merchants.enc', text, existing, 2_000_000);
@@ -787,10 +991,10 @@ export class OneDriveTestClient {
             throw new Error('レポート一覧が不正です。');
         return found.map(item => ({ period: item.name.slice(0, -4), id: item.id, etag: item.eTag })).sort((a, b) => b.period.localeCompare(a.period));
     }
-    async readMonthlyReport(period) {
+    async readMonthlyReport(period, fresh = false) {
         if (!/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(period))
             throw new Error('年月が不正です。');
-        return this.readNamedFile(this.financeDataPath('reports'), `${period}.enc`, 2_000_000);
+        return this.readNamedFile(this.financeDataPath('reports'), `${period}.enc`, 2_000_000, fresh);
     }
     async writeMonthlyReport(period, text, existing) {
         if (!/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(period))
@@ -813,8 +1017,8 @@ export class OneDriveTestClient {
     }
     async listYearBuckets() { return (await this.listYearFiles()).map(x => x.year); }
     /** Each year is independently encrypted and concurrency-controlled. */
-    async readYearVault(year) {
-        return this.readNamedFile(this.financeDataPath('statements'), `${checkBucket(year)}.enc`, 25_000_000);
+    async readYearVault(year, fresh = false) {
+        return this.readNamedFile(this.financeDataPath('statements'), `${checkBucket(year)}.enc`, 25_000_000, fresh);
     }
     /** Before a save, ask only for metadata if our existing decrypted year is current.
      * Microsoft Graph 304 avoids downloading and decrypting an unchanged shard.
@@ -822,17 +1026,17 @@ export class OneDriveTestClient {
     async readYearVaultForSave(year, known) {
         checkBucket(year);
         if (!known?.id || !known.etag)
-            return { kind: 'remote', file: await this.readYearVault(year) };
+            return { kind: 'remote', file: await this.readYearVault(year, true) };
         let response;
         try {
             response = await this.graph(`/me/drive/items/${encodeURIComponent(known.id)}`, {
-                headers: { 'If-None-Match': known.etag },
+                headers: { 'If-None-Match': known.etag }, cache: 'no-store',
             }, true);
         }
         catch (error) {
             if (error instanceof GraphError && error.status === 404) {
                 // A file may have been replaced with a different drive ID.
-                return { kind: 'remote', file: await this.readYearVault(year) };
+                return { kind: 'remote', file: await this.readYearVault(year, true) };
             }
             throw error;
         }
@@ -843,7 +1047,7 @@ export class OneDriveTestClient {
             throw new Error('年別ファイルの更新情報が不正です。');
         if (item.id === known.id && item.eTag === known.etag)
             return { kind: 'unchanged' };
-        const downloaded = await this.downloadItemInfo(item.id, 25_000_000, item);
+        const downloaded = await this.downloadItemInfo(item.id, 25_000_000, item, true);
         if (!downloaded.item.eTag)
             throw new Error('年別ファイルのETagを取得できません。');
         return { kind: 'remote', file: { text: downloaded.text, id: item.id, etag: downloaded.item.eTag } };

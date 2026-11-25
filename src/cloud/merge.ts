@@ -1,3 +1,4 @@
+import { statementMonthKey } from '../importers/import-policy.js';
 import {isZeroUsage, type ParsedStatement } from '../models/types.js';
 
 export interface CloudRecord {
@@ -122,14 +123,12 @@ export function detectDocumentEditCollisions(base:CloudDocument,local:CloudDocum
 /** Guard at the final merged OneDrive document, not just the import screen.
  * An independently added record in another browser tab must not double-count a bill. */
 export function duplicateStatementMonths(records:readonly CloudRecord[],protectedIds:ReadonlySet<string>):string[] {
-  const target=new Set(records.filter(r=>protectedIds.has(r.id)&&r.statement.cardId&&r.statement.billingMonth)
-    .map(r=>`${r.statement.cardId}|${r.statement.billingMonth}`));
+  const target=new Set(records.filter(r=>protectedIds.has(r.id)).map(r=>statementMonthKey(r.statement)).filter(key=>key!==null));
   if(!target.size)return [];
   const seen=new Set<string>(),duplicates=new Set<string>();
   for(const record of records){
-    if(!record.statement.cardId||!record.statement.billingMonth)continue;
-    const key=`${record.statement.cardId}|${record.statement.billingMonth}`;
-    if(!target.has(key))continue;
+    const key=statementMonthKey(record.statement);
+    if(!key||!target.has(key))continue;
     if(seen.has(key))duplicates.add(key);else seen.add(key);
   }
   return [...duplicates];

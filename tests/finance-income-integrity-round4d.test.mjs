@@ -94,7 +94,7 @@ test('固定費の推定カード請求は仮送金として両口座へ反映�
  assert.equal(forecast.accounts['rakuten-bank'].balance,240000);assert.equal(forecast.accounts['mizuho-bank'].balance,10000);
  assert.equal(forecast.autoTransferByAccount['rakuten-bank'],undefined);
  const h=home(a,[],[],37);assert.equal(bank(h,'rakuten-bank').projected,240000);assert.equal(bank(h,'mizuho-bank').projected,10000);
- assert.ok(bank(h,'rakuten-bank').days.flatMap(d=>d.events).some(e=>e.estimated&&e.title.includes('未確定')));
+ assert.ok(bank(h,'rakuten-bank').days.flatMap(d=>d.events).some(e=>e.estimated&&e.title.includes('見込み')));
  assert.equal(bankTimeline('2026-12',source([],a),today).endBalance,240000);
  const r=total(a,[]);assert.equal(r.cardLines.length,0);assert.equal(mizuhoFundingStatus({assets:a},r,today).billConfirmed,false);
  assert.deepEqual(a,before);

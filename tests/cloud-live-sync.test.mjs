@@ -296,6 +296,7 @@ test('v1.6.16: resuming a move to an earlier year removes the stale old-year cop
   mock.failYear='2027';
   await assert.rejects(a.saveBatch([{id:'move',statement:statement('2026-10')}]),/保存済みの可能性/);
   mock.failYear=null;
+  assert.equal((await a.inspectPendingYearBatch())[0].status,'cleanup');
   await a.resumePendingYearBatch();
   assert.equal(a.records().length,1);
   assert.equal(a.records()[0].statement.billingMonth,'2026-10');
@@ -393,4 +394,193 @@ test('Phase 6C: PDF原本の取得は同じブラウザ鍵で再解除しても�
  mock.downloadDatedOriginal=async(...args)=>{const result=await read(...args);entered();await new Promise(r=>{release=r;});return result;};
  const pending=a.original('pdf'),rejected=assert.rejects(pending,/保管庫|ロック|変更/);await started;a.lock();await a.unlockBrowserKey(remembered);release();await rejected;
  mock.downloadDatedOriginal=read;assert.deepEqual(await a.original('pdf'),bytes);
+});
+
+
+test('一括保存の準備件数と年度書込みを区別し通知失敗でも保存を妨げない',async()=>{
+  const [vault]=drivers();await vault.create(secret);const progress=[];
+  const ids=await vault.saveBatch([{id:'first',statement:statement('2025-10')},{id:'second',statement:statement('2026-11')}],(phase,done,total)=>{progress.push([phase,done,total]);if(done===1)throw new Error('UI callback failure');});
+  assert.deepEqual(ids,['first','second']);assert.equal(vault.records().length,2);
+  assert.ok(progress.some(([phase,done,total])=>phase==='原本の暗号化・送信と明細準備'&&done===2&&total===2));
+  assert.ok(progress.some(([phase,done,total])=>phase==='年度データ保存・原本検証'&&done===2&&total===2));
+  assert.equal(progress.at(-1)[0],'保存結果の同期確認');
+});
+
+
+test('45件の一括保存で準備件数を追跡し年度保存の前に成功扱いしない',async()=>{
+ const [vault,,mock]=drivers();await vault.create(secret);const progress=[];let earlyWrite=false;
+ const items=Array.from({length:45},(_,i)=>({id:'batch-'+i,statement:{...statement(`${2020+Math.floor(i/12)}-${String(i%12+1).padStart(2,'0')}`),sourceKind:'pdf'},source:{mime:'application/pdf',bytes:new Uint8Array([37,80,68,70,i])}}));
+ // Real crypto and fixture Graph: no live account, no actual personal statement.
+ const result=await vault.saveBatch(items,(phase,done,total)=>{progress.push([phase,done,total]);if(phase==='原本の暗号化・送信と明細準備'&&mock.calls.some(x=>x.startsWith('year:')))earlyWrite=true;});
+ assert.equal(earlyWrite,false);assert.equal(result.length,45);assert.equal(vault.records().length,45);assert.ok(progress.some(([p,d,t])=>p==='原本の暗号化・送信と明細準備'&&d===45&&t===45));
+});
+
+ test('確定差し替えは同じIDと新原本を保持し、再取込した暫定を保存層で拒否する',async()=>{
+ const [a,b,mock,store]=drivers();await a.create(secret);
+ const old={...statement(),confirmation:'provisional',sourceKind:'pdf',paymentDate:'2026-11-27'};
+ const source=bytes=>({bytes:new Uint8Array(bytes),mime:'application/pdf'});
+ await a.saveBatch([{id:'same-bill',statement:old,source:source([1,2])}]);await b.unlock(secret);
+ const final={...old,confirmation:'confirmed',rows:[{...old.rows[0],merchant:'FINAL'}]};
+ await a.saveBatch([{id:'same-bill',statement:final,source:source([3,4]),replace:true}]);
+ const committed=structuredClone(a.records()[0]);assert.equal(committed.id,'same-bill');assert.equal(committed.statement.confirmation,'confirmed');assert.deepEqual(await a.original('same-bill'),new Uint8Array([3,4]));
+ const writes=mock.calls.filter(x=>x==='year:2026').length;
+ await assert.rejects(a.saveBatch([{id:'same-bill',statement:old,source:source([1,2]),replace:true}]),/確定明細/);
+ b.setStatementConflictResolver(()=>true);await assert.rejects(b.saveBatch([{id:'same-bill',statement:{...old,rows:[{...old.rows[0],merchant:'STALE'}]},source:source([5,6]),replace:true}]),/確定明細/);
+ await a.refresh();assert.deepEqual(a.records()[0],committed);assert.equal(mock.calls.filter(x=>x==='year:2026').length,writes);assert.ok(store.originals.size>=2);
+ });
+ test('別端末の確定版に古い確定版の原本・取引を混合しない。独立明細は残る',async()=>{
+ const [a,b,mock]=drivers();await a.create(secret);const original={...statement(),sourceKind:'pdf',paymentDate:'2026-11-27'};
+ const source=n=>({bytes:new Uint8Array([n]),mime:'application/pdf'});
+ await a.saveBatch([{id:'same-bill',statement:original,source:source(1)}]);await b.unlock(secret);
+ const newer={...original,rows:[{...original.rows[0],merchant:'NEW'}]};await a.saveBatch([{id:'same-bill',statement:newer,source:source(2),replace:true}]);
+ b.setStatementConflictResolver(()=>true);await assert.rejects(b.saveBatch([{id:'same-bill',statement:{...original,sourceName:'other'},source:source(3),replace:true}]),/差し替え元/);
+ await assert.rejects(b.saveBatch([{id:'same-bill',statement:{...original,rows:[{...original.rows[0],merchantOverride:'STALE'}]}}]),/差し替え元/);
+ await b.refresh();assert.deepEqual(await b.original('same-bill'),new Uint8Array([2]));assert.equal(b.records()[0].statement.rows[0].merchant,'NEW');
+ await b.saveBatch([{id:'other-bill',statement:statement('2026-10')}]);await a.refresh();assert.equal(a.records().length,2);assert.deepEqual(await a.original('same-bill'),new Uint8Array([2]));
+ });
+
+ test('保存再開は同一明細のPDF原本差し替えも照合し、旧原本だけでは成功扱いしない',async()=>{
+ const [a,,mock]=drivers();await a.create(secret);const bill={...statement(),sourceKind:'pdf',paymentDate:'2026-11-27'};const source=n=>({bytes:new Uint8Array([n]),mime:'application/pdf'});
+ await a.saveBatch([{id:'same-bill',statement:bill,source:source(1)}]);mock.failYear='2026';
+ await assert.rejects(a.saveBatch([{id:'same-bill',statement:bill,source:source(2),replace:true}]),/保存済みの可能性/);assert.equal(a.hasPendingYearBatch,true);assert.deepEqual(await a.original('same-bill'),new Uint8Array([1]));
+ mock.failYear=null;assert.equal((await a.inspectPendingYearBatch())[0].status,'unsaved');await a.resumePendingYearBatch();assert.equal(a.hasPendingYearBatch,false);assert.deepEqual(await a.original('same-bill'),new Uint8Array([2]));assert.equal(a.records().length,1);
+ });
+
+test('PDF batch checks generation once under its lock and once during final sync',async()=>{
+  const [vault,,mock]=drivers();await vault.create(secret);
+  await vault.saveBatch([{id:'existing',statement:statement('2026-10')}]);
+  const reads=[];const read=mock.readFinanceIndex.bind(mock);
+  mock.readFinanceIndex=async(fresh)=>{reads.push(fresh);return read();};
+  await vault.saveBatch([{id:'pdf-new',statement:{...statement(),sourceKind:'pdf'},source:{bytes:new Uint8Array([37,80,68,70,1]),mime:'application/pdf'}}]);
+  assert.deepEqual(reads,[true,true]);
+  assert.equal(vault.records().length,2);
+});
+
+test('generation is checked after lock acquisition before original upload',async()=>{
+  const store={files:new Map(),originals:new Map(),legacyOriginals:new Map()};const mock=new MockGraph(store);
+  const other=drivers();await other[0].create(secret);let switchAtAcquire=false;
+  mock.acquireVaultMutation=async()=>{if(switchAtAcquire)mock.readFinanceIndex=()=>other[2].readFinanceIndex();return async()=>{};};
+  const vault=new LiveVault(mock);await vault.create(secret);const read=mock.readFinanceIndex.bind(mock);switchAtAcquire=true;
+  try{await assert.rejects(vault.saveBatch([{id:'new',statement:{...statement(),sourceKind:'pdf'},source:{bytes:new Uint8Array([37,80,68,70]),mime:'application/pdf'}}]),/現行世代/);}
+  finally{mock.readFinanceIndex=read;}
+  assert.equal(store.originals.size,0);assert.equal(vault.hasPendingYearBatch,false);
+});
+
+for(const count of [45,100])test(`Phase 3A-2: ${count}件の部分成功を読取りで分類し、完了年度を再送しない`,async()=>{
+  const [a,,mock]=drivers();await a.create(secret);
+  const items=Array.from({length:count},(_,i)=>({id:`batch-${i}`,statement:statement(`${2018+Math.floor(i/12)}-${String(i%12+1).padStart(2,'0')}`)}));
+  mock.failYear='2020';
+  await assert.rejects(a.saveBatch(items),error=>error.name==='CloudWriteUncertainError');
+  const writes=()=>mock.calls.filter(x=>!x.startsWith('read:'));
+  const before=writes();const result=await a.inspectPendingYearBatch();
+  assert.deepEqual(result.map(x=>x.id),items.map(x=>x.id));
+  assert.equal(result.filter(x=>x.status==='saved').length,24);
+  assert.equal(result.filter(x=>x.status==='unsaved').length,count-24);
+  assert.deepEqual(writes(),before);assert.equal(a.hasPendingYearBatch,true);
+  mock.failYear=null;await a.resumePendingYearBatch();
+  assert.equal(a.records().length,count);assert.equal(a.hasPendingYearBatch,false);
+  for(const year of ['2018','2019'])assert.equal(writes().filter(x=>x===`year:${year}`).length,1);
+});
+
+test('Phase 3A-2: 応答消失後の全件確認は書込みもロック取得もせず再開完了',async()=>{
+  const [a,,mock]=drivers();await a.create(secret);const write=mock.writeYearVault.bind(mock);
+  mock.writeYearVault=async(...args)=>{await write(...args);throw new Error('lost response');};
+  await assert.rejects(a.saveBatch([{id:'saved',statement:statement()}]),error=>error.name==='CloudWriteUncertainError');
+  const writes=mock.calls.filter(x=>!x.startsWith('read:'));
+  assert.deepEqual((await a.inspectPendingYearBatch()).map(x=>x.status),['saved']);
+  assert.equal(a.hasPendingYearBatch,true);
+  // Another client holds the operation right: a read-only completion needs no write.
+  const release=await mock.acquireVaultMutation();
+  try{assert.deepEqual(await a.resumePendingYearBatch(),['saved']);}finally{await release();}
+  assert.deepEqual(mock.calls.filter(x=>!x.startsWith('read:')),writes);
+});
+
+test('Phase 3A-2: 初回照合後に別端末が更新した明細はロック後の再照合で拒否',async()=>{
+  const [a,b,mock]=drivers();await a.create(secret);await b.unlock(secret);
+  mock.failYear='2026';await assert.rejects(a.saveBatch([{id:'race',statement:statement()}]),error=>error.name==='CloudWriteUncertainError');mock.failYear=null;
+  const inspect=a.inspectPendingYearBatch.bind(a);let changed=false;
+  a.inspectPendingYearBatch=async()=>{const result=await inspect();if(!changed){changed=true;await b.saveBatch([{id:'race',statement:statement('2026-11','other')}]);}return result;};
+  await assert.rejects(a.resumePendingYearBatch(),/他の端末で明細が更新/);
+  assert.equal(a.hasPendingYearBatch,true);assert.equal(a.records()[0].statement.rows[0].merchant,'other');
+  assert.equal((await inspect())[0].status,'conflict');
+});
+
+test('Phase 3A-2: 書込み後に削除された新規IDは再送対象にしない',async()=>{
+  const [a,b,mock]=drivers();await a.create(secret);const write=mock.writeYearVault.bind(mock);
+  mock.writeYearVault=async(...args)=>{await write(...args);throw new Error('lost response');};
+  await assert.rejects(a.saveBatch([{id:'deleted',statement:statement()}]),error=>error.name==='CloudWriteUncertainError');
+  mock.writeYearVault=write;await b.unlock(secret);await b.delete('deleted');
+  assert.equal((await a.inspectPendingYearBatch())[0].status,'conflict');
+  await assert.rejects(a.resumePendingYearBatch(),/他の端末で明細が更新/);assert.equal(a.records().length,0);
+});
+
+test('Phase 3A-2: 照合の読取り失敗は再開情報を維持する',async()=>{
+  const [a,,mock]=drivers();await a.create(secret);mock.failYear='2026';
+  await assert.rejects(a.saveBatch([{id:'pending',statement:statement()}]),error=>error.name==='CloudWriteUncertainError');
+  const read=mock.readFinanceIndex.bind(mock);mock.readFinanceIndex=async()=>{throw new Error('offline');};
+  await assert.rejects(a.inspectPendingYearBatch(),/offline/);assert.equal(a.hasPendingYearBatch,true);
+  mock.readFinanceIndex=read;mock.failYear=null;assert.equal((await a.inspectPendingYearBatch())[0].status,'unsaved');
+  await a.resumePendingYearBatch();assert.equal(a.records().length,1);
+});
+
+// Synthetic timing and storage-call counts; no real Graph endpoints or financial data.
+for(const count of [1,45,100])test(`Phase 4A: ${count}件の新規PDFと年度変更の保存呼出し`,async t=>{
+  const [a,,mock,store]=drivers();await a.create(secret);
+  const write=mock.writeYearVault.bind(mock);
+  mock.writeYearVault=async(year,text,ref)=>{await write(year,text,ref);const file=mock.file('year',year);return {id:`year-${year}`,etag:`"${file.revision}"`};};
+  const calls={index:0,list:0,read:0,write:0,upload:0,download:0};
+  for(const [name,k] of Object.entries({readFinanceIndex:'index',listYearFiles:'list',readYearVault:'read',writeYearVault:'write',uploadDatedOriginal:'upload',downloadDatedOriginal:'download'})){
+    const original=mock[name].bind(mock);mock[name]=async(...args)=>{calls[k]++;return original(...args);};
+  }
+  const measure=async(items)=>{for(const k of Object.keys(calls))calls[k]=0;const start=performance.now();await a.saveBatch(items);return {...calls,ms:Math.round(performance.now()-start)};};
+  const items=Array.from({length:count},(_,i)=>({id:`perf-${i}`,statement:{...statement(`${2010+Math.floor(i/12)}-${String(i%12+1).padStart(2,'0')}`),sourceKind:'pdf'},source:{bytes:new Uint8Array([37,80,68,70,i]),mime:'application/pdf'}}));
+  const inserted=await measure(items);
+  const moved=await measure(a.records().map(r=>({id:r.id,statement:{...r.statement,billingMonth:String(Number(r.statement.billingMonth.slice(0,4))+20)+r.statement.billingMonth.slice(4)}})));
+  const years=Math.ceil(count/12);t.diagnostic(JSON.stringify({count,inserted,moved}));
+  assert.equal(inserted.write,years);assert.equal(inserted.upload,count);assert.equal(inserted.download,count);
+  assert.equal(moved.write,years*2);assert.equal(moved.upload,0);assert.equal(moved.download,count);
+  assert.equal(a.records().length,count);assert.equal(store.originals.size,count);
+  for(const item of items)assert.deepEqual(await a.original(item.id),item.source.bytes);
+  for(const [year,shard] of a.shards)if(Number(year)<2030){assert.equal(shard.document.records.length,0);assert.equal(shard.document.deleted.length,items.filter(x=>x.statement.billingMonth.startsWith(year)).length);}
+});
+
+// A grouped cleanup failure keeps the verified destinations and all unfinished old copies.
+test('Phase 4A: 旧年度の一括整理を再開しても移動先を再送しない',async()=>{
+  const [a,,mock]=drivers();await a.create(secret);
+  const items=Array.from({length:5},(_,i)=>({id:`move-${i}`,statement:statement(`2025-0${i+1}`)}));
+  await a.saveBatch(items);mock.failYear='2025';
+  await assert.rejects(a.saveBatch(items.map(item=>({...item,statement:{...item.statement,billingMonth:item.statement.billingMonth.replace('2025','2026')}}))),/保存済みの可能性/);
+  assert.deepEqual((await a.inspectPendingYearBatch()).map(r=>r.status),Array(5).fill('cleanup'));
+  mock.failYear=null;mock.calls.length=0;await a.resumePendingYearBatch();
+  assert.deepEqual(mock.calls.filter(x=>x.startsWith('year:')),['year:2025']);
+  assert.equal(a.shards.get('2025').document.records.length,0);
+  assert.equal(a.shards.get('2025').document.deleted.length,5);
+  assert.equal(a.records().length,5);assert.equal(a.hasPendingYearBatch,false);
+});
+
+// Phase 4B: count full editable snapshots, not just the wall-clock runtime.
+test('Phase 4B: 保存準備・原本閲覧で全明細の編集用コピーを作らない',async t=>{
+  const [a]=drivers();await a.create(secret);
+  const bytes=new Uint8Array([37,80,68,70,4]);
+  const items=Array.from({length:45},(_,i)=>({id:`copy-${i}`,statement:{...statement(`${2010+Math.floor(i/12)}-${String(i%12+1).padStart(2,'0')}`),sourceKind:'pdf',rows:Array.from({length:20},(_,j)=>({id:`r-${j}`,usedOn:'2026-11-01',merchant:'SYNTHETIC',amount:5}))},source:{bytes:new Uint8Array(bytes),mime:'application/pdf'}}));
+  await a.saveBatch(items);
+  const records=a.records.bind(a);let copies=0,rows=0;
+  a.records=()=>{const result=records();copies++;rows+=result.reduce((n,r)=>n+r.statement.rows.length,0);return result;};
+  const start=performance.now();for(let i=0;i<10;i++)assert.deepEqual(await a.original(`copy-${i}`),bytes);
+  const original={copies,rows,ms:Math.round(performance.now()-start)};
+  copies=0;rows=0;
+  const edit={...records()[0].statement,statedTotal:100};
+  await a.saveBatch([{id:'copy-0',statement:edit}]);
+  const save={copies,rows};t.diagnostic(JSON.stringify({original,save}));
+  assert.equal(original.copies,0);assert.equal(save.copies,1,'only the refresh return needs an editable full snapshot');
+  assert.deepEqual(await a.original('copy-0'),bytes);
+});
+
+test('Phase 4B: 変更なしの同期は不変明細ビューを再利用し、更新・ロックで破棄する',async()=>{
+  const [a,b]=drivers();await a.create(secret);await a.saveBatch([{id:'stable',statement:statement()}]);
+  const before=a.readonlyRecords();await a.refresh();assert.strictEqual(a.readonlyRecords(),before);
+  await b.unlock(secret);await b.saveBatch([{id:'other',statement:statement('2026-10')}]);
+  await a.refresh();const changed=a.readonlyRecords();assert.notStrictEqual(changed,before);assert.equal(changed.length,2);
+  const editable=a.records();editable[0].statement.rows[0].amount=999;assert.equal(changed[0].statement.rows[0].amount,100);
+  a.lock();assert.equal(a.recordsViewCache,null);assert.throws(()=>a.readonlyRecords(),/ロック/);
 });

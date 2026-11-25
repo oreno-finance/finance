@@ -52,8 +52,21 @@ test('a vendor .mjs file with personal information cannot bypass scanner',()=>{
 test('vendor text is scanned but legitimate binary formats are scoped to approved paths',()=>{
   const f=fixture();
   mkdirSync(join(f.cwd,'dist/vendor/pdfjs/wasm'),{recursive:true});
-  writeFileSync(join(f.cwd,'dist/vendor/pdfjs/wasm/jbig2.wasm'),Buffer.from([0,97,115,109]));
+  const binary=Buffer.from([0,97,115,109]);
+  mkdirSync(join(f.cwd,'node_modules/pdfjs-dist/wasm'),{recursive:true});
+  writeFileSync(join(f.cwd,'.gitignore'),'node_modules/\n');
+  writeFileSync(join(f.cwd,'node_modules/pdfjs-dist/package.json'),JSON.stringify({version:'6.5.438'}));
+  writeFileSync(join(f.cwd,'package-lock.json'),JSON.stringify({packages:{'node_modules/pdfjs-dist':{version:'6.5.438',integrity:'sha512-'+'A'.repeat(84)+'=='}}}));
+  writeFileSync(join(f.cwd,'node_modules/pdfjs-dist/wasm/jbig2.wasm'),binary);
+  writeFileSync(join(f.cwd,'dist/vendor/pdfjs/wasm/jbig2.wasm'),binary);
   assert.equal(f.run().status,0);
+  writeFileSync(join(f.cwd,'dist/vendor/pdfjs/wasm/jbig2.wasm'),Buffer.from([0,97,115,110]));
+  assert.match(f.run('--dist').stderr,/正規バイナリと一致しません/);
+  f.git('add','package-lock.json','dist/vendor/pdfjs/wasm/jbig2.wasm');
+  assert.match(f.run('--staged').stderr,/正規バイナリと一致しません/);
+  writeFileSync(join(f.cwd,'dist/vendor/pdfjs/wasm/jbig2.wasm'),binary);
+  f.git('add','dist/vendor/pdfjs/wasm/jbig2.wasm');
+  assert.equal(f.run('--staged').status,0);
   writeFileSync(join(f.cwd,'dist/vendor/pdfjs/wasm/evil.wasm'),Buffer.from([0,97,115,109]));
   assert.match(f.run().stderr,/evil.wasm.*未承認/);
 });
@@ -131,4 +144,20 @@ test('pull requests run security checks and cannot deploy Pages',()=>{
   assert.match(yaml,/name: security/);
   assert.match(yaml,/deploy:\s*\n\s+needs: security\s*\n\s+if: \(github\.event_name == 'push' \|\| github\.event_name == 'workflow_dispatch'\) && github\.ref == 'refs\/heads\/main'/);
   assert.match(yaml,/npm audit --audit-level=high/);
+});
+
+
+test('CI source and actual artifact scans are disjoint; ignored output cannot escape the artifact gate',()=>{
+  const f=fixture();
+  mkdirSync(join(f.cwd,'dist'));
+  writeFileSync(join(f.cwd,'.gitignore'),'dist/local.pdf\n');
+  writeFileSync(join(f.cwd,'dist/generated.js'),'export const value=1;');
+  f.git('add','.gitignore','dist/generated.js');
+  writeFileSync(join(f.cwd,'dist/local.pdf'),'not publishable');
+  assert.equal(f.run('--source').status,0);
+  const artifact=f.run('--dist');
+  assert.notEqual(artifact.status,0);
+  assert.match(artifact.stderr,/dist\/local.pdf.*公開禁止/);
+  writeFileSync(join(f.cwd,'README.md'),['06','1234','5678'].join('-'));
+  assert.match(f.run('--source').stderr,/電話番号/);
 });

@@ -26,3 +26,24 @@ test('batch verification blocks duplicated card and month', () => {
   const conflicts=duplicateMonths([makeStatement(),makeStatement(),makeStatement({cardId:'smbc-nl'})]);
   assert.deepEqual([...conflicts],[0,1]);
 });
+
+test('bulk duplicate exclusion retains a saved statement, or the oldest of identical new drafts', async () => {
+  const {redundantImportDrafts}=await import('../dist/src/importers/batch-policy.js');
+  const old=makeStatement(),a=makeStatement(),b=makeStatement(),other=makeStatement({cardId:'smbc-nl'});
+  const select=(list,saved=[])=>redundantImportDrafts(list,s=>!saved.includes(s),()=>true);
+  assert.deepEqual(select([a,b,old,other],[old]),[a,b]);
+  assert.deepEqual(select([a,b,old,other]),[a,b]);
+  assert.deepEqual(select([a,b,old],[b,old]),[]);
+  assert.deepEqual(select([other,old]),[]);
+});
+
+test('bulk exclusion never chooses among mixed versions, unknown status, source changes or ineligible records',async()=>{
+  const {redundantImportDrafts}=await import('../dist/src/importers/batch-policy.js');
+  const old=makeStatement(),a=makeStatement();
+  const select=(list,eligible=()=>true)=>redundantImportDrafts(list,s=>s!==old,eligible);
+  for(const changed of [makeStatement({confirmation:'confirmed'}),makeStatement({confirmation:'unknown'}),makeStatement({sourceKind:'csv'}),makeStatement({statedTotal:645}),makeStatement({paymentDate:'2026-12-29'})]){
+    assert.deepEqual(select([a,old,changed]),[]);
+  }
+  assert.deepEqual(select([a,old],s=>s!==a),[]);
+  assert.deepEqual(select([a,old],s=>s!==old),[]);
+});

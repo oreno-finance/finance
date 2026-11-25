@@ -113,3 +113,29 @@ test('Unlock fetches year records, rules and assets concurrently; refresh retain
   await assert.rejects(vault.refresh(),/asset read failed/);
   assert.deepEqual(vault.assetSettings(),original,'failed refresh must not partially adopt data');
 });
+
+test('fresh index bypasses a pre-lock read, forwards no-store and reuses only verified matching ETags',async()=>{
+  const seen=[];let serial=0;let release,started;
+  const gate=new Promise(r=>release=r),ready=new Promise(r=>started=r);
+  const client=new OneDriveTestClient('test-token',async(url,init={})=>{
+    if(url.startsWith('https://download.test/')){
+      seen.push(['download',init.cache]);
+      return new Response(url.endsWith('/2')?'new-index':'old-index');
+    }
+    if(url.endsWith(':/index.enc')){
+      seen.push(['metadata',init.cache]);
+      const revision=++serial===1?1:2;
+      if(revision===1){started();await gate;}
+      return Response.json({id:'index',eTag:`"${revision}"`,'@microsoft.graph.downloadUrl':`https://download.test/${revision}`});
+    }
+    throw new Error('unexpected fixture request');
+  });
+  client.folderPath=async()=> 'folder';
+  const old=client.readFinanceIndex();await ready;
+  try{
+    assert.equal((await client.readFinanceIndex(true)).text,'new-index');
+    assert.equal((await client.readFinanceIndex(true)).text,'new-index');
+    assert.deepEqual(seen,[['metadata',undefined],['metadata','no-store'],['download','no-store'],['metadata','no-store']]);
+  }finally{release();await old;}
+  assert.equal((await client.readFinanceIndex(true)).text,'new-index');
+});

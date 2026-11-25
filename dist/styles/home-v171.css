@@ -1,7 +1,7 @@
 /* v1.7.1: use the same content width as the rest of the workspace. */
 .home-view{width:100%;max-width:none;min-width:0;margin:0}
 .home-return-bar{display:flex;align-items:center;gap:9px;margin:0 0 14px}
-.manage-return-bar{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.manage-return-bar{gap:9px;flex-wrap:wrap}
 /* Show the return row when at least one destination-specific button is visible. */
 .manage-return-bar:has(>button:not(.hidden)){display:flex}
 .manage-return-bar:not(:has(>button:not(.hidden))){display:none}

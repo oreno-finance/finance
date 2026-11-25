@@ -1,5 +1,12 @@
 /** Presentation only. Never use formatted values as persisted amounts, dates or input values. */
 const missing='—';
+/** Semantic labels for missing financial data; never infer zero from absence. */
+export const DATA_STATUS=Object.freeze({unset:'未設定',unregistered:'未登録',missing:'未取得',unavailable:'算出不可',estimate:'見込み',provisional:'暫定',review:'要確認'} as const);
+export function financialStatusClass(value:string):string {
+  if(value===DATA_STATUS.review||value===DATA_STATUS.provisional)return 'data-status-warning';
+  if(value===DATA_STATUS.estimate)return 'data-status-estimate';
+  return ([DATA_STATUS.unset,DATA_STATUS.unregistered,DATA_STATUS.missing,DATA_STATUS.unavailable] as readonly string[]).includes(value)?'data-status-muted':'';
+}
 const finite=(n:number|null|undefined):n is number=>typeof n==='number'&&Number.isFinite(n);
 export function formatNumber(n:number|null|undefined,digits=0,empty=missing):string {
   if(!finite(n))return empty;

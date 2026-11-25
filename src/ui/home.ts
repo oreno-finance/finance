@@ -1,6 +1,6 @@
 import {requestConfirmation,confirmationPending,cancelConfirmation} from './modal.js';
 import {monthlyReport} from '../summary/monthly-summary.js';
-import {formatYen as sharedYen,formatSignedYen,formatShortDate,formatDateTime} from './formatters.js';
+import {DATA_STATUS,financialStatusClass,formatYen as sharedYen,formatSignedYen,formatShortDate,formatDateTime} from './formatters.js';
 import type { MonthlySource } from '../summary/monthly-summary.js';
 import type { MizuhoBillSnapshot } from '../cloud/assets.js';
 import { pointBenefitsFromMonthlyReport } from '../summary/point-benefits.js';
@@ -27,18 +27,18 @@ function link(label:string,handler:()=>void,cls=''):HTMLButtonElement {
   const button=document.createElement('button');button.type='button';button.className=cls;
   button.textContent=label;button.addEventListener('click',handler);return button;
 }
-const yen=(value:number|null)=>sharedYen(value,0,'未取得');
+const yen=(value:number|null)=>sharedYen(value,0,DATA_STATUS.missing);
 const shortDay=formatShortDate;
 function todayLocal():string {
   const now=new Date();
   return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
 }
 function confirmationLabel(value:string):string {
-  return value==='provisional'?'暫定':value==='confirmed'?'確定':'未確認';
+  return value==='provisional'?DATA_STATUS.provisional:value==='confirmed'?'確定':'未確認';
 }
 function metric(title:string,value:string,sub:string,go:()=>void,tone=''):HTMLElement {
   const button=link('',go,`home-metric ${tone}`);
-  button.append(element('span','home-muted',title),element('strong','',value));if(sub)button.append(element('small','home-muted',sub));
+  button.append(element('span','home-muted',title),element('strong',financialStatusClass(value),value));if(sub)button.append(element('small','home-muted',sub));
   return button;
 }
 function section(title:string):{section:HTMLElement;body:HTMLElement} {
@@ -112,7 +112,7 @@ export function initHome(deps:HomeDeps):HomeUi {
     metrics.append(
       metric('今月の収入',yen(report.income),report.incomeEstimates.length||report.recurringIncome>0?'給与見込み・入金予定を含む':'',()=>go('summary')),
       metric('今月の支出',yen(model.outflow),[dataNotice,report.nisaOutflow>0?`NISA積立 ${yen(report.nisaOutflow)} を含む`:''].filter(Boolean).join(' · '),()=>go('summary')),
-      metric('収支見込み',report.monthlyBalance===null?'算出不可':yen(report.monthlyBalance),report.cardOutflow===null?'カード明細未取得':report.income===null?'収入未取得':dataNotice,()=>go('summary'),
+      metric('収支見込み',report.monthlyBalance===null?DATA_STATUS.unavailable:yen(report.monthlyBalance),report.cardOutflow===null?'カード明細未取得':report.income===null?'収入未取得':dataNotice,()=>go('summary'),
         report.monthlyBalance!==null&&report.monthlyBalance<0?'home-negative':'')
     );
     root!.append(metrics);
@@ -152,10 +152,10 @@ export function initHome(deps:HomeDeps):HomeUi {
     for(const debit of next){
       const item=debit.estimated?element('div','home-list-row home-debit'):link('',()=>go('manage',debit.id),'home-list-row home-debit');
       const left=element('span','home-debit-main');
-      left.append(element('strong','',debit.estimated?debit.name:(model.cardNames[debit.cardId]??debit.name)),element('small','home-muted',`${shortDay(debit.date)} · ${debit.estimated?'固定費から推定・未確定':confirmationLabel(debit.confirmation)}`));
+      left.append(element('strong','',debit.estimated?debit.name:(model.cardNames[debit.cardId]??debit.name)),element('small','home-muted',`${shortDay(debit.date)} · ${debit.estimated?'見込み':confirmationLabel(debit.confirmation)}`));
       const right=element('span','home-debit-amount');
       right.append(element('b','',formatSignedYen(-debit.amount)),element('small','home-muted',debit.accountId?
-        debit.balanceReliable?`引落後 ${yen(debit.afterBalance)}`:'引落後残高は未確定':'引落口座未設定'));
+        debit.balanceReliable?`引落後 ${yen(debit.afterBalance)}`:`引落後残高：${DATA_STATUS.unavailable}`:'引落口座未設定'));
       item.append(left,right);movementRows.push({date:debit.date,node:item});
     }
     // Use the same forecast events as the account cards. Card events already
@@ -178,11 +178,11 @@ export function initHome(deps:HomeDeps):HomeUi {
     for(const account of accounts){
       const row=link('',()=>go('assets'),'home-account');
       const title=element('div','home-account-title');
-      title.append(element('strong','',account.name),element('span','home-account-balance',yen(account.snapshot?.balance??null)));
+      title.append(element('strong','',account.name),element('span',`home-account-balance ${account.snapshot?'':'data-status-muted'}`,sharedYen(account.snapshot?.balance??null,0,DATA_STATUS.unregistered)));
       const date=account.snapshot?formatDateTime(account.snapshot.observedAt).split(' ')[0]:null;
       row.append(title,element('small','home-muted',date?`確認 ${date}`:'残高未登録'));
-      if(account.id!=='nisa')row.append(element('small','home-account-forecast',account.predictedReliable&&account.predicted!==null?
-        `今後45日の見込み ${yen(account.predicted)}`:'予測残高は未確定'));
+      if(account.id!=='nisa')row.append(element('small',`home-account-forecast ${account.predictedReliable&&account.predicted!==null?'':'data-status-muted'}`,account.predictedReliable&&account.predicted!==null?
+        `今後45日の見込み ${yen(account.predicted)}`:`予測残高：${DATA_STATUS.unavailable}`));
       list.append(row);
     }
     accountSection.body.append(list);root!.append(accountSection.section);
@@ -207,7 +207,7 @@ export function initHome(deps:HomeDeps):HomeUi {
     catch(error){
       const failed=element('section','panel home-locked');
       failed.append(element('h2','','ホームを表示できません'),element('p','home-muted',error instanceof Error?error.message:'データを確認してください。'),
-        link('月別サマリーを開く',()=>go('summary'),'home-primary'));
+        link('月別サマリー',()=>go('summary'),'home-primary'));
       root!.append(failed);
     }
     });
