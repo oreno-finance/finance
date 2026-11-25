@@ -58,11 +58,9 @@ test('maintained CSS sources, including fixed costs, are delivered as one determ
   assert.ok(sourceSheets.length>=50,'前回までのCSS登録を維持すること');
   assert.ok(sourceSheets.includes('fixed-costs-v1960.css'),'固定費CSSが配布物に含まれること');
   assert.equal(new Set(sourceSheets).size,sourceSheets.length);
-  // The generated bundle is the only extra stylesheet; do not ship retired sources.
-  for (const directory of ['public/styles','dist/styles']) {
-    const cssFiles=readdirSync(new URL(`../${directory}/`,import.meta.url)).filter(name=>name.endsWith('.css')).sort();
-    assert.deepEqual(cssFiles,[...sourceSheets,'app.css'].sort());
-  }
+  const cssFiles=directory=>readdirSync(new URL(`../${directory}/`,import.meta.url)).filter(name=>name.endsWith('.css')).sort();
+  assert.deepEqual(cssFiles('public/styles'),[...sourceSheets,'app.css'].sort());
+  assert.deepEqual(cssFiles('dist/styles'),['app.css']);
   assert.equal((html.match(/<link rel="stylesheet"/g)||[]).length,1);
   assert.match(html,/<link rel="stylesheet" href="\.\/styles\/app\.css">/);
   const output=read('public/styles/app.css');

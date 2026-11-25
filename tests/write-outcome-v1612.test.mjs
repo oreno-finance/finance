@@ -110,7 +110,7 @@ test('HTML references transparent F-dot favicon assets and clear uncertain-state
   const [html,svg,css]=await Promise.all([
     readFile(new URL('../dist/index.html',import.meta.url),'utf8'),
     readFile(new URL('../dist/favicon.svg',import.meta.url),'utf8'),
-    readFile(new URL('../dist/styles/style.css',import.meta.url),'utf8'),
+    readFile(new URL('../dist/styles/app.css',import.meta.url),'utf8'),
   ]);
   assert.match(html,/rel="icon" href="\.\/favicon\.svg"/);
   assert.match(html,/rel="alternate icon" href="\.\/favicon\.ico"/);

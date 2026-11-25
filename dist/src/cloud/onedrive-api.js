@@ -1069,7 +1069,7 @@ export class OneDriveTestClient {
     async uploadDatedOriginal(id, encrypted, billingMonth) {
         const [year, month] = originalParts(billingMonth);
         checkOriginalMonth(month);
-        await this.writeNamedFile(this.financeDataPath('originals', year, month), this.originalName(id), encrypted, null, 200 * 1024 * 1024);
+        return this.writeNamedFile(this.financeDataPath('originals', year, month), this.originalName(id), encrypted, null, 200 * 1024 * 1024);
     }
     async downloadDatedOriginal(id, billingMonth) {
         const [year, month] = originalParts(billingMonth);

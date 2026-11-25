@@ -1,3 +1,4 @@
+import {shippedSheet} from './helpers/css-loading.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -39,7 +40,7 @@ test('summary does not show redundant future-vs-actual disclaimer',()=>{
 test('points card has same gap as other monthly summary panels',()=>{
   assert.match(monthlyCss,/#monthly-content > \.points-benefits\{margin:0 0 17px\}/);
   assert.match(monthlyCss,/\.monthly-panel\{margin:0 0 17px/);
-  assert.equal(read('dist/styles/monthly-summary.css'),monthlyCss);
+  assert.equal(shippedSheet('monthly-summary.css'),monthlyCss);
 });
 
 test('cloud connects and syncs in primary grid, account switching in its own group',()=>{

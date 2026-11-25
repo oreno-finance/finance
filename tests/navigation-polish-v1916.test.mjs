@@ -1,3 +1,4 @@
+import {shippedSheet} from './helpers/css-loading.mjs';
 import {styleOrder} from './helpers/css-loading.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -42,6 +43,6 @@ test('Payrollは単一パネルで固定高さを持たない',()=>{
   assert.match(current,/\.settings-payroll-content\{display:grid;gap:18px;min-width:0\}/);
   assert.doesNotMatch(html,/class="assets-payroll-layout"/);
   for(const path of ['index.html','styles/navigation-polish-v1916.css','scripts/nav-boot.js']){
-    assert.equal(src('public/'+path),src('dist/'+path),path);
+    assert.equal(src('public/'+path),(path.endsWith('.css')?shippedSheet(path.split('/').pop()):src('dist/'+path)),path);
   }
 });

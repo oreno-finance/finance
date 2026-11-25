@@ -829,9 +829,9 @@ export class OneDriveTestClient {
     return {text:value.text,id:file.id,etag:value.item.eTag};
   }
   /** PDF originals are immutable; only the encrypted original bytes are uploaded. */
-  async uploadDatedOriginal(id:string,encrypted:string,billingMonth:string|null|undefined):Promise<void> {
+  async uploadDatedOriginal(id:string,encrypted:string,billingMonth:string|null|undefined):Promise<{id:string;etag:string}|null> {
     const [year,month]=originalParts(billingMonth);checkOriginalMonth(month);
-    await this.writeNamedFile(this.financeDataPath('originals',year,month),this.originalName(id),encrypted,null,200*1024*1024);
+    return this.writeNamedFile(this.financeDataPath('originals',year,month),this.originalName(id),encrypted,null,200*1024*1024);
   }
   async downloadDatedOriginal(id:string,billingMonth:string|null|undefined):Promise<string> {
     const [year,month]=originalParts(billingMonth);checkOriginalMonth(month);

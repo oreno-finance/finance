@@ -1,8 +1,11 @@
 import { mkdir, cp, access } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { sourceSheets } from './build-styles.mjs';
+
+const sourceCss=new Set(sourceSheets.map(filename=>resolve('public','styles',filename)));
 
 await mkdir('dist', { recursive: true });
-await cp('public', 'dist', { recursive: true, force: true });
+await cp('public', 'dist', { recursive: true, force: true, filter: path=>!sourceCss.has(resolve(path)) });
 const source = 'node_modules/pdfjs-dist/build';
 const target = join('dist', 'vendor', 'pdfjs');
 try {

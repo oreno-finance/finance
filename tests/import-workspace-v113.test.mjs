@@ -19,7 +19,7 @@ test('取込画面はクラウド保存済みデータではなく新規取込�
 
 test('クラウド保存成功後だけキューを消して、保存失敗時は下書きを維持',()=>{
   const batch=section('async function saveAllPending():Promise<void> {','function acceptStatement(');
-  assert.match(batch,/const latest=importQueue\(\)\.filter\(hasUnsavedChanges\)/);
+  assert.match(batch,/const latest=importBatchPlan\(\)\.eligible/);
   assert.match(batch,/savedFingerprints\.set\(s,fingerprints\[index\]!\);dirty\.delete\(s\);pendingSources\.delete\(s\);importStaged\.delete\(s\)/);
   assert.match(batch,/catch\(error\)/);
   assert.doesNotMatch(batch,/catch\(error\)[\s\S]*?importStaged\.delete/);

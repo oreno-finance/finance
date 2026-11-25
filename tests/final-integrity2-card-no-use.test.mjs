@@ -128,3 +128,28 @@ test('②-B: 資産ETag競合で再取得しても別端末の無関係な設定
  const write=ga.writeAssetSettings.bind(ga);let once=true;ga.writeAssetSettings=async(...args)=>{if(once){once=false;const old=state.get('assets');state.set('assets',{...old,rev:old.rev+1});throw new GraphError(412,'conflict');}return write(...args);};
  await save(a);const c=await reopen(state);assert.equal(c.assetSettings().birthMonth,'2000-01');assert.deepEqual(flags(c),[]);
 });
+
+test('Phase B: display-only edit saves even if asset settings are offline',async()=>{
+ const {a,ga,state}=await fixture();await save(a);
+ const read=ga.readAssetSettings.bind(ga);let fresh=0,ordinary=0;
+ ga.readAssetSettings=async(force)=>{if(force)fresh++;else ordinary++;throw new Error('offline');};
+ const before=ga.writes.length;const r=a.records()[0];
+ await a.saveBatch([{id:r.id,statement:{...r.statement,rows:r.statement.rows.map(row=>({...row,merchantOverride:'DISPLAY',description:'NOTE'}))}}]);
+ assert.equal(fresh,0);assert.equal(ordinary,1,'only final sync may attempt settings read');assert.deepEqual(ga.writes.slice(before),['year:2024']);
+ ga.readAssetSettings=read;const b=await reopen(state);assert.equal(b.records()[0].statement.rows[0].merchantOverride,'DISPLAY');
+});
+test('Phase B: adding another card for an existing payment month still requires current assets',async()=>{
+ const {a,ga,state}=await fixture();await save(a);let fresh=0;
+ ga.readAssetSettings=async(force)=>{if(force)fresh++;throw new Error('offline');};
+ await assert.rejects(a.saveBatch([{id:'bill-other',statement:{...statement(),cardId:'amazon'}}]),/最新状態を取得できない/);
+ assert.equal(fresh,1);assert.equal((await reopen(state)).records().length,1);
+});
+test('Phase B: financial correction checks only the affected months, not unrelated existing records',async()=>{
+ const {a,state}=await fixture();await a.setCardNoUseMonth(month,true);await a.setCardNoUseMonth(other,true);
+ const legacy=structuredClone(state.get('assets'));await save(a);await a.saveBatch([{id:'bill-other',statement:statement(other,'2024-11')}]);
+ // Simulate legacy contradictory evidence in both months; unrelated flags are not touched by this edit.
+ state.set('assets',{text:legacy.text,rev:state.get('assets').rev+1});await a.refresh();
+ const r=a.records().find(record=>record.id==='bill-a');
+ await a.saveBatch([{id:r.id,statement:{...r.statement,statedTotal:200,rows:r.statement.rows.map(row=>({...row,amount:200}))}}]);
+ assert.deepEqual(flags(await reopen(state)),[other]);
+});

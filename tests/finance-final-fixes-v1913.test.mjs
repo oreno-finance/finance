@@ -1,3 +1,4 @@
+import {shippedSheet} from './helpers/css-loading.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -90,7 +91,7 @@ test('Gitleaks action pins existing 64-character digest and blocks deployment on
 
 test('Settings 720px CSS breakpoint is not preceded by unfinished selector; generated CSS agrees',()=>{
   const original=source('public/styles/settings-v194.css');
-  const built=source('dist/styles/settings-v194.css');
+  const built=shippedSheet('settings-v194.css');
   assert.equal(built,original);
   assert.doesNotMatch(original,/\.settings-card-picker\s+\.settings-card-picker\s+@media/);
   assert.match(original,/\n@media\(max-width:720px\)\{/);

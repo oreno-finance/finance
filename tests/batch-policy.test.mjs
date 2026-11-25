@@ -47,3 +47,15 @@ test('bulk exclusion never chooses among mixed versions, unknown status, source 
   assert.deepEqual(select([a,old],s=>s!==a),[]);
   assert.deepEqual(select([a,old],s=>s!==old),[]);
 });
+
+test('import selection saves 99 valid drafts and retains the invalid one',async()=>{
+ const {readFileSync}=await import('node:fs');const vm=await import('node:vm');
+ const code=readFileSync(new URL('../dist/src/main.js',import.meta.url),'utf8');
+ const fn=code.slice(code.indexOf('function importBatchPlan()'),code.indexOf('function updateBatchStatus()'));
+ const drafts=Array.from({length:100},(_,i)=>makeStatement({billingMonth:`${2020+Math.floor(i/12)}-${String(i%12+1).padStart(2,'0')}`,statedTotal:i===99?644:643}));
+ const ctx=vm.createContext({statements:drafts,duplicateMonths,importQueue:()=>drafts,hasUnsavedChanges:()=>true,issues:(s,d)=>[...importErrors(s,false),...(d.has(drafts.indexOf(s))?['duplicate']:[])]});
+ vm.runInContext(fn+'\nthis.plan=importBatchPlan;',ctx);
+ assert.equal(ctx.plan().eligible.length,99);assert.equal(ctx.plan().blocked[0],drafts[99]);
+ drafts.push(makeStatement({billingMonth:drafts[0].billingMonth}));
+ assert.equal(ctx.plan().eligible.length,98);assert.equal(ctx.plan().blocked.length,3);
+});

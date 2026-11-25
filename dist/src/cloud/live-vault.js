@@ -10,6 +10,7 @@ import { importErrors } from '../importers/batch-policy.js';
 import { isConfirmationRegression } from '../importers/import-policy.js';
 import { GraphError, VaultMutationUncertainError } from './onedrive-api.js';
 import { decryptDocument, decryptIndex, decryptOriginal, deriveCloudKey, encryptDocument, encryptIndex, encryptOriginal, encryptRules, decryptRules, freshSalt, parseEnvelope, parseIndexEnvelope } from './cloud-crypto.js';
+import { statementMonthKey } from '../importers/import-policy.js';
 import { emptyDocument, mergeDocuments, detectDocumentEditCollisions, duplicateStatementMonths } from './merge.js';
 import { emptyIndex, statementBucket, originalParts, validateIndex } from './layout.js';
 import { emptyAssets, validateAssets, mergeAssets, detectAssetsEditCollisions, describeAssetsEditCollisions, validateSnapshot, validateRecurring, validateOneTime, withUpdatedNisaCardRule, validatePayrollAutoPassphrase, validateBirthMonth, validateCardDebitAccounts, validateCardPreferences, validateCardRecurringDecisions } from './assets.js';
@@ -1336,8 +1337,31 @@ export class LiveVault {
     /** Invalidate zero evidence BEFORE writing a statement, while holding the
      * same cross-device mutation right. A failed subsequent year write may
      * require reconfirmation, but can never revive a superseded zero. */
-    async revokeCardNoUseBeforeYear(latest, merged, key, guard) {
-        const months = new Set([...latest.records, ...merged.records].map(r => statementPeriod(r.statement)).filter((m) => !!m && /^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(m)));
+    affectedNoUseMonths(latest, merged) {
+        const months = new Set();
+        const add = (record) => { const month = statementPeriod(record.statement); if (month)
+            months.add(month); };
+        const previous = new Map(latest.records.map(record => [record.id, record]));
+        const financial = (record) => {
+            const s = record.statement;
+            return JSON.stringify([s.provider, s.cardId, s.billingMonth, s.paymentDate, s.statedTotal, s.confirmation, s.zeroUsage,
+                s.sourceKind, record.originalId, record.originalMonth, s.rows.map(row => row.amount).sort((a, b) => a - b)]);
+        };
+        for (const record of merged.records) {
+            const before = previous.get(record.id);
+            previous.delete(record.id);
+            if (!before || financial(before) !== financial(record)) {
+                add(record);
+                if (before)
+                    add(before);
+            }
+        }
+        // Deletion must not revive legacy contradictory zero confirmations.
+        for (const record of previous.values())
+            add(record);
+        return months;
+    }
+    async revokeCardNoUseBeforeYear(months, key, guard) {
         if (!months.size)
             return;
         if (this.assetsNeedRefresh)
@@ -1945,7 +1969,7 @@ export class LiveVault {
             return this.withMutation(guard, lease => this.saveBatchInternal(items, lease, onProgress));
         return this.saveBatchInternal(items, undefined, onProgress);
     }
-    async saveBatchInternal(items, lease, onProgress) {
+    async saveBatchInternal(items, lease, onProgress, deferRefresh = false) {
         const progress = (phase, done, total) => { try {
             onProgress?.(phase, done, total);
         }
@@ -1971,6 +1995,8 @@ export class LiveVault {
             // Read canonical references; only the affected records need a recovery copy.
             const existingRecords = new Map(this.canonicalRecords().map(record => [record.id, record]));
             const replacementIds = new Set();
+            // Proof is local to this save and its existing operation lease; never cache across operations.
+            const uploadedOriginals = new Set();
             let preparedCount = 0;
             for (const item of items) {
                 guard();
@@ -2009,7 +2035,10 @@ export class LiveVault {
                     originalMonth = draft.month;
                     guard();
                     try {
-                        await this.client.uploadDatedOriginal(originalId, draft.encrypted, originalMonth);
+                        const receipt = await this.client.uploadDatedOriginal(originalId, draft.encrypted, originalMonth);
+                        guard();
+                        if (lease && this.activeMutation === lease && receipt?.id && receipt.etag)
+                            uploadedOriginals.add(`${originalMonth ?? 'undated'}:${originalId}`);
                     }
                     catch (error) {
                         if (!isConflict(error))
@@ -2048,7 +2077,7 @@ export class LiveVault {
                 for (const [year, updated] of changes) {
                     guard();
                     progress("年度データ保存・原本検証", committedYears, changes.size + moves.size);
-                    await this.commitYear(year, updated, new Set(ids), lease, replacementIds);
+                    await this.commitYear(year, updated, new Set(ids), lease, replacementIds, uploadedOriginals);
                     committedYears++;
                     progress("年度データ保存・原本検証", committedYears, changes.size + moves.size);
                 }
@@ -2079,6 +2108,8 @@ export class LiveVault {
                 throw new CloudWriteUncertainError('保存中に保管庫が変更されました。最新データを確認してください。', error);
             } };
             checkCommitted();
+            if (deferRefresh)
+                return ids; // Recovery owns the final sync while the same lease is held.
             progress("保存結果の同期確認", 0, 1);
             try {
                 await this.refresh();
@@ -2101,15 +2132,30 @@ export class LiveVault {
     /** Compare all copies, not only the deduplicated view; original references are part of the record. */
     classifyPendingYearBatch(pending) {
         const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+        const pendingIds = new Set(pending.ids), months = new Set(pending.items.map(item => statementMonthKey(item.statement)));
         const copies = new Map();
-        const deleted = new Set();
+        const byMonth = new Map();
+        const deleted = new Map();
         for (const [year, shard] of this.shards) {
-            for (const id of shard.document.deleted)
-                deleted.add(id);
+            for (const id of shard.document.deleted) {
+                if (!pendingIds.has(id))
+                    continue;
+                const years = deleted.get(id) ?? [];
+                years.push(year);
+                deleted.set(id, years);
+            }
             for (const record of shard.document.records) {
-                const list = copies.get(record.id) ?? [];
-                list.push({ year, record });
-                copies.set(record.id, list);
+                if (pendingIds.has(record.id)) {
+                    const list = copies.get(record.id) ?? [];
+                    list.push({ year, record });
+                    copies.set(record.id, list);
+                }
+                const month = statementMonthKey(record.statement);
+                if (month && months.has(month)) {
+                    const list = byMonth.get(month) ?? [];
+                    list.push({ year, record });
+                    byMonth.set(month, list);
+                }
             }
         }
         return pending.items.map(item => {
@@ -2126,7 +2172,16 @@ export class LiveVault {
             }
             else if ((!before && !found.length && !deleted.has(item.id)) || (found.length === 1 && unchanged(found[0])))
                 status = 'unsaved';
-            return { id: item.id, statement: clone(item.statement), status };
+            // A different ID for the same card/month is also an intervening import.
+            const monthKey = statementMonthKey(item.statement);
+            const other = (monthKey ? byMonth.get(monthKey) ?? [] : []).filter(copy => copy.record.id !== item.id);
+            if (status === 'unsaved' && other.length)
+                status = 'conflict';
+            const conflictFingerprint = status === 'conflict' ? JSON.stringify([
+                expected, [...found].sort((a, b) => a.year.localeCompare(b.year)),
+                [...(deleted.get(item.id) ?? [])].sort(), [...other].sort((a, b) => a.year.localeCompare(b.year) || a.record.id.localeCompare(b.record.id)),
+            ]) : undefined;
+            return { id: item.id, statement: clone(item.statement), status, ...(conflictFingerprint ? { conflictFingerprint } : {}) };
         });
     }
     /** Read only: never retry a write or clear the recovery plan while checking results. */
@@ -2140,86 +2195,107 @@ export class LiveVault {
             throw new CloudEditCancelledError('確認対象の保存が変更されました。最新データを確認してください。');
         return this.classifyPendingYearBatch(pending);
     }
-    /** Reconcile before retrying a partial year batch. Never overwrite an intervening edit. */
-    async resumePendingYearBatch() {
-        if (!this.pendingYearBatch)
-            throw new Error('再開する保存はありません。');
-        if (!this.key)
-            throw new Error('保管庫を解除してください。');
+    /** Reconcile before retrying; approved conflicts are excluded, never overwritten. */
+    async resumePendingYearBatch(approveConflicts) {
         const pending = this.pendingYearBatch, guard = this.approvalGuard();
+        if (!pending || !this.key)
+            throw new Error('再開する保存はありません。');
+        const key = this.key;
+        const checkPlan = () => { guard(); if (this.pendingYearBatch !== pending)
+            throw new CloudEditCancelledError('再開対象の保存が変更されました。最新データを確認してください。'); };
+        const conflictError = () => new CloudEditCancelledError('他の端末で明細が更新されています。保存結果を確認してから再開してください。');
         const results = await this.inspectPendingYearBatch();
-        guard();
-        if (this.pendingYearBatch !== pending)
-            throw new CloudEditCancelledError('再開対象の保存が変更されました。最新データを確認してください。');
-        if (results.some(result => result.status === 'conflict'))
-            throw new CloudEditCancelledError('他の端末で明細が更新されています。未完了の保存は上書きしません。');
-        // Fully confirmed results need no lock or write, even if the previous
-        // operation's marker still needs explicit recovery before another mutation.
+        checkPlan();
+        const conflicts = results.filter(result => result.status === 'conflict');
+        const approved = new Map(conflicts.map(result => [result.id, result.conflictFingerprint]));
+        if (conflicts.length) {
+            if (!approveConflicts || !await approveConflicts(results))
+                throw conflictError();
+            checkPlan();
+        }
         if (results.every(result => result.status === 'saved')) {
             this.pendingYearBatch = null;
             return pending.ids;
         }
-        // Acquire once for the retry and any old-year cleanup. The read outside
-        // the lock is informational; the read inside it authorizes the writes.
-        return this.withMutation(guard, async (lease) => {
-            const current = await this.inspectPendingYearBatch();
-            guard();
-            if (this.pendingYearBatch !== pending || current.some(result => result.status === 'conflict'))
-                throw new CloudEditCancelledError('他の端末で明細が更新されています。未完了の保存は上書きしません。');
-            const retryIds = new Set(current.filter(result => result.status === 'unsaved').map(result => result.id));
-            const remaining = pending.items.filter(item => retryIds.has(item.id));
-            this.pendingYearBatch = null;
-            try {
-                if (remaining.length)
-                    await this.saveBatchInternal(remaining, lease);
-                guard();
-                // Recheck destinations and all copies before any cleanup. All writes
-                // share the operation right so a cooperating device cannot intervene.
-                await this.refresh();
-                guard();
-                const verified = this.classifyPendingYearBatch(pending);
-                if (verified.some(result => result.status === 'conflict' || result.status === 'unsaved'))
-                    throw new CloudEditCancelledError('保存結果が変更されています。未確認の明細は上書きしません。');
-                const cleanup = new Map();
-                for (const result of verified) {
-                    if (result.status !== 'cleanup')
-                        continue;
-                    const target = statementBucket(result.statement.billingMonth);
-                    for (const [year, shard] of this.shards) {
-                        if (year === target || !shard.document.records.some(r => r.id === result.id))
-                            continue;
-                        const ids = cleanup.get(year) ?? new Set();
-                        ids.add(result.id);
-                        cleanup.set(year, ids);
-                    }
-                }
-                for (const [year, ids] of cleanup) {
-                    await this.removeMovedRecords(year, ids, lease);
+        const accepted = pending.ids.filter(id => !approved.has(id));
+        const verify = (current) => {
+            // A changed, newly conflicting, or no longer conflicting record requires new approval.
+            const latest = current.filter(result => result.status === 'conflict');
+            if (latest.length !== approved.size || latest.some(result => !approved.has(result.id) || approved.get(result.id) !== result.conflictFingerprint))
+                throw conflictError();
+            return current.filter(result => !approved.has(result.id));
+        };
+        try {
+            const ids = await this.withMutation(guard, async (lease) => {
+                checkPlan();
+                // Revalidate generation and ALL year copies under the lease, without
+                // fetching unrelated settings and rules again.
+                const fresh = await this.readCurrent(key, this.salt, undefined, guard);
+                checkPlan();
+                this.index = fresh.index;
+                this.shards = fresh.shards;
+                this.recordsViewCache = null;
+                const current = verify(this.classifyPendingYearBatch(pending));
+                const retryIds = new Set(current.filter(result => result.status === 'unsaved').map(result => result.id));
+                const remaining = pending.items.filter(item => retryIds.has(item.id));
+                this.pendingYearBatch = null;
+                try {
+                    if (remaining.length)
+                        await this.saveBatchInternal(remaining, lease, undefined, true);
                     guard();
-                }
-                if (cleanup.size) {
+                    // commitYear already retains the exact accepted document and ETag.
+                    // Reuse that state for cleanup, rather than a second full refresh.
+                    const verified = verify(this.classifyPendingYearBatch(pending));
+                    if (verified.some(result => result.status === 'unsaved'))
+                        throw new Error('未保存の明細が残っています。');
+                    const cleanup = new Map();
+                    for (const result of verified) {
+                        if (result.status !== 'cleanup')
+                            continue;
+                        const target = statementBucket(result.statement.billingMonth);
+                        for (const [year, shard] of this.shards) {
+                            if (year === target || !shard.document.records.some(r => r.id === result.id))
+                                continue;
+                            const ids = cleanup.get(year) ?? new Set();
+                            ids.add(result.id);
+                            cleanup.set(year, ids);
+                        }
+                    }
+                    for (const [year, ids] of cleanup) {
+                        await this.removeMovedRecords(year, ids, lease);
+                        guard();
+                    }
                     await this.refresh();
                     guard();
-                    if (this.classifyPendingYearBatch(pending).some(result => result.status !== 'saved'))
-                        throw new Error('旧年度の整理結果を確認できませんでした。');
+                    if (verify(this.classifyPendingYearBatch(pending)).some(result => result.status !== 'saved'))
+                        throw new Error('保存結果を確認できませんでした。');
+                    return accepted;
                 }
-                return pending.ids;
+                finally {
+                    // Keep the original plan until even lock release has completed.
+                    // Do not resurrect plaintext after a lock or account change.
+                    try {
+                        guard();
+                        this.pendingYearBatch = pending;
+                    }
+                    catch { /* invalid vault */ }
+                }
+            }, undefined, false);
+            checkPlan();
+            this.pendingYearBatch = null;
+            return ids;
+        }
+        catch (error) {
+            try {
+                guard();
             }
-            catch (error) {
-                // If a retry failed after an upload, retain the original plan so a later
-                // verified refresh can reconcile all copies rather than blindly resubmit.
-                // Never reattach an old plaintext plan after lock/re-unlock, even if
-                // the user reopened the same vault using the same remembered CryptoKey.
-                try {
-                    guard();
-                }
-                catch {
-                    throw new CloudWriteUncertainError('保存再開中に保管庫が変更されました。最新データを確認してください。', null);
-                }
-                this.pendingYearBatch = pending;
-                throw error instanceof CloudWriteUncertainError ? error : new CloudWriteUncertainError('保存結果を確認できません。再接続後に保存を再開してください。', error);
+            catch {
+                throw new CloudWriteUncertainError('保存再開中に保管庫が変更されました。最新データを確認してください。', null);
             }
-        }, undefined, false); // fresh inspection under this lease validates the generation.
+            if (error instanceof CloudEditCancelledError)
+                throw error;
+            throw error instanceof CloudWriteUncertainError ? error : new CloudWriteUncertainError('保存結果を確認できません。再接続後に保存を再開してください。', error);
+        }
     }
     async delete(id) {
         return measureFinancePhase('vault.delete-record', async () => {
@@ -2299,7 +2375,7 @@ export class LiveVault {
             throw new Error('OneDrive索引の同時更新が続いています。再試行してください。');
         }, lease);
     }
-    async commitYear(year, changed, protectedIds = new Set(), lease, replacementIds = new Set()) {
+    async commitYear(year, changed, protectedIds = new Set(), lease, replacementIds = new Set(), uploadedOriginals = new Set()) {
         return measureFinancePhase('vault.year-commit', async () => {
             if (!this.key)
                 throw new Error('保管庫はロックされています。');
@@ -2348,7 +2424,8 @@ export class LiveVault {
                 guard();
                 try {
                     await this.withMutation(guard, async (activeLease) => {
-                        const checksNoUse = [...latest.records, ...merged.records].some(record => !!statementPeriod(record.statement));
+                        const noUseMonths = this.affectedNoUseMonths(latest, merged);
+                        const checksNoUse = noUseMonths.size > 0;
                         if (checksNoUse) {
                             if (this.assetsSaving)
                                 throw new CloudEditCancelledError('資産設定を保存中です。完了後に明細を保存してください。');
@@ -2363,6 +2440,8 @@ export class LiveVault {
                             const oldRefs = new Set(latest.records.filter(r => r.originalId).map(refKey));
                             for (const record of merged.records) {
                                 if (!record.originalId || oldRefs.has(refKey(record)))
+                                    continue;
+                                if (lease && activeLease === lease && uploadedOriginals.has(refKey(record)))
                                     continue;
                                 guard();
                                 try {
@@ -2379,7 +2458,7 @@ export class LiveVault {
                                 }
                                 oldRefs.add(refKey(record));
                             }
-                            await this.revokeCardNoUseBeforeYear(latest, merged, key, guard);
+                            await this.revokeCardNoUseBeforeYear(noUseMonths, key, guard);
                             guard();
                             const result = await this.client.writeYearVault(year, encrypted, remote ? { id: remote.id, etag: remote.etag } : null);
                             try {

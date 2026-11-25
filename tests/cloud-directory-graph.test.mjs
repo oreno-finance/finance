@@ -90,7 +90,8 @@ test('Finance year shards are independent resources with If-Match on update',asy
 
 test('PDF original goes to originals/YYYY/MM/UUID.enc and its payload remains private',async()=>{
   const {client,calls}=drive();
-  await client.uploadDatedOriginal(uuid,'encrypted pdf bytes','2026-11');
+  const receipt=await client.uploadDatedOriginal(uuid,'encrypted pdf bytes','2026-11');
+  assert.ok(receipt.id);assert.equal(receipt.etag,'"1"');
   assert.equal(await client.downloadDatedOriginal(uuid,'2026-11'),'encrypted pdf bytes');
   assert.ok(calls.some(c=>c.url.includes(':/2026')));
   assert.ok(calls.some(c=>c.url.includes(':/11')));

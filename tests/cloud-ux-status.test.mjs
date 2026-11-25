@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const html=readFileSync('dist/index.html','utf8');
 const js=readFileSync('dist/src/main.js','utf8');
-const css=readFileSync('dist/styles/style.css','utf8');
+const css=readFileSync('dist/styles/app.css','utf8');
 test('status of cloud saves/deletions remains in a visible live region',()=>{
   assert.match(html,/id="toast" class="toast activity-toast" role="status" aria-live="polite"/);
   assert.match(js,/operationResult\(mutationWarning\s*\?\?\s*'変更内容をOneDriveに保存しました。'/);

@@ -298,6 +298,32 @@ export function initCloudSettings(handlers) {
         const instance = msal, id = activeId, user = account()?.homeAccountId, input = $('cloud-client-id').value.trim(), stored = localStorage.getItem(CLIENT_KEY);
         return () => instance === msal && id === activeId && user === account()?.homeAccountId && input === $('cloud-client-id').value.trim() && stored === localStorage.getItem(CLIENT_KEY);
     }
+    // A redirect reloads the page and destroys the in-memory recovery plan.
+    // Reauthenticate only the existing account, in a user-initiated popup.
+    async function recoverAuthentication(instance, current) {
+        if (!handlers.recoveryPending?.())
+            return false;
+        if (!current || !handlers.runRecoveryAuthentication)
+            throw new Error('保存結果未確認の保管庫と同じアカウントを確認してください。');
+        const auth = authContext(), valid = handlers.confirmationContext();
+        await handlers.runRecoveryAuthentication(async () => {
+            let result;
+            try {
+                result = await instance.acquireTokenPopup({ scopes: SCOPES, account: current, prompt: 'login' });
+            }
+            catch {
+                throw new Error('再認証を完了できませんでした。ポップアップを許可して再試行してください。取込待ちは保持しています。');
+            }
+            if (!auth() || !valid() || !result.accessToken || result.account?.homeAccountId !== current.homeAccountId)
+                throw new Error('同じMicrosoftアカウントで再認証してください。取込待ちは保持しています。');
+            reauthenticationRequired = false;
+            lastAuthIssue = null;
+            authState = 'connected';
+            updateUi();
+            status('再認証しました。保存結果を確認して再開してください。', 'ok');
+        });
+        return true;
+    }
     async function confirmAction(options) {
         const auth = authContext(), valid = handlers.confirmationContext();
         return await requestConfirmation({ ...options, owner: confirmationOwner }) && auth() && valid();
@@ -346,6 +372,10 @@ export function initCloudSettings(handlers) {
             if (current) {
                 try {
                     await graphClientWithoutRedirect();
+                    if (handlers.recoveryPending?.()) {
+                        status('通信を再確認しました。保存結果を確認して再開してください。', 'ok');
+                        return;
+                    }
                     await handlers.onRefresh();
                     status('OneDriveに接続済みです。', 'ok');
                     return;
@@ -356,6 +386,8 @@ export function initCloudSettings(handlers) {
                         throw error;
                 }
             }
+            if (await recoverAuthentication(instance, current))
+                return;
             const auth = authContext(), valid = handlers.confirmationContext();
             if (handlers.canNavigate) {
                 if (!await handlers.canNavigate())
@@ -374,6 +406,8 @@ export function initCloudSettings(handlers) {
             if (!validId(value) || localStorage.getItem(CLIENT_KEY) !== value)
                 throw new Error('先にMicrosoft EntraのClient IDを設定・保存してください。');
             const instance = await ensureMsal();
+            if (await recoverAuthentication(instance, account()))
+                return;
             const auth = authContext(), valid = handlers.confirmationContext();
             if (handlers.canNavigate) {
                 if (!await handlers.canNavigate())

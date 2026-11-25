@@ -15,6 +15,7 @@ interface MsalInstance {
   getAllAccounts():MsalAccount[];getActiveAccount():MsalAccount|null;setActiveAccount(a:MsalAccount|null):void;
   loginRedirect(r:{scopes:string[];prompt?:string;loginHint?:string}):Promise<void>;
   acquireTokenSilent(r:{scopes:string[];account:MsalAccount;forceRefresh?:boolean}):Promise<MsalResult>;
+  acquireTokenPopup(r:{scopes:string[];account:MsalAccount;prompt?:string}):Promise<MsalResult>;
   acquireTokenRedirect(r:{scopes:string[];account:MsalAccount;prompt?:string}):Promise<void>;
   logoutRedirect(r:{account:MsalAccount;postLogoutRedirectUri:string}):Promise<void>;
 }
@@ -230,7 +231,7 @@ export function cloudConnectPrompt():CloudConnectPrompt {
   if(!account())return 'connect';
   return null;
 }
-export interface CloudHandlers {hasUnsavedChanges():boolean;canNavigate?():boolean|Promise<boolean>;confirmationContext():()=>boolean;onRecoverSaveLock(approve:(createdAt:string|null)=>Promise<boolean>):Promise<'absent'|'cancelled'|'released'>;onRefresh():Promise<void>;onMigration():Promise<void>;onLock():boolean|Promise<boolean>;onChangePassphrase(current:string,next:string,onProgress:(message:string)=>void):Promise<void>;onCleanupPreview():Promise<{generationCount:number;legacyFolderCount:number;unreferencedOriginalCount:number;legacyV1Count:number;snapshots:Array<{id:string;name:string;createdDateTime:string}>}>;onCleanupDelete(which:{oldGenerations:boolean;unreferencedOriginals:boolean;unversionedFolders:boolean;legacyV1:boolean;snapshotIds:string[]},onProgress:(message:string)=>void):Promise<number>}
+export interface CloudHandlers {hasUnsavedChanges():boolean;canNavigate?():boolean|Promise<boolean>;recoveryPending?():boolean;runRecoveryAuthentication?(run:()=>Promise<void>):Promise<void>;confirmationContext():()=>boolean;onRecoverSaveLock(approve:(createdAt:string|null)=>Promise<boolean>):Promise<'absent'|'cancelled'|'released'>;onRefresh():Promise<void>;onMigration():Promise<void>;onLock():boolean|Promise<boolean>;onChangePassphrase(current:string,next:string,onProgress:(message:string)=>void):Promise<void>;onCleanupPreview():Promise<{generationCount:number;legacyFolderCount:number;unreferencedOriginalCount:number;legacyV1Count:number;snapshots:Array<{id:string;name:string;createdDateTime:string}>}>;onCleanupDelete(which:{oldGenerations:boolean;unreferencedOriginals:boolean;unversionedFolders:boolean;legacyV1:boolean;snapshotIds:string[]},onProgress:(message:string)=>void):Promise<number>}
 export function initCloudSettings(handlers:CloudHandlers):void {
   let id='';try{id=localStorage.getItem(CLIENT_KEY)??'';}catch{ /* private browsing */ }
   $<HTMLInputElement>('cloud-client-id').value=id;
@@ -242,6 +243,23 @@ export function initCloudSettings(handlers:CloudHandlers):void {
   function authContext():()=>boolean {
     const instance=msal,id=activeId,user=account()?.homeAccountId,input=$<HTMLInputElement>('cloud-client-id').value.trim(),stored=localStorage.getItem(CLIENT_KEY);
     return ()=>instance===msal&&id===activeId&&user===account()?.homeAccountId&&input===$<HTMLInputElement>('cloud-client-id').value.trim()&&stored===localStorage.getItem(CLIENT_KEY);
+  }
+  // A redirect reloads the page and destroys the in-memory recovery plan.
+  // Reauthenticate only the existing account, in a user-initiated popup.
+  async function recoverAuthentication(instance:MsalInstance,current:MsalAccount|null):Promise<boolean> {
+    if(!handlers.recoveryPending?.())return false;
+    if(!current||!handlers.runRecoveryAuthentication)throw new Error('保存結果未確認の保管庫と同じアカウントを確認してください。');
+    const auth=authContext(),valid=handlers.confirmationContext();
+    await handlers.runRecoveryAuthentication(async()=>{
+      let result:MsalResult;
+      try{result=await instance.acquireTokenPopup({scopes:SCOPES,account:current,prompt:'login'});}
+      catch{throw new Error('再認証を完了できませんでした。ポップアップを許可して再試行してください。取込待ちは保持しています。');}
+      if(!auth()||!valid()||!result.accessToken||result.account?.homeAccountId!==current.homeAccountId)
+        throw new Error('同じMicrosoftアカウントで再認証してください。取込待ちは保持しています。');
+      reauthenticationRequired=false;lastAuthIssue=null;authState='connected';updateUi();
+      status('再認証しました。保存結果を確認して再開してください。','ok');
+    });
+    return true;
   }
   async function confirmAction(options:Omit<ConfirmationOptions,'owner'>):Promise<boolean> {
     const auth=authContext(),valid=handlers.confirmationContext();
@@ -273,11 +291,13 @@ export function initCloudSettings(handlers:CloudHandlers):void {
     if(current){
       try{
         await graphClientWithoutRedirect();
+        if(handlers.recoveryPending?.()){status('通信を再確認しました。保存結果を確認して再開してください。','ok');return;}
         await handlers.onRefresh();
         status('OneDriveに接続済みです。','ok');
         return;
       }catch(error){recordCloudConnectionFailure(error);if(!reauthenticationRequired)throw error;}
     }
+    if(await recoverAuthentication(instance,current))return;
     const auth=authContext(),valid=handlers.confirmationContext();
     if(handlers.canNavigate){if(!await handlers.canNavigate())return;}
     else if(handlers.hasUnsavedChanges()&&!await confirmAction({title:'認証画面へ移動しますか？',message:'未保存の変更があります。',acceptLabel:'認証へ進む',destructive:true}))return;
@@ -289,6 +309,7 @@ export function initCloudSettings(handlers:CloudHandlers):void {
     if(!validId(value)||localStorage.getItem(CLIENT_KEY)!==value)
       throw new Error('先にMicrosoft EntraのClient IDを設定・保存してください。');
     const instance=await ensureMsal();
+    if(await recoverAuthentication(instance,account()))return;
     const auth=authContext(),valid=handlers.confirmationContext();
     if(handlers.canNavigate){if(!await handlers.canNavigate())return;}
     else if(handlers.hasUnsavedChanges()&&!await confirmAction({title:'Microsoft認証をやり直しますか？',message:'未保存の変更があります。',acceptLabel:'再認証する',destructive:true}))return;

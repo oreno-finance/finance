@@ -1,3 +1,4 @@
+import {shippedSheet} from './helpers/css-loading.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -23,5 +24,5 @@ test('wordmark remains aligned, dark-mode-safe and keyboard focusable',()=>{
   assert.match(css, /#finance-sidebar #brand-home:focus-visible/);
   assert.doesNotMatch(css, /#finance-sidebar #brand-home\{[^}]*?(?:width:|padding-left:|position:)/);
   assert.equal(html,read('dist/index.html'));
-  assert.equal(css,read('dist/styles/mobile-finish-v1922.css'));
+  assert.equal(css,shippedSheet('mobile-finish-v1922.css'));
 });

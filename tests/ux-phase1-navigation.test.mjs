@@ -19,8 +19,8 @@ test('インポートだけにSTEPを残し、両方の明細テーブルで見�
    assert.match(html,new RegExp(`id="${prefix}sort-amount"[^>]*><span>当月請求額</span><span class="sort-arrow"`));
  }
  assert.equal((main.match(/renderStatementSortControl\(id,label,/g)??[]).length,2);
- assert.match(main,/button.textContent = batchBusy \? '保存中…' : '保存'/);
- assert.match(main,/\$\{drafts.length\}件の明細/);
+ assert.match(main,/button.textContent = batchBusy \? '保存中…' : eligible\.length/);
+ assert.match(main,/\$\{eligible.length\}件の明細/);
  assert.match(main,/await vault\.saveBatch/);
 });
 test('ホームは収支、確認、入出金、資産、ポイントの順で描画する',()=>{

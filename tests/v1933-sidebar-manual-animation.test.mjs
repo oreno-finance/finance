@@ -1,3 +1,4 @@
+import {shippedSheet} from './helpers/css-loading.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -78,6 +79,6 @@ test('normal expand and hover-to-pin animate distinct layout properties with red
   assert.match(css,/transition:width 260ms[\s\S]*?margin-right 260ms/);
   assert.match(combined,/margin-right 260ms cubic-bezier\(\.22,1,\.36,1\)/);
   assert.match(css,/@media\(prefers-reduced-motion:reduce\)/);
-  assert.equal(read('dist/styles/navigation-payroll-v1915.css'),css);
+  assert.equal(shippedSheet('navigation-payroll-v1915.css'),css);
   assert.equal(read('dist/styles/app.css'),combined);
 });
