@@ -38,7 +38,7 @@ test('only navigation from home shows assets return control',()=>{
 test('drilldown layout is isolated to analysis-origin manager and scrolls normally',()=>{
  const css=read('public/styles/drilldown-v190.css'),settings=read('public/styles/settings-v194.css');
  assert.match(css,/#manage-view\.manage-with-drilldown>\.manage-grid\{display:grid/);
- assert.match(css,/#manage-view\.manage-with-drilldown \.manage-breakdown-totals\{display:grid/);
+ assert.doesNotMatch(css,/manage-breakdown-(?:totals|recurring)/);
  assert.match(css,/\.workspace>\.content:has\(#manage-view\.manage-with-drilldown:not\(\.hidden\)\)/);
  assert.doesNotMatch(settings,/One analysis drilldown/);
 });

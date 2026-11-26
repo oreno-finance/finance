@@ -1,8 +1,8 @@
 import { applyContractEdit } from '../fixed-costs/contract-edit.js';
-import { validateMizuhoPlan } from './assets.js';
-import { estimateMizuhoTransferAmount } from './mizuho-transfer.js';
+import { validateMizuhoPlan, validateBalanceWarningLimits } from './assets.js';
+import { estimateMizuhoTransferAmount, mizuhoFundingWindow, mizuhoTransferForBill } from './mizuho-transfer.js';
 import { measureFinancePhase } from './performance-diagnostics.js';
-import { appendPaymentChange, reviseFuturePaymentChange, originContracts } from '../fixed-costs/payment-history.js';
+import { appendPaymentChange, reviseFuturePaymentChange, originContracts, contractMerchantKeys } from '../fixed-costs/payment-history.js';
 import { validateFixedCosts } from '../fixed-costs/contracts.js';
 /** Cloud-first, annual-shard vault. IndexedDB is only opened by the explicit legacy import UI. */
 import { isZeroUsage, statementPeriod } from '../models/types.js';
@@ -13,10 +13,11 @@ import { decryptDocument, decryptIndex, decryptOriginal, deriveCloudKey, encrypt
 import { statementMonthKey } from '../importers/import-policy.js';
 import { emptyDocument, mergeDocuments, detectDocumentEditCollisions, duplicateStatementMonths } from './merge.js';
 import { emptyIndex, statementBucket, originalParts, validateIndex } from './layout.js';
-import { emptyAssets, validateAssets, mergeAssets, detectAssetsEditCollisions, describeAssetsEditCollisions, validateSnapshot, validateRecurring, validateOneTime, withUpdatedNisaCardRule, validatePayrollAutoPassphrase, validateBirthMonth, validateCardDebitAccounts, validateCardPreferences, validateCardRecurringDecisions } from './assets.js';
+import { emptyAssets, validateAssets, mergeAssets, cardRecurringKey, detectAssetsEditCollisions, describeAssetsEditCollisions, validateSnapshot, validateRecurring, validateOneTime, withUpdatedNisaCardRule, validatePayrollAutoPassphrase, validateBirthMonth, validateCardDebitAccounts, validateCardPreferences, validateCardRecurringDecisions } from './assets.js';
 import { encryptAssets, decryptAssets, encryptMonthlyReport, decryptMonthlyReport } from './cloud-crypto.js';
 import { reportRevision, revisedDocument, snapshotHash } from '../reports/monthly-report.js';
-import { emptyRules, mergeRules, detectRuleEditCollisions, validateRule, validateCategory, listCategories, PALETTE, CATEGORIES } from './merchant-rules.js';
+import { migratableCardCost, legacyRuleFixedCost } from '../fixed-costs/rule-fixed-costs.js';
+import { fixedRuleKey, emptyRules, mergeRules, detectRuleEditCollisions, validateRule, validateCategory, listCategories, PALETTE, CATEGORIES } from './merchant-rules.js';
 const clone = (value) => structuredClone(value);
 // Field order may change during merge; history array order remains significant.
 function sameContract(a, b) {
@@ -331,6 +332,11 @@ export class LiveVault {
         if (!this.key)
             throw new Error('OneDrive保管庫のロック解除が必要です。');
         return clone(this.rulesDocument.rules);
+    }
+    fixedCostMigrations() {
+        if (!this.key)
+            throw new Error('OneDrive保管庫のロック解除が必要です。');
+        return [...(this.rulesDocument.fixedCostMigrations ?? [])];
     }
     merchantCategories() {
         if (!this.key)
@@ -1120,14 +1126,37 @@ export class LiveVault {
     async upsertMerchantRule(rule) {
         if (!this.key)
             throw new Error('OneDrive保管庫のロック解除が必要です。');
-        const valid = validateRule(rule);
+        let valid = validateRule(rule);
         const next = clone(this.rulesDocument);
+        if (valid.fixedCost) {
+            const key = fixedRuleKey(valid), receipts = new Set(next.fixedCostMigrations ?? []);
+            const matching = (this.assetsDocument.fixedCosts ?? []).filter(x => migratableCardCost(x) && !receipts.has(x.id) && x.merchantKey === key);
+            if (matching.length > 1)
+                throw new Error('同じ利用先の旧固定費が複数あります。固定費管理で確認してください。');
+            if (!valid.fixedCost.legacyId && matching.length === 1) {
+                const legacy = matching[0];
+                valid = validateRule({ ...valid, fixedCost: { ...legacyRuleFixedCost(legacy), ...valid.fixedCost, legacyId: legacy.id } });
+            }
+            if (valid.fixedCost?.legacyId && !receipts.has(valid.fixedCost.legacyId)) {
+                const legacy = (this.assetsDocument.fixedCosts ?? []).find(x => x.id === valid.fixedCost.legacyId);
+                if (!legacy || !migratableCardCost(legacy) || legacy.merchantKey && legacy.merchantKey !== key && !valid.fixedCost.previous?.some(p => p.key === legacy.merchantKey))
+                    throw new Error('旧固定費との紐付けを確認できません。');
+            }
+            for (const contract of originContracts(this.assetsDocument)) {
+                if (receipts.has(contract.id) || contract.id === valid.fixedCost?.legacyId)
+                    continue;
+                if (contractMerchantKeys({ fixedCosts: 'payment' in contract ? [contract] : [], recurring: 'payment' in contract ? [] : [contract] }).has(key))
+                    throw new Error('同じ利用先に既存の固定費があります。既存契約から編集してください。');
+            }
+        }
         const index = next.rules.findIndex(x => x.id === valid.id);
         if (index >= 0)
             next.rules[index] = valid;
         else
             next.rules.push(valid);
         next.deleted = next.deleted.filter(x => x !== valid.id);
+        if (valid.fixedCost?.legacyId)
+            next.fixedCostMigrations = [...new Set([...(next.fixedCostMigrations ?? []), valid.fixedCost.legacyId])];
         await this.commitMerchantRules(next);
     }
     async setCategoryColor(id, color) {
@@ -1437,12 +1466,25 @@ export class LiveVault {
         await this.commitAssets(next);
     }
     /** Single dated movements are encrypted with the rest of assets.enc. */
-    async upsertOneTime(entry) {
+    async upsertOneTime(entry, funding) {
         if (!this.key)
             throw new Error('OneDrive保管庫を解除してください。');
         const valid = validateOneTime(entry), next = clone(this.assetsDocument);
         if (next.deletedOneTime?.includes(valid.id))
             throw new Error('削除済みの入出金IDは再利用できません。');
+        // A new actual card-funding record replaces the automatic estimate. Guard
+        // both the local and remote settings so two devices cannot create two such
+        // records for the same invoice through the dedicated entry route.
+        const fundingGuard = funding ? (current) => {
+            const bill = { cardId: 'rakuten-mizuho', paymentDate: funding.paymentDate, amount: funding.billAmount };
+            const window = mizuhoFundingWindow(bill.paymentDate, current.mizuhoTransferPlan?.leadDays ?? 3);
+            const now = new Date(), today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+            if (!window || valid.date < window.first || valid.date > window.last || valid.date > today || valid.status !== 'done' || !valid.cardFunding)
+                throw new CloudEditCancelledError('実際の送金日・金額・振替先・実行済み状態を確認してください。');
+            if (current.oneTime?.some(e => e.id === valid.id) || !mizuhoTransferForBill(bill, current))
+                throw new CloudEditCancelledError('振替が登録されているか送金設定が変更されています。最新情報を取得して既存の記録を確認してください。');
+        } : undefined;
+        fundingGuard?.(next);
         const items = next.oneTime ?? [];
         const i = items.findIndex(e => e.id === valid.id);
         if (i >= 0)
@@ -1450,7 +1492,7 @@ export class LiveVault {
         else
             items.push(valid);
         next.oneTime = items;
-        await this.commitAssets(next);
+        await this.commitAssets(next, undefined, undefined, fundingGuard);
     }
     async deleteOneTime(id) {
         if (!this.key)
@@ -1518,13 +1560,26 @@ export class LiveVault {
         else
             records.push(entry);
         next.fixedCosts = validateFixedCosts(records, next.format === 'finance-assets-v2') ?? [];
+        let candidateGuard;
         if (decision) {
-            if (!entry.merchantKey || entry.payment !== 'card' || entry.cardId !== decision.cardId)
+            const key = cardRecurringKey(decision.cardId, decision.merchant);
+            const moved = entry.cardId !== decision.cardId;
+            if (!entry.merchantKey || entry.payment !== 'card' || !entry.cardId ||
+                (moved ? (index >= 0 || decision.state !== 'ignored' || entry.merchantKey !== cardRecurringKey(entry.cardId, decision.merchant)) : decision.state !== 'registered' || entry.merchantKey !== key))
                 throw new Error('カード定期支出の対応関係が不正です。');
-            const preferences = validateCardRecurringDecisions({ [entry.merchantKey]: decision });
-            next.cardRecurringDecisions = { ...(next.cardRecurringDecisions ?? {}), [entry.merchantKey]: preferences[entry.merchantKey] };
+            const preferences = validateCardRecurringDecisions({ [key]: decision });
+            if (moved) {
+                const targetKey = entry.merchantKey;
+                candidateGuard = current => {
+                    const keys = contractMerchantKeys(current), decisions = current.cardRecurringDecisions ?? {};
+                    if (keys.has(key) || keys.has(targetKey) || decisions[key] || decisions[targetKey]?.state === 'registered')
+                        throw new CloudEditCancelledError('候補または変更先がすでに登録・確認されています。最新情報を取得してください。');
+                };
+                candidateGuard(this.assetsDocument);
+            }
+            next.cardRecurringDecisions = { ...(next.cardRecurringDecisions ?? {}), [key]: preferences[key] };
         }
-        await this.commitAssets(next);
+        await this.commitAssets(next, undefined, undefined, candidateGuard);
     }
     /** All edited fields and dated changes use one conditional encrypted write. */
     async editContract(expected, edit) {
@@ -1721,6 +1776,13 @@ export class LiveVault {
             return;
         next.mizuhoFundingChecks = { ...(next.mizuhoFundingChecks ?? {}), [month]: { done, updatedAt: now.toISOString(),
                 ...(done ? { ...snapshot } : {}) } };
+        await this.commitAssets(next);
+    }
+    async setBalanceWarningLimits(value) {
+        if (!this.key)
+            throw new Error('保管庫を解除してください。');
+        const next = clone(this.assetsDocument);
+        next.balanceWarningLimits = validateBalanceWarningLimits(value);
         await this.commitAssets(next);
     }
     async setMizuhoTransferPlan(value) {

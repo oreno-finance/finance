@@ -46,11 +46,12 @@ test('bank-only category and NISA exclusion preserve all valid amounts',()=>{
  assert.equal(analysisDrilldownBreakdown(data,request(['2026-11'],'category','food')).total,2000);
  assert.equal(analysisDrilldownBreakdown(data,request(['2026-11'],'card','smbc-nl')).total,10500);
 });
-test('UI links monthly summary and payment-month drilldown to recurrence editing',()=>{
+test('manager displays only card transactions while monthly summary retains recurrence editing',()=>{
  const html=readFileSync('public/index.html','utf8'),main=readFileSync('src/main.ts','utf8');
- assert.match(html,/id="manage-drilldown-breakdown"/);
- assert.match(main,/renderManagerDrilldownBreakdown\(context\)/);
- assert.match(main,/openRecurringForReview\(entry\.entryId\)/);
+ assert.doesNotMatch(html,/id="manage-drilldown-breakdown"/);
+ assert.doesNotMatch(main,/renderManagerDrilldownBreakdown/);
+ assert.match(main,/支払月で絞り込み中 · カード取引のみ表示/);
+ assert.match(main,/openRecurring:openRecurringForReview/);
  assert.match(readFileSync('src/ui/assets-settings.ts','utf8'),/openRecurring:async\(id:string\)/);
  assert.match(readFileSync('src/ui/monthly-summary.ts','utf8'),/report\.recurringLines\.filter\(item=>item\.cardOverlap\)/);
 });

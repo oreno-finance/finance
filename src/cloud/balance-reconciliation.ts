@@ -4,8 +4,9 @@ import {recurringForCalculation} from '../fixed-costs/payment-history.js';
  * transaction from a discrepancy. */
 import { ASSET_ACCOUNTS, oneTimeAccountDelta, type AssetAccountId, type AssetsDocument, type BalanceSnapshot } from './assets.js';
 import { recurringOccursOn } from './recurring-schedule.js';
-import { forecastBankBalances } from './salary-projection.js';
+import { forecastBankBalances,prepareBankForecast } from './salary-projection.js';
 import type { PayrollIncomeEntry } from './payroll-income.js';
+import {mizuhoTransferForBill} from './mizuho-transfer.js';
 import type { CloudRecord } from './merge.js';
 
 export interface BalanceReconciliation {
@@ -48,7 +49,8 @@ export function reconcileBalance(
   // Other account snapshots are left untouched for linked transfer bookkeeping.
   const reconstructed:AssetsDocument={...doc,snapshots:doc.snapshots.filter(s=>s.accountId!==accountId||s.observedAt<=previous.observedAt)};
   // Historical reconciliation never includes a future salary estimate.
-  const result=forecastBankBalances(reconstructed,latestDay,records,payrollIncome,payrollDepositAccount,nextDay(latestDay));
+  const work=prepareBankForecast(records,reconstructed);
+  const result=forecastBankBalances(reconstructed,latestDay,records,payrollIncome,payrollDepositAccount,nextDay(latestDay),work);
   const predicted=result.accounts[accountId].balance;
   if(predicted===null||!Number.isSafeInteger(predicted))return null;
   const difference=latest.balance-predicted;
@@ -58,7 +60,9 @@ export function reconcileBalance(
   const provisionalEntries=(doc.oneTime??[]).filter(e=>e.status==='planned'&&inInterval(e.date)&&oneTimeAccountDelta(e,accountId)!==0).length;
   const sameDayEntries=(doc.oneTime??[]).some(e=>e.date===latestDay&&oneTimeAccountDelta(e,accountId)!==0)||
     recurringForCalculation(doc).some(e=>e.enabled&&touches(e.fromAccountId,e.toAccountId)&&recurringOccursOn(e,latestDay))||
-    records.some(r=>r.statement.paymentDate===latestDay&&(r.statement.cardId!==null&&doc.cardDebitAccounts?.[r.statement.cardId]===accountId));
+    records.some(r=>r.statement.paymentDate===latestDay&&(r.statement.cardId!==null&&doc.cardDebitAccounts?.[r.statement.cardId]===accountId))||
+    (payrollDepositAccount===accountId&&payrollIncome.some(e=>e.paidOn===latestDay))||
+    ((accountId==='rakuten-bank'||accountId==='mizuho-bank')&&[...work.reports.values()].some(r=>r.cardLines.some(c=>mizuhoTransferForBill(c,doc)?.date===latestDay)));
   const unmappedCard=(accountId==='rakuten-bank'||accountId==='mizuho-bank')&&
     records.some(r=>inInterval(r.statement.paymentDate??'')&&(r.statement.cardId===null||!doc.cardDebitAccounts?.[r.statement.cardId]));
   return {accountId,previous,latest,previousDay,latestDay,predicted,actual:latest.balance,difference,

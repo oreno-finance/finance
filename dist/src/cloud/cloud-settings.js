@@ -4,7 +4,7 @@ import { OneDriveTestClient, GraphError } from './onedrive-api.js';
 import { clearPasswordField } from '../ui/password-fields.js';
 import { showActivity, simpleActivity } from '../ui/activity-feedback.js';
 import { diagnoseVaultFiles } from './vault-diagnostics.js';
-import { classifyMicrosoftAuthError, selectMicrosoftAccount, coalesceSilentToken } from './msal-auth.js';
+import { classifyMicrosoftAuthError, selectMicrosoftAccount, coalesceSilentToken, retrySilentTimeout } from './msal-auth.js';
 const CLIENT_KEY = 'finance-onedrive-public-client-id-v1';
 const ACCOUNT_KEY = 'finance-msal-selected-account-v1:';
 const SCOPES = ['Files.ReadWrite.AppFolder'];
@@ -20,6 +20,8 @@ let selectedAccount = null;
 let initializing = null;
 let activeId = '';
 let busy = false;
+let onConnectionStateChange;
+export function cloudConnectionPending() { return busy || authState === 'checking'; }
 let authState = 'not-connected';
 let reauthenticationRequired = false;
 let lastAuthIssue = null;
@@ -95,7 +97,7 @@ function authErrorMessage(kind) {
     switch (kind) {
         case 'interaction': return 'Microsoftアカウントの再認証が必要です。「再認証」を押してください。';
         case 'network': return 'ネットワークに接続できません。接続を確認して再試行してください。';
-        case 'timeout': return 'Microsoft認証の確認が時間内に完了しませんでした。再試行してください。';
+        case 'timeout': return 'Microsoft認証が時間内に完了しませんでした。設定の「再認証」をお試しください。';
         case 'server': return 'Microsoft認証サービスに一時的な障害があります。再試行してください。';
         default: return 'Microsoft認証を確認できませんでした。接続状態を確認してください。';
     }
@@ -138,6 +140,7 @@ function updateUi() {
     const state = $('cloud-auth-state');
     state.textContent = authState === 'connected' ? '接続済み' : authState === 'checking' ? '確認中' : authState === 'not-connected' ? '未接続' : authStateText();
     state.dataset.state = authState;
+    onConnectionStateChange?.();
 }
 async function ensureMsal() {
     const id = $('cloud-client-id').value.trim();
@@ -209,13 +212,17 @@ async function ensureMsal() {
 async function silentToken(instance, user, forceRefresh = false) {
     if (account()?.homeAccountId !== user.homeAccountId)
         throw new Error('Microsoftアカウントが切り替わりました。再接続してください。');
-    const requestId = `${activeId}:${user.homeAccountId}:${forceRefresh ? 'refresh' : 'cached'}`;
+    const id = activeId;
+    const guard = () => { if (msal !== instance || activeId !== id || account()?.homeAccountId !== user.homeAccountId)
+        throw new Error('Microsoftアカウントが切り替わりました。再接続してください。'); };
+    const requestId = `${id}:${user.homeAccountId}:${forceRefresh ? 'refresh' : 'cached'}`;
     return coalesceSilentToken(tokenJobs, requestId, async () => {
         let result;
         try {
-            result = await instance.acquireTokenSilent({ scopes: SCOPES, account: user, ...(forceRefresh ? { forceRefresh: true } : {}) });
+            result = await retrySilentTimeout(() => instance.acquireTokenSilent({ scopes: SCOPES, account: user, ...(forceRefresh ? { forceRefresh: true } : {}) }), guard);
         }
         catch (error) {
+            guard();
             const kind = classifyMicrosoftAuthError(error);
             rememberFailure(error, 'silent-token', kind);
             reauthenticationRequired = kind === 'interaction';
@@ -282,6 +289,7 @@ export function cloudConnectPrompt() {
     return null;
 }
 export function initCloudSettings(handlers) {
+    onConnectionStateChange = handlers.onConnectionStateChange;
     let id = '';
     try {
         id = localStorage.getItem(CLIENT_KEY) ?? '';

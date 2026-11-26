@@ -72,6 +72,21 @@ export function analyzePeriods(source, periods, currentPeriod) {
     const groups = { card: createGroups(months, 'card'), category: createGroups(months, 'category'), merchant: createGroups(months, 'merchant') };
     return { months, totals, groups, categoryChanges: changes(groups.category), merchantChanges: changes(groups.merchant) };
 }
+/** Running balance from the start of the selected period, not an account balance. */
+export function cumulativeBalances(months) {
+    let amount = 0, reference = false;
+    return months.map(month => {
+        amount = amount === null || month.balance === null ? null : add(amount, month.balance);
+        reference = reference || month.coverage !== 'registered' || month.report.incomeEstimates.length > 0 || hasScheduledSalary(month.report);
+        return { period: month.period, amount, reference };
+    });
+}
+/** Same eligible months as the displayed net balance; do not subtract partial totals. */
+export function balanceWithoutNisa(months) {
+    if (!months.length || months.some(month => month.balance === null || month.nisa === null))
+        return null;
+    return months.reduce((total, month) => add(total, add(month.balance, month.nisa)), 0);
+}
 export function rollingAnalytics(source, endPeriod, count, currentPeriod) {
     if (!isValidPeriod(endPeriod) || endPeriod > currentPeriod)
         throw new Error('未来の月は選択できません。');

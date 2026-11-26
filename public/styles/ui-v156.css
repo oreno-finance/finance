@@ -10,7 +10,7 @@
 .assets-account-layout .assets-latest{min-height:0!important;margin-bottom:7px!important;padding:10px 12px!important;gap:4px!important;flex:0 0 auto!important;justify-content:flex-start!important;min-width:0;max-width:100%}
 .assets-account-layout .assets-balance{font-size:clamp(17px,2vw,22px)!important;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 .assets-account-layout .assets-balance-date{font-size:10px;line-height:1.45;min-width:0;overflow-wrap:anywhere}
-.assets-account-layout .assets-balance-future{padding-top:5px!important;line-height:1.4!important;min-height:0!important}
+
 .assets-account-layout .assets-balance-form{margin-top:5px!important;min-width:0}
 .assets-account-layout .assets-balance-form .rules-field{margin:0!important;display:flex;flex-direction:column;gap:6px}
 .assets-account-layout .assets-balance-form input{width:100%;min-width:0;max-width:100%;box-sizing:border-box;height:39px}

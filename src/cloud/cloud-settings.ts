@@ -4,7 +4,7 @@ import { OneDriveTestClient, GraphError } from './onedrive-api.js';
 import { clearPasswordField } from '../ui/password-fields.js';
 import { showActivity, simpleActivity } from '../ui/activity-feedback.js';
 import { diagnoseVaultFiles } from './vault-diagnostics.js';
-import { classifyMicrosoftAuthError, selectMicrosoftAccount, coalesceSilentToken, type MicrosoftAuthFailure } from './msal-auth.js';
+import { classifyMicrosoftAuthError, selectMicrosoftAccount, coalesceSilentToken, retrySilentTimeout, type MicrosoftAuthFailure } from './msal-auth.js';
 const CLIENT_KEY='finance-onedrive-public-client-id-v1';
 const ACCOUNT_KEY='finance-msal-selected-account-v1:';
 const SCOPES=['Files.ReadWrite.AppFolder'];
@@ -30,6 +30,8 @@ let msal:MsalInstance|null=null;
 let selectedAccount:MsalAccount|null=null;
 let initializing:Promise<MsalInstance>|null=null;
 let activeId='';let busy=false;
+let onConnectionStateChange:(()=>void)|undefined;
+export function cloudConnectionPending():boolean {return busy||authState==='checking';}
 type AuthState='checking'|'connected'|'temporary'|'reauth'|'not-connected'|'restore'|'mismatch';
 let authState:AuthState='not-connected';
 let reauthenticationRequired=false;
@@ -92,7 +94,7 @@ function authErrorMessage(kind:MicrosoftAuthFailure):string {
   switch(kind){
     case 'interaction': return 'Microsoftアカウントの再認証が必要です。「再認証」を押してください。';
     case 'network': return 'ネットワークに接続できません。接続を確認して再試行してください。';
-    case 'timeout': return 'Microsoft認証の確認が時間内に完了しませんでした。再試行してください。';
+    case 'timeout': return 'Microsoft認証が時間内に完了しませんでした。設定の「再認証」をお試しください。';
     case 'server': return 'Microsoft認証サービスに一時的な障害があります。再試行してください。';
     default: return 'Microsoft認証を確認できませんでした。接続状態を確認してください。';
   }
@@ -130,6 +132,7 @@ function updateUi():void {
   $('cloud-account').hidden=!$('cloud-account').textContent;
   const state=$('cloud-auth-state');state.textContent=authState==='connected'?'接続済み':authState==='checking'?'確認中':authState==='not-connected'?'未接続':authStateText();
   state.dataset.state=authState;
+  onConnectionStateChange?.();
 }
 async function ensureMsal():Promise<MsalInstance> {
   const id=$<HTMLInputElement>('cloud-client-id').value.trim();
@@ -171,12 +174,15 @@ async function ensureMsal():Promise<MsalInstance> {
  * token lifetime; a Finance Graph client never persists a token string. */
 async function silentToken(instance:MsalInstance,user:MsalAccount,forceRefresh=false):Promise<string> {
   if(account()?.homeAccountId!==user.homeAccountId)throw new Error('Microsoftアカウントが切り替わりました。再接続してください。');
-  const requestId=`${activeId}:${user.homeAccountId}:${forceRefresh?'refresh':'cached'}`;
+  const id=activeId;
+  const guard=()=>{if(msal!==instance||activeId!==id||account()?.homeAccountId!==user.homeAccountId)throw new Error('Microsoftアカウントが切り替わりました。再接続してください。');};
+  const requestId=`${id}:${user.homeAccountId}:${forceRefresh?'refresh':'cached'}`;
   return coalesceSilentToken(tokenJobs,requestId,async()=>{
     let result:MsalResult;
     try{
-      result=await instance.acquireTokenSilent({scopes:SCOPES,account:user,...(forceRefresh?{forceRefresh:true}:{})});
+      result=await retrySilentTimeout(()=>instance.acquireTokenSilent({scopes:SCOPES,account:user,...(forceRefresh?{forceRefresh:true}:{})}),guard);
     }catch(error){
+      guard();
       const kind=classifyMicrosoftAuthError(error);
       rememberFailure(error,'silent-token',kind);
       reauthenticationRequired=kind==='interaction';
@@ -231,8 +237,9 @@ export function cloudConnectPrompt():CloudConnectPrompt {
   if(!account())return 'connect';
   return null;
 }
-export interface CloudHandlers {hasUnsavedChanges():boolean;canNavigate?():boolean|Promise<boolean>;recoveryPending?():boolean;runRecoveryAuthentication?(run:()=>Promise<void>):Promise<void>;confirmationContext():()=>boolean;onRecoverSaveLock(approve:(createdAt:string|null)=>Promise<boolean>):Promise<'absent'|'cancelled'|'released'>;onRefresh():Promise<void>;onMigration():Promise<void>;onLock():boolean|Promise<boolean>;onChangePassphrase(current:string,next:string,onProgress:(message:string)=>void):Promise<void>;onCleanupPreview():Promise<{generationCount:number;legacyFolderCount:number;unreferencedOriginalCount:number;legacyV1Count:number;snapshots:Array<{id:string;name:string;createdDateTime:string}>}>;onCleanupDelete(which:{oldGenerations:boolean;unreferencedOriginals:boolean;unversionedFolders:boolean;legacyV1:boolean;snapshotIds:string[]},onProgress:(message:string)=>void):Promise<number>}
+export interface CloudHandlers {onConnectionStateChange?():void;hasUnsavedChanges():boolean;canNavigate?():boolean|Promise<boolean>;recoveryPending?():boolean;runRecoveryAuthentication?(run:()=>Promise<void>):Promise<void>;confirmationContext():()=>boolean;onRecoverSaveLock(approve:(createdAt:string|null)=>Promise<boolean>):Promise<'absent'|'cancelled'|'released'>;onRefresh():Promise<void>;onMigration():Promise<void>;onLock():boolean|Promise<boolean>;onChangePassphrase(current:string,next:string,onProgress:(message:string)=>void):Promise<void>;onCleanupPreview():Promise<{generationCount:number;legacyFolderCount:number;unreferencedOriginalCount:number;legacyV1Count:number;snapshots:Array<{id:string;name:string;createdDateTime:string}>}>;onCleanupDelete(which:{oldGenerations:boolean;unreferencedOriginals:boolean;unversionedFolders:boolean;legacyV1:boolean;snapshotIds:string[]},onProgress:(message:string)=>void):Promise<number>}
 export function initCloudSettings(handlers:CloudHandlers):void {
+  onConnectionStateChange=handlers.onConnectionStateChange;
   let id='';try{id=localStorage.getItem(CLIENT_KEY)??'';}catch{ /* private browsing */ }
   $<HTMLInputElement>('cloud-client-id').value=id;
   // New installations show the only setup fields automatically; connected users see a tidy overview.

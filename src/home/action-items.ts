@@ -1,13 +1,13 @@
 /** P0 notices are derived, never persisted and never modify financial records. */
 import { getCard, type Provider } from '../models/types.js';
-import type {CardPreference} from '../cloud/assets.js';
+import {BALANCE_WARNING_ACCOUNTS,type BalanceWarningAccountId,type CardPreference} from '../cloud/assets.js';
 import type { MonthlyReport, MonthlySource } from '../summary/monthly-summary.js';
 import type { AccountForecasts } from './account-events.js';
 import { shiftedDay } from './account-events.js';
 
-export type HomeDestination='import'|'manage'|'summary'|'assets'|'settings'|'subscriptions';
+export type HomeDestination='import'|'manage'|'summary'|'assets'|'settings'|'subscriptions'|'subscription-candidates';
 export interface HomeAction {
-  id:string; kind:'shortage'|'card-account'|'invalid-statement'|'unclassified'|'unknown-confirmation'|'provisional'|'missing-statements'|'stale-balance'|'payroll'|'subscription';
+  id:string; kind:'shortage'|'card-account'|'invalid-statement'|'unknown-confirmation'|'provisional'|'missing-statements'|'stale-balance'|'payroll'|'subscription';
   severity:'high'|'medium'|'low'; title:string; detail?:string;
   target:HomeDestination; recordId?:string;
 }
@@ -61,12 +61,24 @@ const severityRank={high:0,medium:1,low:2};
 export function homeActions(source:MonthlySource,report:MonthlyReport,forecast:AccountForecasts,today:string):HomeAction[] {
   const actions:HomeAction[]=[];
   const add=(item:HomeAction)=>{if(!actions.some(x=>x.id===item.id))actions.push(item);};
-  // Only trust a shortage when the account baseline and all modeled debits are usable.
+  // Use the existing daily net cashflow (including direct debits and transfers).
+  // Never invent a balance when the baseline is unavailable or too old.
   for(const account of forecast.accounts){
-    if(!account.reliable)continue;
-    const danger=account.days.find(day=>day.date>=today&&day.balance<0&&day.events.some(e=>e.kind==='card'));
-    if(danger)add({id:`shortage:${account.accountId}:${danger.date}`,kind:'shortage',severity:'high',
-      title:`${account.name}の引落後残高が不足する見込み`,detail:`${danger.date.slice(5).replace('-','/')} · 予定反映後`,target:'assets'});
+    if(!account.observed||account.projected===null)continue;
+    const limit=BALANCE_WARNING_ACCOUNTS.some(id=>id===account.accountId)
+      ?source.assets.balanceWarningLimits?.[account.accountId as BalanceWarningAccountId]??0:0;
+    const current=account.days.filter(day=>day.date<=today).at(-1)?.balance??account.observed.balance;
+    const days=[{date:today,balance:current},...account.days.filter(day=>day.date>today)];
+    // One action per account. A real negative prediction takes priority over a reserve warning.
+    const danger=days.find(day=>day.balance<0)??days.find(day=>day.balance<limit);
+    if(!danger)continue;
+    const uncertain=!account.reliable||account.days.some(day=>day.date<=danger.date&&day.events.some(e=>
+      e.kind==='salary-estimate'||e.estimated||e.movementStatus==='estimated'||(e.kind==='card'&&e.confirmation!=='confirmed')));
+    const negative=danger.balance<0;
+    const yen=(amount:number)=>`${amount.toLocaleString('ja-JP')}円`;
+    add({id:`shortage:${account.accountId}:${danger.date}`,kind:'shortage',severity:negative&&!uncertain?'high':'medium',
+      title:negative?`${account.name}の残高が不足する${uncertain?'可能性':'見込み'}`:`${account.name}の残高が設定下限を下回る${uncertain?'可能性':'見込み'}`,
+      detail:`${danger.date.slice(5).replace('-','/')} · 推定 ${yen(danger.balance)}${negative?`（不足 ${yen(-danger.balance)}）`:` / 下限 ${yen(limit)}`}${uncertain?' · 暫定・未取得等を含む概算':''}`,target:'assets'});
   }
   for(const cardId of forecast.missingCardIds){
     if(!forecast.debits.some(card=>card.cardId===cardId))continue;
@@ -77,8 +89,6 @@ export function homeActions(source:MonthlySource,report:MonthlyReport,forecast:A
     add({id:`invalid:${issue.id}`,kind:'invalid-statement',severity:'high',title:`${issue.title}の明細を確認`,
       detail:issue.reason,target:'manage',recordId:issue.id});
   }
-  if(report.unclassifiedCount>0)add({id:`unclassified:${report.period}`,kind:'unclassified',severity:'medium',
-    title:`未分類の取引 ${report.unclassifiedCount}件`,detail:'今月の明細を確認',target:'manage'});
   for(const card of report.cardLines.filter(card=>card.confirmation==='unknown')){
     add({id:`unknown:${card.id}`,kind:'unknown-confirmation',severity:'medium',
       title:`${card.name}の確定状態を確認`,detail:`${card.billingMonth??report.period}の明細`,target:'manage',recordId:card.id});
@@ -113,10 +123,5 @@ export function homeActions(source:MonthlySource,report:MonthlyReport,forecast:A
       title:`${account.name}の残高を更新`,detail:`最終確認から${days}日`,target:'assets'});
   }
   if(!source.payroll.ready)add({id:'payroll:not-ready',kind:'payroll',severity:'medium',title:'Payrollの同期を確認',target:'settings'});
-  else if(source.payroll.syncedAt){
-    const days=Math.floor((Date.parse(`${today}T12:00:00Z`)-source.payroll.syncedAt)/86400000);
-    if(days>=14)add({id:'payroll:old',kind:'payroll',severity:'low',title:'Payrollのデータを更新',
-      detail:`最終同期から${days}日`,target:'settings'});
-  }
   return actions.sort((a,b)=>severityRank[a.severity]-severityRank[b.severity]||a.id.localeCompare(b.id));
 }

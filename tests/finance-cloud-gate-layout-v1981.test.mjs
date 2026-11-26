@@ -38,7 +38,7 @@ test('the disconnected view hides original headings and gives every page full wi
 test('locked and checking states preserve an explicit accessible title and safe actions',()=>{
   const module=read('src/ui/cloud-gate.ts');
   assert.match(module,/state\.locked\?'OneDrive保管庫はロックされています'/);
-  assert.match(module,/state\.checking\?'OneDriveを確認中'/);
+  assert.match(module,/state\.checking\?\(state\.progress\?\?'OneDriveに接続中…'\)/);
   assert.match(module,/appendAction\(actions,'保管庫を解除',state\.onUnlock,true\)/);
   assert.match(module,/appendAction\(actions,'Microsoft認証をやり直す',state\.onReauthenticate\)/);
   assert.match(module,/const description=document\.createElement\('p'\);description\.textContent=displayMessage/);
@@ -56,16 +56,23 @@ test('only the disconnected manager stops stretching; authenticated scroll rules
 
 test('checking takes precedence over locked on every page, then manual unlock returns',async()=>{
   const {syncFinanceCloudGates}=await import('../dist/src/ui/cloud-gate.js');
-  const node=()=>({dataset:{},classList:{toggle(){}},children:[],textContent:'',append(...items){this.children.push(...items);},prepend(item){this.children.unshift(item);},replaceChildren(...items){this.children=items;},setAttribute(){},addEventListener(_,fn){this.click=fn;},querySelector(){return this.children.find(x=>x.className==='finance-cloud-gate')??null;}});
+  const node=(tag)=>({tag,dataset:{},classList:{toggle(){}},children:[],textContent:'',append(...items){this.children.push(...items);},prepend(item){this.children.unshift(item);},replaceChildren(...items){this.children=items;},setAttribute(){},addEventListener(_,fn){this.click=fn;},querySelector(){return this.children.find(x=>x.className==='finance-cloud-gate')??null;}});
   const roots=new Map(pages.map(id=>[id,node()]));const old=globalThis.document;
   globalThis.document={getElementById:id=>roots.get(id),createElement:node,createTextNode:text=>({textContent:text,children:[]})};
-  const flatten=n=>[n,...n.children.flatMap(flatten)];let unlocks=0;
-  const base={blocked:true,locked:true,notice:{kind:'connected',message:''},onRetry(){},onReauthenticate(){},onUnlock(){unlocks++;},onSettings(){}};
+  const flatten=n=>[n,...n.children.flatMap(flatten)];let unlocks=0,retries=0,settings=0;
+  const base={blocked:true,locked:true,notice:{kind:'connected',message:''},onRetry(){retries++;},onReauthenticate(){},onUnlock(){unlocks++;},onSettings(){settings++;}};
   try{
     syncFinanceCloudGates({...base,checking:true});
-    for(const root of roots.values()){const items=flatten(root);assert.ok(items.some(n=>n.textContent==='OneDriveを確認中'));assert.ok(!items.some(n=>n.textContent==='保管庫を解除'));}
+    for(const root of roots.values()){const items=flatten(root);assert.ok(items.some(n=>n.textContent==='OneDriveに接続中…'));assert.equal(items.filter(n=>n.tag==='button').length,0);assert.equal(items.filter(n=>n.tag==='section')[0].children.length,1);}
+    syncFinanceCloudGates({...base,checking:true,progress:'保管庫を復号中…'});
+    for(const root of roots.values()){const items=flatten(root);assert.ok(items.some(n=>n.textContent==='保管庫を復号中…'));assert.equal(items.filter(n=>n.tag==='button').length,0);}
     syncFinanceCloudGates({...base,checking:false});
     for(const root of roots.values()){const action=flatten(root).find(n=>n.textContent==='保管庫を解除');assert.ok(action);action.click();}
     assert.equal(unlocks,pages.length);
+    syncFinanceCloudGates({...base,checking:false,locked:false,notice:{kind:'network',message:'通信失敗'}});
+    for(const root of roots.values()){const buttons=flatten(root).filter(n=>n.tag==='button');assert.deepEqual(buttons.map(n=>n.className),['save-action','secondary-action','secondary-action']);buttons[0].click();buttons[2].click();}
+    assert.equal(retries,pages.length);assert.equal(settings,pages.length);
+    syncFinanceCloudGates({...base,checking:false,locked:false});
+    for(const root of roots.values()){assert.deepEqual(flatten(root).filter(n=>n.tag==='button').map(n=>n.textContent),['設定を開く']);}
   }finally{globalThis.document=old;}
 });

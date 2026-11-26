@@ -33,3 +33,15 @@ export function coalesceSilentToken<T>(jobs:Map<string,Promise<T>>,id:string,run
   jobs.set(id,task);
   return task;
 }
+
+/** Retry token acquisition only, never the Graph operation. A changed account
+ * must abort both attempts, and interaction/network failures are not replayed. */
+export async function retrySilentTimeout<T>(run:()=>Promise<T>,guard:()=>void):Promise<T> {
+  guard();
+  try{const result=await run();guard();return result;}
+  catch(error){
+    guard();
+    if(classifyMicrosoftAuthError(error)!=='timeout')throw error;
+  }
+  const result=await run();guard();return result;
+}

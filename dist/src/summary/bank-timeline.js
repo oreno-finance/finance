@@ -1,3 +1,4 @@
+import { fixedCostCalculationAssets, fixedCostRuleViews } from '../fixed-costs/rule-fixed-costs.js';
 import { recurringForCalculation } from '../fixed-costs/payment-history.js';
 /** Read-only, event-by-event projection for the explicitly selected bank account.
  * No transaction is marked as bank-confirmed, and no debit account is inferred. */
@@ -64,12 +65,13 @@ export function bankTimeline(period, source, today, work) {
                 add({ date: occurrence.date, title: r.name, amount: delta, kind: 'recurring' });
         }
     }
-    const estimatedBills = estimatedCardFixedBills(assets, source.records, today, end);
+    const fixedAssets = fixedCostCalculationAssets(source, today);
+    const estimatedBills = estimatedCardFixedBills(fixedAssets, source.records, today, end);
     for (const bill of estimatedBills) {
         if (assets.cardDebitAccounts?.[bill.cardId] === 'rakuten-bank')
             add({ date: bill.paymentDate, title: bill.name, amount: -bill.amount, kind: 'card', provisional: true });
     }
-    for (const funding of estimatedMizuhoFunding(assets, source.records, today, end))
+    for (const funding of estimatedMizuhoFunding(fixedAssets, source.records, today, end))
         add({ date: funding.date, title: 'みずほ銀行へ送金（見込み）', amount: -funding.amount, kind: 'transfer', provisional: true });
     for (const entry of assets.oneTime ?? []) {
         const delta = (entry.toAccountId === 'rakuten-bank' ? entry.amount : 0) - (entry.fromAccountId === 'rakuten-bank' ? entry.amount : 0);
@@ -109,5 +111,6 @@ export function bankTimeline(period, source, today, work) {
         minimum = Math.min(minimum, day.balance);
     return { startDay: start, startBalance: baseline.balance, endBalance: current, minimum, days,
         missingCardAccounts: [...missing], warning: [assets.payrollDepositAccount !== 'rakuten-bank' ? '給与振込先が楽天銀行以外、または未設定です。' : !source.payroll.ready ? 'Payroll未連携のため給与は含みません。' : null,
+            (end >= today && fixedCostRuleViews(source, today).some(x => x.status === 'active' && !x.charge)) ? '一部のカード固定費は明細未取得・照合不可のため、予測に含まれていません。' : null,
             estimatedBills.some(b => { const funding = mizuhoTransferForBill(b, assets); return !!funding && funding.date < today; }) ? '推定請求の送金予定日が経過しているため、仮の送金は未反映です。' : null].filter(Boolean).join(' ') || null };
 }

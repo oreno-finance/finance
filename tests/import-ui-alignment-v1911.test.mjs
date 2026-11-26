@@ -34,9 +34,9 @@ test('management month/date are shown as facts and are no longer editable',()=>{
   assert.match(main,/\$\('manage-payment'\)\.textContent/);
 });
 
-test('theme and notification icon alignment is shared across expanded and collapsed desktop navigation',()=>{
+test('theme icon alignment is preserved across expanded and collapsed desktop navigation',()=>{
   assert.match(css,/#finance-sidebar \.sidebar-theme\s*\{[\s\S]*?padding:0 1px!important/);
-  assert.match(css,/#finance-sidebar :is\(\.desktop-theme-toggle,\.activity-history-open\)\s*\{[\s\S]*?width:42px;height:42px/);
+  assert.match(css,/#finance-sidebar \.desktop-theme-toggle\s*\{[\s\S]*?width:42px;height:42px/);
   assert.match(css, /\.app-shell\.nav-collapsed:not\(\.nav-peeking\) #finance-sidebar \.sidebar-theme/);
 });
 

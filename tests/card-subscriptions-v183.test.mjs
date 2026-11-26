@@ -148,3 +148,11 @@ test('encrypted decisions survive fresh vault unlock and passphrase rotation wit
   await assert.rejects(peer.setCardRecurringDecision(key,{...decision,state:'ignored'}),/別の端末/);
   assert.equal(after.assetSettings().cardRecurringDecisions[key].state,'registered');
 });
+
+test('home candidate notice targets the candidate tab and main selects it before rendering',async()=>{
+ const {homeOverview}=await import('../dist/src/home/overview.js');
+ const home=homeOverview(source(records()),'2026-11-26');
+ assert.equal(home.actions.find(action=>action.kind==='subscription')?.target,'subscription-candidates');
+ const main=readFileSync(new URL('../src/main.ts',import.meta.url),'utf8');
+ assert.match(main,/if\(destination==='subscription-candidates'\)\{subscriptionsUi\?\.selectCandidates\(\);homeNavigationPending=true;showView\('subscriptions'\);return;\}/);
+});

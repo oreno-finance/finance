@@ -48,3 +48,14 @@
 @media(max-width:1000px){.analysis-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:700px){.analysis-header h1{font-size:27px}.analysis-content{gap:13px}.analysis-panel{padding:14px}.analysis-controls{gap:7px}.analysis-switch-button{padding:9px 11px}.analysis-metric{padding:14px 12px}.analysis-metric strong{font-size:19px}.analysis-change-columns{grid-template-columns:1fr}.analysis-period-picker{max-width:100%}}
 @media(max-width:390px){.analysis-duration{order:3}.analysis-metrics{gap:7px}.analysis-metric strong{font-size:17px}.analysis-table :is(td,th){padding:10px 9px}}
+
+/* Cumulative cashflow uses the existing theme palette and scrollable chart area. */
+.analysis-cumulative-total{font-size:22px;font-variant-numeric:tabular-nums;color:var(--ink)}
+.analysis-cumulative-svg{display:block;max-width:none;min-width:100%;height:auto;font-size:11px;fill:var(--muted)}
+.analysis-cumulative-grid{stroke:var(--line)}
+.analysis-cumulative-zero{stroke:var(--muted);stroke-opacity:.7}
+.analysis-cumulative-line{stroke:var(--accent);stroke-width:2.5;stroke-linecap:round}
+.analysis-cumulative-line.reference{stroke-dasharray:5 4}
+.analysis-cumulative-point{fill:var(--accent)}
+
+.analysis-table td .analysis-muted{display:block;white-space:normal;min-width:100px;max-width:180px;font-size:11px;line-height:1.5}

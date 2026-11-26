@@ -4,11 +4,11 @@ import {readFileSync} from 'node:fs';
 import {forecastAccounts} from '../dist/src/home/account-events.js';
 const read=path=>readFileSync(new URL(`../${path}`,import.meta.url),'utf8');
 const html=read('public/index.html'), main=read('src/main.ts'), home=read('src/ui/home.ts');
-test('四つの用途別グループに既存画面を一度ずつ並べ、Payrollは外部リンクのまま',()=>{
+test('四つの用途別グループに既存画面を一度ずつ並べ、Payrollへの外部リンクは表示しない',()=>{
  const nav=html.split('id="mobile-nav-panel"')[1].split('class="sidebar-footer"')[0];
  const actual=[...nav.matchAll(/class="side-label nav-section-label">([^<]+)|id="nav-([a-z]+)"/g)].map(m=>m[1]??m[2]);
- assert.deepEqual(actual,['ダッシュボード','home','summary','analysis','データ管理','import','manage','subscriptions','assets','記録・将来設計','reports','future','環境設定','rules','settings','payroll']);
- assert.match(nav,/id="nav-payroll"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/);
+ assert.deepEqual(actual,['ダッシュボード','home','summary','analysis','データ管理','import','manage','subscriptions','assets','記録・将来設計','reports','future','環境設定','rules','settings']);
+ assert.doesNotMatch(nav,/id="nav-payroll"/);
  assert.match(nav,/data-nav-label="利用先ルール"/);
  assert.match(nav,/data-nav-label="固定費管理"/);
 });

@@ -75,7 +75,7 @@ test('all dismissal paths use the same changed-only guard and successful save by
   assert.match(code,/\('assets-once-close'\)\.addEventListener\('click',closeOnce\)/);
   assert.match(code,/\('assets-once-cancel'\)\.addEventListener\('click',closeOnce\)/);
   assert.match(code,/bindModalDismiss\(onceDialog,\(\)=>\{void closeOnce\(\);\}\)/);
-  assert.match(code,/await requireVault\(\)\.upsertOneTime\(entry\);\s*onceDialog\.close\(\);resetOnceForm\(\)/);
+  assert.match(code,/await requireVault\(\)\.upsertOneTime\(entry,fundingDraft\?\?undefined\);\s*onceDialog\.close\(\);resetOnceForm\(\)/);
   assert.match(code,/isDirty:\(\)=>onceHasChanges\(\)\|\|recurringHasChanges\(\)/);
 });
 

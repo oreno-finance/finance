@@ -1,3 +1,5 @@
+import {fixedCostRuleViews,migratedCardCostIds,migratableCardCost,latestFixedEvidence} from '../fixed-costs/rule-fixed-costs.js';
+import {fixedRuleKey,type MerchantRule} from '../cloud/merchant-rules.js';
 import type {ContractEdit} from '../fixed-costs/contract-edit.js';
 import {bindModalDismiss,modalHeader,requestConfirmation,confirmationPending,cancelConfirmation} from './modal.js';
 import {formatYen as sharedYen,formatDate,formatMonth} from './formatters.js';
@@ -6,17 +8,17 @@ import {CARDS} from '../models/types.js';
 import {ASSET_ACCOUNTS, cardRecurringKey, type RecurringEntry, type AssetAccountId, type CardRecurringDecision} from '../cloud/assets.js';
 import {CloudWriteUncertainError, type LiveVault} from '../cloud/live-vault.js';
 import type {MonthlySource} from '../summary/monthly-summary.js';
-import {detectCardSubscriptions, latestRegisteredCardCharges, contractCardEvidence, latestContractCardCharge, matchedCardRecurringDecision, subscriptionDecision, type SubscriptionCandidate} from '../subscriptions/detect.js';
+import {detectCardSubscriptions, fixedCostEvidence, fixedRuleRegisteredKeys, pendingCardSubscriptions, latestRegisteredCardCharges, contractCardEvidence, latestContractCardCharge, matchedCardRecurringDecision, subscriptionDecision, type SubscriptionCandidate} from '../subscriptions/detect.js';
 import {contractMerchantKeys, contractPaymentHistory, nextContractPayment, paymentTermsOn, validatePaymentTerms, type PaymentTerms} from '../fixed-costs/payment-history.js';
 import {fixedCostState, monthlyEquivalent, priceOnDay, type FixedCostEntry, type CostFrequency} from '../fixed-costs/contracts.js';
 import {showActivity} from './activity-feedback.js';
 
-export interface SubscriptionsUi {render():void;reset():void;isBusy():boolean;isDirty():boolean;openFixedCost(id:string):void}
-interface Deps {source():MonthlySource|null;vault():LiveVault|null;onSaved():void;openAccountSettings():void}
+export interface SubscriptionsUi {render():void;reset():void;isBusy():boolean;isDirty():boolean;openFixedCost(id:string):void;selectCandidates():void}
+interface Deps {source():MonthlySource|null;vault():LiveVault|null;onSaved():void;openAccountSettings():void;openCardRule?(target?:{rule?:MerchantRule;candidate?:SubscriptionCandidate;legacy?:FixedCostEntry}):void}
 type Tab='registered'|'candidate'|'ended'|'ignored';
 type Item={kind:'card'|'cash'|'bank';id:string;name:string;amount:number;currentAmount?:number;frequency:CostFrequency;payment:string;
   status:'active'|'paused'|'ended'|'scheduled';priceKind:'fixed'|'variable';contract?:FixedCostEntry;bank?:RecurringEntry;
-  decision?:CardRecurringDecision;decisionKey?:string;candidate?:SubscriptionCandidate;lastAmount?:number;lastMonth?:string;lastDifference?:number};
+  decision?:CardRecurringDecision;decisionKey?:string;candidate?:SubscriptionCandidate;lastAmount?:number;lastMonth?:string;lastDifference?:number;rule?:MerchantRule;automatic?:boolean;unknownAmount?:boolean;usedOn?:string;categoryName?:string};
 const nextPayment=(item:Item,day:string,source?:MonthlySource|null):string=>{
   const contract=item.contract??item.bank;
   const next=contract?nextContractPayment(contract,day):null;
@@ -67,7 +69,7 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
   field('amount','契約額・予算','number');
   field('method','支払方法','select',[['card','カード払い'],['bank','銀行口座'],['cash','現金']]);
   field('cardId','支払カード','select');
-  field('merchant','明細の利用先（任意）','text');
+  field('merchant','明細の利用先（請求照合・任意）','text');
   field('accountId','引落口座','select',ASSET_ACCOUNTS.filter(a=>a.id!=='nisa').map(a=>[a.id,a.name] as [string,string]));
   const priceKindField=field('priceKind','金額の種類','select',[['fixed','固定額'],['variable','変動額（登録額は予算）']]);
   const priceChoices=el('fieldset','fixed-cost-price-choices');priceChoices.append(el('legend','','金額の種類'));
@@ -96,7 +98,7 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
   const clear=btn('変更をクリア',()=>{void clearDraft();});
   const cancel=btn('キャンセル',()=>closeDialog());const save=el('button','save-action','保存');save.type='submit';buttons.append(remove,clear,cancel,save);form.append(buttons);
   dialog.append(form);document.body.append(dialog);
-  function openDetails(item:Item):void {startEdit(item);}
+  function openDetails(item:Item):void {if(deps.openCardRule&&item.rule){deps.openCardRule({rule:item.rule});return;}if(deps.openCardRule&&item.contract&&migratableCardCost(item.contract)){deps.openCardRule({legacy:item.contract});return;}startEdit(item);}
   const editorOpen=()=>dialog.open;
   function renderHistories(item:Item|null):void{
     histories.replaceChildren();histories.hidden=!item;
@@ -112,12 +114,8 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
       if(source&&routes.length>1){const d=section('支払条件の変更履歴');const active=routes.reduce((last,x,i)=>x.effectiveOn<=today?i:last,-1);
         for(const [i,t] of [...routes.entries()].reverse())line(d,`${formatDate(t.effectiveOn)} · ${i===active?'現在適用中':i>active?'適用予定':'過去の条件'}`,`${paymentLabel(t,source)} · ${scheduleLabel(t)}${t.merchantKey?' · '+t.merchantKey.slice(t.merchantKey.indexOf('|')+1):''}`,'fixed-cost-payment-history');}
       if(origin.endOn||origin.pauses?.length){const d=section('契約状態の履歴');d.classList.add('fixed-cost-status-history');if(origin.endOn)line(d,'契約終了日',formatDate(origin.endOn));for(const pause of [...(origin.pauses??[])].reverse())line(d,'停止期間',`${formatDate(pause.startOn)} ～ ${formatDate(pause.endOn,'再開日未設定')}`);}
-      if(source){const charges=contractCardEvidence(source,today)(origin).slice(0,12);if(charges.length){const d=section('確認済み明細の請求履歴');for(const charge of charges)line(d,`${formatDate(charge.paymentDate)} · ${source.assets.cardPreferences?.[charge.cardId]?.name??CARDS.find(c=>c.id===charge.cardId)?.name??'カード'}`,yen(charge.amount));}}
-    }else if(source&&item.kind==='card'){
-      const key=item.candidate?.key??item.decisionKey;
-      const charges=source.records.flatMap(({statement})=>statement.confirmation==='confirmed'&&statement.paymentDate&&statement.cardId===(item.decision?.cardId??item.candidate?.cardId)?statement.rows.filter(row=>cardRecurringKey(statement.cardId!,row.merchant)===key).map(row=>({date:statement.paymentDate!,amount:row.amount})):[]).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,12);
-      if(charges.length){const d=section('確認済み明細の請求履歴');for(const charge of charges)line(d,formatDate(charge.date),yen(charge.amount));}
     }
+    histories.hidden=!histories.childElementCount;
   }
   async function deleteCurrent():Promise<void>{
     const item=editing,vault=deps.vault();if(!item||!vault?.unlocked||busy||confirming()||!dialog.open)return;
@@ -151,7 +149,8 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
   function updateConditional():void {
     const method=get('method'),frequency=get('frequency'),existing=origin(),creating=!existing;
     form.dataset.method=method;form.dataset.frequency=frequency;
-    const shown=new Set(['name','category','method','priceKind','amount','frequency','startOn','note']);
+    const shown=new Set(['name','method','priceKind','amount','frequency','startOn','note']);
+    if(method!=='card')shown.add('category');
     if(method==='card'){shown.add('cardId');shown.add('merchant');}if(method==='bank')shown.add('accountId');
     if(frequency==='yearly')shown.add('month');shown.add(frequency==='weekly'?'weekday':'day');
     if(existing){
@@ -178,7 +177,9 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
     }
     priceKindField.hidden=true;priceChoices.hidden=false;
     for(const radio of priceChoices.querySelectorAll('input'))radio.checked=radio.value===get('priceKind');
-    if(creating&&(editing?.candidate||editing?.decision)){input('method').disabled=true;input('cardId').disabled=true;}
+    if(creating&&(editing?.candidate||editing?.decision)){input('method').disabled=true;input('cardId').disabled=!!editing.decision;
+      const changedCard=!!editing.candidate&&!editing.decision&&get('cardId')!==editing.candidate.cardId;
+      context.hidden=!changedCard;context.textContent=changedCard?'検出元のカードの候補は対象外になります。':'';}
     // Cancellation affects only the last future route; no hidden edits may be submitted.
     if(existing&&get('paymentAction')==='cancel'&&!termsChanged())for(const n of ['method','cardId','merchant','accountId','frequency','month','day','weekday'])input(n).disabled=true;
     if(existing&&get('priceAction')==='cancel'&&!amountChanged())input('amount').disabled=true;
@@ -231,7 +232,8 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
     const categoryId=existing?.categoryId??'';
     if(categoryId&&!Array.from(cats.options).some(o=>o.value===categoryId))cats.add(new Option('未登録のカテゴリー',categoryId));
     set('name',item?.name??'');set('category',categoryId);
-    set('method',terms?.payment??item?.kind??'card');set('cardId',terms?.cardId??originalCard??cards[0]?.[0]??'');
+    const methodSelect=input<HTMLSelectElement>('method');const cardOption=Array.from(methodSelect.options).find(o=>o.value==='card');if(cardOption)cardOption.disabled=!!deps.openCardRule&&!item;
+    set('method',terms?.payment??item?.kind??(deps.openCardRule?'bank':'card'));set('cardId',terms?.cardId??originalCard??cards[0]?.[0]??'');
     const knownKey=terms?terms.merchantKey:item?.candidate?.key??item?.decisionKey??null;
     set('merchant',knownKey?knownKey.slice(knownKey.indexOf('|')+1):'');
     set('accountId',terms?.accountId??'rakuten-bank');set('priceKind',existing?.priceKind??'fixed');
@@ -253,6 +255,9 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
     const today=localDate();const contracts=source.assets.fixedCosts??[];
     const list:Item[]=[];
     const registeredKeys=contractMerchantKeys(source.assets);
+    for(const key of fixedRuleRegisteredKeys(source))registeredKeys.add(key);
+    const migrated=migratedCardCostIds(source),ruleKeys=new Set(source.rules.filter(r=>r.fixedCost).map(fixedRuleKey));
+    const evidence=fixedCostEvidence(source,today);
     const historyEvidence=contractCardEvidence(source,today);
     for(const bank of source.assets.recurring){
       if(bank.kind!=='expense')continue;
@@ -264,12 +269,21 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
     }
     const decisions=source.assets.cardRecurringDecisions??{};
     for(const contract of contracts){
+      const automatic=migratableCardCost(contract);
+      if(automatic&&(migrated.has(contract.id)||ruleKeys.has(contract.merchantKey!)))continue;
+      const charge=automatic&&contract.merchantKey?latestFixedEvidence(evidence.get(contract.merchantKey)??[],contract.frequency):null;
       const terms=paymentTermsOn(contract,today);
       const found=terms.merchantKey?candidates.find(c=>c.key===terms.merchantKey):undefined;
       const last=latestEvidence(contract,historyEvidence(contract));
       list.push({kind:terms.payment,id:contract.id,name:contract.name,amount:contract.amount,currentAmount:priceOnDay(contract.pricing,today,contract.amount),frequency:terms.frequency,
         payment:paymentLabel(terms,source),
-        status:fixedCostState(contract,today),priceKind:contract.priceKind,contract,candidate:found,...last});
+        status:fixedCostState(contract,today),priceKind:contract.priceKind,contract,candidate:found,...last,
+        ...(automatic&&deps.openCardRule?{automatic:true,unknownAmount:false,currentAmount:charge?.amount??priceOnDay(contract.pricing,today,contract.amount),usedOn:charge?.usedOn,lastDifference:undefined,...(!charge?{categoryName:'旧登録額（明細未取得・照合不可）'}:{})}:{} )});
+    }
+    for(const {rule,charge,categoryId,status} of fixedCostRuleViews(source,today)){
+      const categoryName=source.categories.find(c=>c.id===categoryId)?.name??'未分類';
+      list.push({kind:'card',id:rule.fixedCost!.legacyId??rule.id,name:rule.displayName,amount:charge?.amount??0,frequency:rule.fixedCost!.frequency,
+        payment:source.assets.cardPreferences?.[rule.cardId??'']?.name??CARDS.find(c=>c.id===rule.cardId)?.name??'カード',status,priceKind:'fixed',rule,automatic:true,unknownAmount:!charge,usedOn:charge?.usedOn,categoryName});
     }
     for(const [key,decision] of Object.entries(decisions)){
       if(decision.state!=='registered'||registeredKeys.has(key)||candidates.some(c=>matchedCardRecurringDecision(decisions,c)===key&&registeredKeys.has(c.key)))continue;
@@ -297,8 +311,9 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
     try {
       const amount=Number(get('amount')),name=get('name').trim(),startOn=get('startOn');
       const frequency=get('frequency') as CostFrequency,method=get('method');
-      const categoryId=get('category')||null,priceKind=get('priceKind') as 'fixed'|'variable',note=get('note').trim();
       const existing=editing?.bank??editing?.contract;
+      const categoryId=method==='card'?existing?.categoryId??null:get('category')||null;
+      const priceKind=get('priceKind') as 'fixed'|'variable',note=get('note').trim();
       if(existing){
         const doc=vault.assetSettings(),current=editing?.bank?doc.recurring.find(x=>x.id===editing!.id):doc.fixedCosts?.find(x=>x.id===editing!.id);
         if(JSON.stringify(current)!==JSON.stringify(existing))throw new Error('契約が更新されました。閉じて最新情報から編集してください。');
@@ -340,10 +355,11 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
           await vault.upsertRecurring(entry);
         }else if(method==='card'||method==='cash'){
           const original=editing?.decision?legacyContract(editing):null;
-          const merchantKey=method==='card'?(editing?.candidate?.key??original?.merchantKey??(get('merchant').trim()?cardRecurringKey(get('cardId'),get('merchant').trim()):null)):null;
+          const candidate=editing?.candidate;
+          const merchantKey=method==='card'?((original&&candidate?candidate.key:original?.merchantKey)??(get('merchant').trim()?cardRecurringKey(get('cardId'),get('merchant').trim()):null)):null;
           const contract:FixedCostEntry={...shared,id:original?.id??crypto.randomUUID(),payment:method,cardId:method==='card'?get('cardId'):null,
             merchantKey,updatedAt:new Date().toISOString()};
-          const decision=contract.payment==='card'&&contract.merchantKey&&editing?.candidate?subscriptionDecision(editing.candidate,'registered'):undefined;
+          const decision=contract.payment==='card'&&contract.merchantKey&&candidate?subscriptionDecision(candidate,contract.cardId===candidate.cardId?'registered':'ignored'):undefined;
           await vault.upsertFixedCost(contract,decision);
         }else throw new Error('支払方法が不正です。');
       }
@@ -357,36 +373,58 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
   async function markCandidate(candidate:SubscriptionCandidate,ignore:boolean):Promise<void>{
     const vault=deps.vault();if(!vault?.unlocked||busy)return;
     if(!ignore){
+      if(deps.openCardRule){deps.openCardRule({candidate});return;}
       // A detection hint is not a registered contract. Review the estimated
       // amount, recurrence and start date before an encrypted cloud write.
       startEdit({kind:'card',id:`candidate:${candidate.key}`,name:candidate.merchant,amount:candidate.amount,
         frequency:candidate.frequency,payment:candidate.cardName,status:'active',priceKind:'fixed',candidate});
       return;
     }
-    busy=true;try{await vault.setCardRecurringDecision(candidate.key,subscriptionDecision(candidate,'ignored'));deps.onSaved();render();showActivity('候補から除外しました。','good');}
-    catch(e){notice=e instanceof Error?e.message:'保存に失敗しました。';showActivity(notice,'bad');}
-    finally{busy=false;render();}
+    await changeCandidateDecision(candidate.key,subscriptionDecision(candidate,'ignored'));
+  }
+  async function changeCandidateDecision(key:string,decision:CardRecurringDecision|null):Promise<void>{
+    const vault=deps.vault();if(!vault?.unlocked||busy)return;
+    const revision=epoch,ignoring=decision!==null;
+    const current=()=>revision===epoch&&deps.vault()===vault&&vault.unlocked;
+    busy=true;render();
+    showActivity(ignoring?'候補から除外しています…':'候補に戻しています…','working');
+    try{
+      await vault.setCardRecurringDecision(key,decision);
+      if(!current())return;
+      notice='';deps.onSaved();showActivity(ignoring?'候補から除外しました。':'候補に戻しました。','good');
+    }catch(e){
+      if(!current())return;
+      const unknown=e instanceof CloudWriteUncertainError;
+      notice=unknown?'保存結果未確認です。最新データを取得してから確認してください。':e instanceof Error?e.message:'保存できませんでした。';
+      showActivity(notice,unknown?'warn':'bad');
+    }finally{if(current()){busy=false;render();}}
   }
   function render():void {
     root!.replaceChildren();const source=deps.source();if(!source||!deps.vault()?.unlocked){root!.append(el('p','subscriptions-muted','OneDriveに接続してください。'));return;}
     const candidates=detectCardSubscriptions(source);
     const latest=latestRegisteredCardCharges(source);
     const items=itemsFromSource(source,candidates,latest),today=localDate(),active=items.filter(x=>x.status!=='ended');
-    const total=active.filter(x=>x.status==='active').reduce((sum,x)=>sum+monthlyEquivalent({...x,amount:x.currentAmount??x.amount}),0);
+    const activeItems=active.filter(x=>x.status==='active');
+    const unknown=activeItems.filter(x=>x.unknownAmount).length;
+    const total=activeItems.filter(x=>!x.unknownAmount).reduce((sum,x)=>sum+monthlyEquivalent({...x,amount:x.currentAmount??x.amount}),0);
     const metrics=el('div','fixed-cost-metrics');
-    for(const [name,value] of [['月額換算',yen(total)],['年間換算',yen(total*12)]] as const){
+    for(const [name,value] of [[unknown?'月額換算（判明分）':'月額換算',yen(total)],[unknown?'年間換算（判明分）':'年間換算',yen(total*12)]] as const){
       const box=el('div','fixed-cost-metric');box.append(el('span','',name),el('strong','',value));metrics.append(box);
     }root!.append(metrics);
+    if(unknown)root!.append(el('p','subscriptions-muted',`金額未取得・照合不可の固定費 ${unknown}件は換算額と残高予測に含まれません。`));
     const toolbar=el('div','fixed-cost-toolbar');const tabs=el('div','subscriptions-tabs');
     const decisions=source.assets.cardRecurringDecisions??{};
-    const registeredKeys=contractMerchantKeys(source.assets);
-    const pending=candidates.filter(c=>!matchedCardRecurringDecision(decisions,c)&&!registeredKeys.has(c.key));
+    const pending=pendingCardSubscriptions(source);
     const ignored=Object.entries(decisions).filter(([,d])=>d.state==='ignored');
     for(const [value,label,count] of [['registered','登録済み',items.filter(x=>x.status!=='ended').length],['candidate','検出候補',pending.length],['ended','終了済み',items.filter(x=>x.status==='ended').length],['ignored','対象外',ignored.length]] as const){
       const button=btn(`${label} ${count}`,()=>{tab=value;render();},'subscriptions-tab'+(tab===value?' selected':''));
       button.setAttribute('aria-pressed',String(tab===value));tabs.append(button);
     }
-    toolbar.append(tabs,btn('＋ 新規登録',()=>startEdit(null),'secondary-action'));root!.append(toolbar);
+    toolbar.append(tabs);
+    const registration=el('div','fixed-cost-registration-actions');
+    if(deps.openCardRule)registration.append(btn('カード払いを登録',()=>{if(!busy)deps.openCardRule!();},'secondary-action'));
+    registration.append(btn(deps.openCardRule?'銀行・現金を登録':'＋ 新規登録',()=>{if(!busy)startEdit(null);},'secondary-action'));
+    toolbar.append(registration);root!.append(toolbar);
     if(notice)root!.append(el('p','subscriptions-notice error',notice));
     const list=el('div','subscriptions-list');
     if(tab==='candidate'){
@@ -400,7 +438,7 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
       if(!pending.length)list.append(el('p','subscriptions-empty','未確認の候補はありません。'));
     }else if(tab==='ignored'){
       for(const [key,decision] of ignored){
-        const card=el('article','panel fixed-cost-item');const info=el('div','fixed-cost-item-info');info.append(el('strong','',decision.label),el('small','',`${source.assets.cardPreferences?.[decision.cardId]?.name??CARDS.find(c=>c.id===decision.cardId)?.name??'カード'} · ${freqName(decision.frequency)}`));const actions=el('div','fixed-cost-item-actions');actions.append(btn('候補に戻す',()=>{void (async()=>{const vault=deps.vault();if(!vault||busy)return;busy=true;try{await vault.setCardRecurringDecision(key,null);deps.onSaved();}catch(e){notice=e instanceof Error?e.message:'保存できませんでした。';}finally{busy=false;render();}})();}));card.append(info,actions);list.append(card);
+        const card=el('article','panel fixed-cost-item');const info=el('div','fixed-cost-item-info');info.append(el('strong','',decision.label),el('small','',`${source.assets.cardPreferences?.[decision.cardId]?.name??CARDS.find(c=>c.id===decision.cardId)?.name??'カード'} · ${freqName(decision.frequency)}`));const actions=el('div','fixed-cost-item-actions');actions.append(btn('候補に戻す',()=>{void changeCandidateDecision(key,null);}));card.append(info,actions);list.append(card);
       }
       if(!ignored.length)list.append(el('p','subscriptions-empty','対象外にした候補はありません。'));
     }else {
@@ -410,10 +448,11 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
         const origin=item.contract??item.bank;
         const terms=origin?paymentTermsOn(origin,today):null;
         const info=el('div','fixed-cost-item-info');info.append(el('strong','',item.name),el('small','',[item.payment,terms?scheduleLabel(terms):freqName(item.frequency),item.status==='active'?'':stateName(item.status)].filter(Boolean).join(' · ')));
-        const price=el('div','fixed-cost-item-price');price.append(el('strong','',`${yen(item.currentAmount??item.amount)}／${item.frequency==='yearly'?'年':item.frequency==='weekly'?'週':'月'}`));
-        if(item.priceKind==='variable'||item.status==='scheduled'||!origin)price.append(el('small','',priceLabel(item)));
-        if(item.frequency!=='monthly')info.append(el('small','',`月額換算：${yen(monthlyEquivalent({...item,amount:item.currentAmount??item.amount}))}`));
-        if(origin&&item.status!=='ended'){
+        const price=el('div','fixed-cost-item-price');price.append(el('strong','',item.unknownAmount?'未取得':`${yen(item.currentAmount??item.amount)}／${item.frequency==='yearly'?'年':item.frequency==='weekly'?'週':'月'}`));
+        if(item.automatic){if(item.categoryName)info.append(el('small','',item.categoryName));if(item.usedOn)info.append(el('small','',`直近の利用：${formatDate(item.usedOn)}`));}
+        else if(item.priceKind==='variable'||item.status==='scheduled'||!origin)price.append(el('small','',priceLabel(item)));
+        if(item.frequency!=='monthly'&&!item.unknownAmount)info.append(el('small','',`月額換算：${yen(monthlyEquivalent({...item,amount:item.currentAmount??item.amount}))}`));
+        if(origin&&!item.automatic&&item.status!=='ended'){
           const next=nextPayment(item,today,source);
           if(next!=='予定なし'&&(item.frequency!=='monthly'||item.status!=='active'||next.includes('変更予定：')))info.append(el('small','fixed-cost-next',`次回支払予定：${next}`));
           const nextDay=nextContractPayment(origin,today);
@@ -429,7 +468,7 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
         const actions=el('div','fixed-cost-item-actions');
         const edit=btn('',()=>openDetails(item),'fixed-cost-edit-icon');
         const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('width','18');svg.setAttribute('height','18');svg.setAttribute('fill','none');svg.setAttribute('stroke','currentColor');svg.setAttribute('stroke-width','1.8');svg.setAttribute('stroke-linecap','round');svg.setAttribute('stroke-linejoin','round');svg.setAttribute('aria-hidden','true');
-        const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d','M13.5 6.5l4 4M4 20l4.5-1 12-12a2.8 2.8 0 0 0-4-4l-12 12L4 20z');svg.append(path);edit.append(svg);edit.setAttribute('aria-label','詳細・編集');edit.title='詳細・編集';actions.append(edit);
+        const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d','M13.5 6.5l4 4M4 20l4.5-1 12-12a2.8 2.8 0 0 0-4-4l-12 12L4 20z');svg.append(path);edit.append(svg);edit.setAttribute('aria-label',item.automatic?'ルールを編集':'詳細・編集');edit.title=item.automatic?'ルールを編集':'詳細・編集';actions.append(edit);
         if(item.lastDifference!==undefined&&item.lastDifference!==0)info.append(el('small','',`${item.priceKind==='variable'?'請求時の予算':'請求時の契約額'}との差額 ${item.lastDifference>0?'+':''}${yen(item.lastDifference)}`));
         if(item.decision&&!item.contract)info.append(el('small','','旧形式の簡易登録です。詳細・編集から正式な契約情報を保存してください。'));
         if(item.bank&&!item.bank.enabled)info.append(el('small','',`旧形式で停止中の予定です。再開は契約状態の変更から行えます。`));
@@ -438,8 +477,10 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
       if(!selected.length)list.append(el('p','subscriptions-empty','この状態の固定支出はありません。'));
     }
     root!.append(list);
+    for(const button of root!.querySelectorAll<HTMLButtonElement>('.fixed-cost-registration-actions button,.fixed-cost-item-actions button'))button.disabled=busy;
   }
   function reset():void{epoch++;cancelConfirmation(confirmationOwner);tab='registered';busy=false;form.inert=false;notice='';if(dialog.open)dialog.close();editing=null;initialTerms=null;initialAmount='';futurePaymentDate=null;futurePriceDate=null;baseline='';save.disabled=false;form.reset();input<HTMLSelectElement>('category').replaceChildren();input<HTMLSelectElement>('cardId').replaceChildren();input('paymentDate').removeAttribute('min');input('statusDate').removeAttribute('min');context.textContent='';equivalent.textContent='';error.textContent='';histories.replaceChildren();root!.replaceChildren();}
   const openFixedCost=(id:string)=>{const source=deps.source();const item=source?itemsFromSource(source).find(x=>x.id===id):undefined;if(item)openDetails(item);};
-  return {render,reset,isBusy:()=>busy||confirming(),isDirty,openFixedCost};
+  const selectCandidates=()=>{tab='candidate';};
+  return {render,reset,isBusy:()=>busy||confirming(),isDirty,openFixedCost,selectCandidates};
 }

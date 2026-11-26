@@ -122,11 +122,11 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
   function render():void{
     container.replaceChildren();
     if(!active()) {container.append(el('div','panel reports-locked','OneDrive保管庫を解除してください。'));return;}
+    if(busy){const pending=el('p','reports-muted',saving?'保存中…':'読み込み中…');pending.setAttribute('role','status');container.append(pending);return;}
     const top=el('div','reports-controls');
     const choosePeriod=(period:string)=>{if(selectPeriod(period))void fetch();};
     const nav=monthNavigator(selected,choosePeriod,{label:'レポート対象年月',min:'1900-02',max:'2199-12',today:today()});
-    if(busy)nav.querySelectorAll('button,input').forEach(item=>{(item as HTMLButtonElement|HTMLInputElement).disabled=true;});
-    const refresh=button('最新を取得',()=>{void fetch();});refresh.disabled=busy;
+    const refresh=button('最新を取得',()=>{void fetch();});
     top.append(nav,refresh);container.append(top,el('p','reports-purpose','保存時点の収支・メモを記録'));
     // Suggest preserving the previous month's point-in-time view after rollover;
     // never create an archive without a deliberate Save action.
@@ -137,7 +137,6 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
       container.append(reminder);
     }
     // Keep failures beside the operation, even after the activity card expires.
-    if(busy)return;
     if(loadFailed){const error=el('p','reports-feedback-error',message);error.setAttribute('role','alert');container.append(error);return;}
     if(loadedPeriod!==selected){void fetch();return;}
     if(periods.length){

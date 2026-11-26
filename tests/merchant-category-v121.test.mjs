@@ -56,17 +56,25 @@ test('named palette and category assignments are encrypted in one document',asyn
   assert.equal(enc.includes('"food"'),false);
   assert.deepEqual(await decryptRules(enc,key,salt),raw);
 });
-test('recent merchants deduplicate by original issuer and card, sort by latest date',()=>{
+test('recent merchant picker groups issuer names across cards, preserves latest amount and filters registered scopes',()=>{
   const fake=(cardId,billingMonth,rows)=>({cardId,billingMonth,rows});
-  const data=recentMerchants([
-    fake('amazon','2026-11',[{merchant:'ＡＭＡＺＯＮ',usedOn:'2026-11-08'},{merchant:'AMAZON',usedOn:'2026-11-14'}]),
-    fake('recruit-jcb','2026-11',[{merchant:'Amazon',usedOn:'2026-11-12'}]),
-    fake('amazon','2026-10',[{merchant:'ヨドバシ',usedOn:'2026-10-05'}]),
-  ]);
-  assert.equal(data.length,3);
-  assert.equal(data[0].merchant,'AMAZON');assert.equal(data[0].count,2);
-  assert.equal(data[1].cardId,'recruit-jcb');
-  assert.equal(data[2].merchant,'ヨドバシ');
+  const statements=[
+    fake('amazon','2026-11',[{merchant:'ＡＭＡＺＯＮ',usedOn:'2026-11-08',amount:100},{merchant:'AMAZON',usedOn:'2026-11-14',amount:350}]),
+    fake('recruit-jcb','2026-11',[{merchant:'Amazon',usedOn:'2026-11-12',amount:500}]),
+    fake('amazon','2026-10',[{merchant:'ヨドバシ',usedOn:'2026-10-05',amount:700}]),
+  ];
+  const data=recentMerchants(statements);
+  assert.equal(data.length,2);assert.equal(data[0].merchant,'AMAZON');assert.equal(data[0].count,3);
+  assert.equal(data[0].amount,350);assert.equal(data[0].lastDate,'2026-11-14');
+  assert.equal(data[1].merchant,'ヨドバシ');
+  const rule={id:'synthetic',pattern:'am',mode:'prefix',displayName:'Synthetic',cardId:'amazon',enabled:false,priority:100};
+  const filtered=recentMerchants(statements,{rules:[rule]});
+  assert.equal(filtered[0].cardId,'recruit-jcb');assert.equal(filtered[0].count,1);assert.equal(filtered[0].amount,500);assert.equal(filtered[0].partiallyRegistered,true);
+  assert.deepEqual(recentMerchants(statements,{cardId:'amazon',rules:[rule]}).map(x=>x.merchant),['ヨドバシ']);
+  assert.deepEqual(recentMerchants(statements,{rules:[{...rule,cardId:null}]}).map(x=>x.merchant),['ヨドバシ']);
+  assert.equal(recentMerchants(statements,{cardId:'recruit-jcb',merchant:'amazon'})[0].amount,500);
+  const ambiguous=[...statements,fake('amazon','2026-11',[{merchant:'Amazon',usedOn:'2026-11-14',amount:999}])];
+  assert.equal(recentMerchants(ambiguous)[0].amount,null);
 });
 class FakeGraph {
   constructor(store){this.store=store;}

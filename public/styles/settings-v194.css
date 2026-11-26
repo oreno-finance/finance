@@ -44,11 +44,11 @@
 .settings-card-footer{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 
 /* Icon-only appearance control on desktop. Mobile retains its top-bar icon. */
-.sidebar :is(.desktop-theme-toggle,.activity-history-open){display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;
+.sidebar .desktop-theme-toggle{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;
   border:1px solid #43536b;border-radius:10px;background:transparent;color:#d7e9f6;cursor:pointer;padding:8px}
-.sidebar :is(.desktop-theme-toggle,.activity-history-open):hover{background:#ffffff14}
-.sidebar :is(.desktop-theme-toggle,.activity-history-open):focus-visible{outline:2px solid #8bcbbf;outline-offset:2px}
-.sidebar :is(.desktop-theme-toggle,.activity-history-open) svg{display:block;width:22px;height:22px;flex:none}
+.sidebar .desktop-theme-toggle:hover{background:#ffffff14}
+.sidebar .desktop-theme-toggle:focus-visible{outline:2px solid #8bcbbf;outline-offset:2px}
+.sidebar .desktop-theme-toggle svg{display:block;width:22px;height:22px;flex:none}
 .sidebar .desktop-theme-toggle .theme-sun{display:none}
 :root[data-theme="dark"] .sidebar .desktop-theme-toggle .theme-sun{display:block}
 :root[data-theme="dark"] .sidebar .desktop-theme-toggle .theme-moon{display:none}
@@ -68,7 +68,6 @@
  .settings-view .settings-nisa-body,.settings-view .settings-card-body{padding:13px}
  .settings-card-picker{grid-template-columns:repeat(2,minmax(0,1fr))}
  .settings-card-panels>.card-setting-item{padding:3px 13px}
- #manage-view .manage-breakdown-totals{grid-template-columns:1fr}
 }
 @media(max-width:420px){.card-setting-payment-fields,.card-setting-review{grid-template-columns:1fr}}
 
@@ -76,6 +75,7 @@
 
 /* Read-only reconciliation of confirmed balances. The gap is never posted as a transaction. */
 .assets-reconciliation{min-width:0;margin:8px 0 12px}
+.assets-reconciliation:empty{display:none}
 .assets-reconcile-card{min-width:0;border:1px solid var(--line);border-radius:10px;background:var(--bg);overflow:hidden}
 .assets-reconcile-card.has-difference{border-color:var(--accent)}
 .assets-reconcile-card.is-investment.has-difference{border-color:var(--line)}

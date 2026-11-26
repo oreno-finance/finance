@@ -69,10 +69,10 @@
   #pdf-pane .dropzone{display:inline-flex!important;align-items:center!important;justify-content:center!important;
     max-width:360px;height:48px!important;min-height:48px!important;
     margin:0!important;padding:11px 18px!important;gap:0!important;
-    border:0!important;border-radius:10px!important;background:var(--accent)!important;
+    border:1px solid var(--finance-action-border)!important;border-radius:10px!important;background:var(--finance-action-fill)!important;
     color:#fff!important;box-shadow:none!important;text-align:center!important;
     cursor:pointer;-webkit-tap-highlight-color:transparent}
-  #pdf-pane .dropzone:is(:hover,.dragover){background:var(--accent)!important;border:0!important}
+  #pdf-pane .dropzone:is(:hover,.dragover){background:var(--finance-action-hover)!important;border-color:var(--finance-action-hover)!important}
   #pdf-pane .dropzone .drop-icon,#pdf-pane .dropzone .drop-desktop-label,
   #pdf-pane .dropzone>span,#pdf-pane .dropzone>small{display:none!important}
   #pdf-pane .dropzone .drop-mobile-label{display:inline!important;font-size:14px!important;

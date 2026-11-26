@@ -76,8 +76,8 @@ test('invalid periods, dimensions and empty values are rejected',()=>{
   }
 });
 test('display labels distinguish a month from multi-month period',()=>{
-  assert.equal(drilldownPeriodLabel(['2026-11']),'2026-11');
-  assert.equal(drilldownPeriodLabel(['2026-09','2026-10','2026-11']),'2026-09〜2026-11');
+  assert.equal(drilldownPeriodLabel(['2026-11']),'2026年11月');
+  assert.equal(drilldownPeriodLabel(['2026-09','2026-10','2026-11']),'2026年9月〜2026年11月');
 });
 test('UI navigation filters rows by stable original row ID, not array position',()=>{
   const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
@@ -93,10 +93,10 @@ test('UI navigation filters rows by stable original row ID, not array position',
   assert.match(analysis,/openDrilldown\(request:AnalysisDrilldown,context:AnalysisReportContext\|null\)/);
   assert.match(analysis,/drill\(dimension,group\.id,group\.label/);
 });
-test('home unclassified goes straight to filtered statement manager, not month summary',()=>{
+test('home no longer offers a misleading unclassified drilldown',()=>{
   const home=readFileSync(new URL('../src/ui/home.ts',import.meta.url),'utf8');
   const actions=readFileSync(new URL('../src/home/action-items.ts',import.meta.url),'utf8');
-  assert.match(home,/action\.kind==='unclassified'/);
-  assert.match(home,/value:'__unclassified'/);
-  assert.match(actions,/kind:'unclassified'[\s\S]*?target:'manage'/);
+  assert.doesNotMatch(home,/action\.kind==='unclassified'/);
+  assert.doesNotMatch(home,/value:'__unclassified'/);
+  assert.doesNotMatch(actions,/kind:'unclassified'/);
 });

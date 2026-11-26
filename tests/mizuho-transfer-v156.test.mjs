@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyAssets, validateAssets, mergeAssets } from '../dist/src/cloud/assets.js';
+import { emptyAssets, validateAssets, mergeAssets, detectAssetsEditCollisions, describeAssetsEditCollisions } from '../dist/src/cloud/assets.js';
 import { estimateMizuhoTransferAmount, mizuhoTransferForBill } from '../dist/src/cloud/mizuho-transfer.js';
 import { bankTimeline } from '../dist/src/summary/bank-timeline.js';
 import { forecastBankBalances } from '../dist/src/cloud/salary-projection.js';
@@ -60,4 +60,63 @@ test('a transfer scheduled at month end for a next-month card debit appears in t
  const forecast=forecastBankBalances(doc,'2026-11-30',[due],[],null,'2026-11-17');
  assert.equal(forecast.accounts['rakuten-bank'].balance,70000);
  assert.equal(forecast.accounts['mizuho-bank'].balance,30000);
+});
+
+
+test('optional encrypted warning floors validate, merge per bank, and clear at zero',()=>{
+ const base=emptyAssets();assert.deepEqual(validateAssets(base),base);
+ const local={...base,balanceWarningLimits:{'rakuten-bank':50000}};
+ const remote={...base,balanceWarningLimits:{'mizuho-bank':10000}};
+ assert.deepEqual(mergeAssets(base,local,remote).balanceWarningLimits,{'rakuten-bank':50000,'mizuho-bank':10000});
+ assert.deepEqual(detectAssetsEditCollisions(base,local,remote),[]);
+ const conflicting={...base,balanceWarningLimits:{'rakuten-bank':30000}};
+ const collisions=detectAssetsEditCollisions(base,local,conflicting);assert.equal(collisions.length,1);
+ assert.match(describeAssetsEditCollisions(base,local,conflicting,collisions)[0].label,/楽天銀行/);
+ assert.equal(mergeAssets(base,local,conflicting).balanceWarningLimits['rakuten-bank'],50000);
+ assert.equal(mergeAssets(local,{...local,balanceWarningLimits:{'rakuten-bank':0}},local).balanceWarningLimits,undefined);
+ for(const value of [null,[],{'nisa':1},{'rakuten-bank':-1},{'rakuten-bank':1.2},{'rakuten-bank':'1'},{'rakuten-bank':Number.MAX_SAFE_INTEGER+1}])
+   assert.throws(()=>validateAssets({...base,balanceWarningLimits:value}),/残高警告/);
+});
+
+test('actual later funding replaces the predicted transfer across all bank calculations without changing cashflow',async()=>{
+ const {homeOverview}=await import('../dist/src/home/overview.js');
+ const {monthlyReport}=await import('../dist/src/summary/monthly-summary.js');
+ const doc=data();doc.snapshots=[snap('snap-r','rakuten-bank',100000,'2026-11-25T00:00:00Z'),snap('snap-m','mizuho-bank',0,'2026-11-23T00:00:00Z')];
+ const s=source(doc);const before=monthlyReport('2026-11',s);
+ // Transfer occurs after the predicted 24th and after the Rakuten snapshot.
+ doc.oneTime=[{id:'actual-transfer',date:'2026-11-26',name:'実際の送金',amount:28000,kind:'transfer',status:'done',fromAccountId:'rakuten-bank',toAccountId:'mizuho-bank',cardFunding:true}];
+ const h=homeOverview(s,'2026-11-26'),projection=forecastBankBalances(doc,'2026-11-30',s.records,[],null,'2026-11-26');
+ assert.deepEqual([h.monthEnd.rakuten,h.monthEnd.mizuho,h.monthEnd.total],[72000,3755,75755]);
+ assert.equal(projection.accounts['rakuten-bank'].balance,72000);assert.equal(projection.accounts['mizuho-bank'].balance,3755);
+ assert.deepEqual(bankTimeline('2026-11',s,'2026-11-26').days.map(d=>[d.date,d.delta]),[['2026-11-26',-28000]]);
+ assert.equal(monthlyReport('2026-11',s).monthlyBalance,before.monthlyBalance);
+ assert.equal(monthlyReport('2026-11',s).oneTimeExpense,0);
+ assert.equal(projection.autoTransferByAccount['rakuten-bank'],undefined);
+});
+
+test('month-end forecast excludes next-month debit and savings assets, and never assumes a missing bank balance is zero',async()=>{
+ const {homeOverview}=await import('../dist/src/home/overview.js');
+ const doc=data();doc.snapshots.push(snap('savings-1','cash-savings',999999));
+ const s=source(doc);s.records.push({...bill(12000,'2026-12-27'),id:'record-2',statement:{...bill(12000,'2026-12-27').statement,billingMonth:'2026-11'}});
+ const home=homeOverview(s,'2026-11-26');
+ assert.deepEqual([home.monthEnd.date,home.monthEnd.rakuten,home.monthEnd.mizuho,home.monthEnd.total],['2026-11-30',70000,5755,75755]);
+ assert.equal(home.monthEnd.reference,true);
+ doc.snapshots=doc.snapshots.filter(x=>x.accountId!=='mizuho-bank');
+ assert.equal(homeOverview(s,'2026-11-26').monthEnd.total,null);
+});
+
+test('same-day actual movement is not blindly added to a balance snapshot and is marked as a reference',async()=>{
+ const {homeOverview}=await import('../dist/src/home/overview.js');
+ const doc=data();doc.snapshots=[snap('snap-r','rakuten-bank',100000,'2026-11-26T00:00:00Z'),snap('snap-m','mizuho-bank',0,'2026-11-25T00:00:00Z')];
+ doc.oneTime=[{id:'actual-transfer',date:'2026-11-26',name:'実際の送金',amount:30000,kind:'transfer',status:'done',fromAccountId:'rakuten-bank',toAccountId:'mizuho-bank',cardFunding:true}];
+ const h=homeOverview(source(doc),'2026-11-26');assert.equal(h.monthEnd.sameDayEvents,true);assert.equal(h.monthEnd.reference,true);assert.equal(h.monthEnd.rakuten,100000);
+});
+
+test('reconciliation identifies salary and predicted funding on the balance observation date',async()=>{
+ const {reconcileBalance}=await import('../dist/src/cloud/balance-reconciliation.js');
+ const doc=data();doc.snapshots.push(snap('latest-r','rakuten-bank',70000,'2026-11-24T00:00:00Z'));
+ const result=reconcileBalance(doc,'rakuten-bank',[bill(24245)],[],null,true,'2026-11-26');
+ assert.equal(result.sameDayEntries,true);
+ const income=[{id:'salary-test',employerId:'main',kind:'salary',paidOn:'2026-11-24',payPeriod:'2026-11',netPay:10000,grossPay:null,taxablePay:null,currency:'JPY',revision:1}];
+ assert.equal(reconcileBalance(doc,'rakuten-bank',[],income,'rakuten-bank',true,'2026-11-26').sameDayEntries,true);
 });

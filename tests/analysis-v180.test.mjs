@@ -2,7 +2,7 @@ import {styleOrder} from './helpers/css-loading.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {rollingAnalytics,annualAnalytics,priorYearAnalytics,analyzePeriods,comparableDelta} from '../dist/src/analysis/period-analytics.js';
+import {rollingAnalytics,annualAnalytics,priorYearAnalytics,analyzePeriods,comparableDelta,cumulativeBalances,balanceWithoutNisa} from '../dist/src/analysis/period-analytics.js';
 const pay=(period,amount=240000)=>({id:`salary-${period}`,employerId:'main',payPeriod:period,paidOn:`${period}-25`,netPay:amount,grossPay:null,taxablePay:null,currency:'JPY',kind:'salary',revision:1});
 const card=(period,amount=20000,extra={})=>({id:`rec-${period}-${extra.cardId??'smbc-nl'}`,statement:{provider:'smbc',cardId:'smbc-nl',sourceKind:'paste',sourceName:'test',billingMonth:`${period.slice(0,4)}-${String(Number(period.slice(5))===1?12:Number(period.slice(5))-1).padStart(2,'0')}`,paymentDate:`${period}-27`,statedTotal:amount,confirmation:'confirmed',warnings:[],rows:[{id:`row-${period}`,usedOn:`${period}-01`,merchant:'MARKET',amount}],...extra}});
 const base=(records=[],entries=[])=>({records,rules:[{id:'r-food',pattern:'MARKET',mode:'contains',displayName:'スーパー',cardId:null,enabled:true,priority:100,categoryId:'food'}],categories:[{id:'food',name:'食費',color:'orange'}],assets:{nisaCardRule:null,recurring:[],oneTime:[]},payroll:{ready:true,syncedAt:100,entries},currentPeriod:'2026-11'});
@@ -115,4 +115,26 @@ test('a card absent from an otherwise populated month is unknown, never a verifi
  const result=rollingAnalytics(s,'2026-11',3,'2026-11');
  const smbc=result.groups.card.find(g=>g.id==='smbc-nl');
  assert.ok(smbc);assert.deepEqual(smbc.amounts,[null,1000,null]);assert.equal(smbc.delta,null);
+});
+
+
+test('cumulative cashflow carries bonus surplus across later deficit months and reconciles with period balance',()=>{
+ const months=['2026-06','2026-07','2026-08','2026-09','2026-10','2026-11'];
+ const result=analyzePeriods(base(months.map((p,i)=>card(p,i===4?450000:150000)),months.map((p,i)=>pay(p,i===2?500000:200000))),months,'2026-11');
+ assert.deepEqual(cumulativeBalances(result.months).map(p=>p.amount),[50000,100000,450000,500000,250000,300000]);
+ assert.equal(result.months[4].balance,-250000);
+ assert.equal(cumulativeBalances(result.months).at(-1).amount,result.totals.balance);
+ assert.equal(balanceWithoutNisa(result.months),300000);
+});
+test('cumulative cashflow stops at a missing month; later months cannot fill the unknown balance',()=>{
+ const result=analyzePeriods(base([card(periods[0],20000),card(periods[2],20000)],periods.map(p=>pay(p,100000))),periods,'2026-11');
+ assert.deepEqual(cumulativeBalances(result.months).map(p=>p.amount),[80000,null,null]);
+ assert.equal(balanceWithoutNisa(result.months),null);
+});
+test('NISA exclusion uses the same complete months, while cumulative reference status carries forward',()=>{
+ const s=base(periods.map((p,i)=>card(p,20000,{confirmation:i===1?'provisional':'confirmed',rows:[{id:'nisa-'+p,usedOn:p+'-01',merchant:'SECURITIES',amount:20000}]})),periods.map(p=>pay(p,100000)));
+ s.assets.nisaCardRule={cardId:'smbc-nl',merchantContains:'SECURITIES',enabled:true};
+ const result=analyzePeriods(s,periods,'2026-11');
+ assert.equal(result.totals.balance,240000);assert.equal(balanceWithoutNisa(result.months),300000);
+ assert.deepEqual(cumulativeBalances(result.months).map(p=>p.reference),[false,true,true]);
 });

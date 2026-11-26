@@ -1,6 +1,6 @@
 /** Optional, read-only prediction of transfers from Rakuten Bank to Mizuho Bank.
  * A forecast is never marked completed and never written as a recurring entry. */
-import { DEFAULT_MIZUHO_PLAN, type AssetsDocument, type MizuhoTransferPlan } from './assets.js';
+import { DEFAULT_MIZUHO_PLAN, type AssetsDocument, type MizuhoTransferPlan, type OneTimeEntry } from './assets.js';
 import { recurringOccursOn } from './recurring-schedule.js';
 export interface MizuhoBill {cardId:string; paymentDate:string|null; amount:number}
 export interface MizuhoPlannedTransfer {date:string; paymentDate:string|null; amount:number; cardId:string}
@@ -21,14 +21,24 @@ export function mizuhoTransferForBill(bill:MizuhoBill,assets:Pick<AssetsDocument
   // An explicitly registered bank-to-bank transfer on this date takes priority.
   const userTransfer=assets.recurring.some(item=>item.enabled&&item.kind==='transfer'&&
     item.fromAccountId==='rakuten-bank'&&item.toAccountId==='mizuho-bank'&&recurringOccursOn(item,date));
-  // A one-off manual funding transfer replaces the predicted one. Only explicitly
-  // marked card-funding transfers can suppress the automatic plan on nearby days.
-  const earliest=new Date(`${bill.paymentDate}T00:00:00Z`);
-  earliest.setUTCDate(earliest.getUTCDate()-Math.max(14,plan.leadDays));
-  const isFunding=(assets.oneTime??[]).some(e=>e.kind==='transfer'&&
-    e.fromAccountId==='rakuten-bank'&&e.toAccountId==='mizuho-bank'&&
-    ((e.cardFunding===true && e.date>=earliest.toISOString().slice(0,10) && e.date<=bill.paymentDate!) || e.date===date));
+  const isFunding=manualMizuhoFundingEntries(bill,assets).length>0;
   if(userTransfer||isFunding)return null;
   const amount=estimateMizuhoTransferAmount(bill.amount,plan.extraForSmallBills);
   return amount?{date,paymentDate:bill.paymentDate,amount,cardId:bill.cardId}:null;
+}
+
+/** Use the same matching window for the forecast and the manual record editor.
+ * Do not infer funding outside this window or from unrelated transfers. */
+export function mizuhoFundingWindow(paymentDate:string,leadDays:number):{first:string;last:string;scheduled:string}|null {
+  const day=new Date(`${paymentDate}T00:00:00Z`);
+  if(!Number.isFinite(day.getTime())||day.toISOString().slice(0,10)!==paymentDate)return null;
+  const before=(days:number)=>{const d=new Date(day);d.setUTCDate(d.getUTCDate()-days);return d.toISOString().slice(0,10);};
+  return {first:before(Math.max(14,leadDays)),last:paymentDate,scheduled:before(leadDays)};
+}
+export function manualMizuhoFundingEntries(bill:MizuhoBill,assets:Pick<AssetsDocument,'mizuhoTransferPlan'|'oneTime'>):OneTimeEntry[] {
+  if(bill.cardId!=='rakuten-mizuho'||!bill.paymentDate)return [];
+  const window=mizuhoFundingWindow(bill.paymentDate,(assets.mizuhoTransferPlan??DEFAULT_MIZUHO_PLAN).leadDays);
+  if(!window)return [];
+  return (assets.oneTime??[]).filter(e=>e.kind==='transfer'&&e.fromAccountId==='rakuten-bank'&&e.toAccountId==='mizuho-bank'&&
+    ((e.cardFunding===true&&e.date>=window.first&&e.date<=window.last)||e.date===window.scheduled));
 }

@@ -1,3 +1,5 @@
+import {CARDS} from '../models/types.js';
+import {validatePauses,type PausePeriod} from '../fixed-costs/contracts.js';
 /** Finance-wide display aliases. Never rewrite the issuer's original merchant text. */
 export type MatchMode = 'exact' | 'prefix' | 'contains';
 /** Starter categories, editable/removable by the user. Their IDs stay stable. */
@@ -69,6 +71,17 @@ export function categoryMeta(id:CategoryId|null|undefined,overrides?:Partial<Rec
   return {id,name:custom?.name??original?.name??'',color,hex:PALETTE.find(item=>item.id===color)?.hex??'#718096'};
 }
 
+/** Card recurring settings live with the rule; amounts are never stored here. */
+export interface RuleFixedCost {
+  frequency:'monthly'|'yearly'|'weekly';
+  state:'active'|'paused'|'ended';
+  startOn:string;
+  /** Dated legacy lifecycle is preserved until an explicit state change. */
+  endOn?:string|null;
+  pauses?:PausePeriod[];
+  previous?:{key:string;through:string}[];
+  legacyId?:string;
+}
 export interface MerchantRule {
   id: string;
   pattern: string;
@@ -80,6 +93,7 @@ export interface MerchantRule {
   enabled: boolean;
   priority: number;
   categoryId?: CategoryId | null;
+  fixedCost?:RuleFixedCost;
 }
 export interface RuleConflict {
   ruleId: string;
@@ -89,13 +103,15 @@ export interface RuleConflict {
   at: string;
 }
 export interface MerchantRulesDocument {
-  format: 'finance-merchant-rules-v1';
+  format: 'finance-merchant-rules-v1'|'finance-merchant-rules-v2';
   rules: MerchantRule[];
   deleted: string[];
   conflicts: RuleConflict[];
   categoryColors?: Partial<Record<CategoryId,PaletteId>>;
   categoryDefinitions?: CategoryDefinition[];
   deletedCategories?: string[];
+  /** Monotonic migration receipts, including after a rule is deleted. */
+  fixedCostMigrations?:string[];
 }
 export function emptyRules(): MerchantRulesDocument {
   return {format:'finance-merchant-rules-v1',rules:[],deleted:[],conflicts:[]};
@@ -105,6 +121,20 @@ const same = (a:unknown,b:unknown) => JSON.stringify(a)===JSON.stringify(b);
 const allowed = new Set<MatchMode>(['exact','prefix','contains']);
 export function normalizeMerchant(value:string):string {
   return value.normalize('NFKC').toLocaleLowerCase().replace(/\s+/g,' ').trim();
+}
+const fixedDay=(s:unknown):s is string=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&Number.isFinite(Date.parse(s+'T00:00:00Z'))&&new Date(s+'T00:00:00Z').toISOString().slice(0,10)===s;
+export const fixedRuleKey=(rule:Pick<MerchantRule,'cardId'|'pattern'>):string=>`${rule.cardId}|${normalizeMerchant(rule.pattern)}`;
+export function fixedRuleEligible(rule:Pick<MerchantRule,'cardId'|'pattern'|'patterns'|'mode'>):boolean {
+  return CARDS.some(c=>c.id===rule.cardId)&&rule.mode==='exact'&&!(rule.patterns?.length)&&!!normalizeMerchant(rule.pattern)&&normalizeMerchant(rule.pattern).length<=160;
+}
+function validateRuleFixedCost(rule:MerchantRule):RuleFixedCost|undefined {
+  const f=rule.fixedCost;if(f===undefined)return undefined;
+  if(!f||typeof f!=='object'||!fixedRuleEligible(rule)||!['monthly','yearly','weekly'].includes(f.frequency)||!['active','paused','ended'].includes(f.state)||!fixedDay(f.startOn)||
+     (f.legacyId!==undefined&&(typeof f.legacyId!=='string'||!/^[a-zA-Z0-9-]{6,80}$/.test(f.legacyId)))||
+     (f.previous!==undefined&&(!Array.isArray(f.previous)||f.previous.length>128||f.previous.some(x=>!x||typeof x.key!=='string'||x.key.length>240||!CARDS.some(c=>x.key.startsWith(c.id+'|'))||!x.key.slice(x.key.indexOf('|')+1)||normalizeMerchant(x.key.slice(x.key.indexOf('|')+1))!==x.key.slice(x.key.indexOf('|')+1)||!fixedDay(x.through)))))throw new Error('カード固定費にはカード1枚と完全一致の利用先1件を指定してください。');
+  if(f.endOn!==undefined&&f.endOn!==null&&(!fixedDay(f.endOn)||f.endOn<f.startOn))throw new Error('固定費の終了日が不正です。');
+  const pauses=f.pauses===undefined?undefined:validatePauses(f.pauses,f.startOn,f.endOn??null);
+  return {frequency:f.frequency,state:f.state,startOn:f.startOn,...(f.endOn!==undefined?{endOn:f.endOn}:{}),...(pauses?.length?{pauses}:{}),...(f.previous?.length?{previous:f.previous.map(x=>({key:x.key,through:x.through}))}:{}),...(f.legacyId?{legacyId:f.legacyId}:{})};
 }
 export function validateRule(rule:MerchantRule): MerchantRule {
   if(!rule || typeof rule!=='object' || typeof rule.id!=='string' || !/^[a-zA-Z0-9-]{6,80}$/.test(rule.id) ||
@@ -122,14 +152,15 @@ export function validateRule(rule:MerchantRule): MerchantRule {
   const list=[rule.pattern,...(extra??[])];
   if(new Set(list.map(normalizeMerchant)).size!==list.length)
     throw new Error('同じ利用先条件は1度だけ登録してください。');
-  return {...rule,pattern:rule.pattern.trim(),
+  const fixedCost=validateRuleFixedCost(rule);
+  return {...rule,...(fixedCost?{fixedCost}:{}),pattern:rule.pattern.trim(),
     ...(extra!==undefined?{patterns:extra.map(p=>p.trim())}:{}),
     displayName:rule.displayName.trim()};
 }
 export function validateRules(raw:unknown):MerchantRulesDocument {
   if(!raw || typeof raw!=='object')throw new Error('利用先ルールの形式が不正です。');
   const doc=raw as MerchantRulesDocument;
-  if(doc.format!=='finance-merchant-rules-v1' || !Array.isArray(doc.rules) || !Array.isArray(doc.deleted) || !Array.isArray(doc.conflicts) ||
+  if(!['finance-merchant-rules-v1','finance-merchant-rules-v2'].includes(doc.format) || !Array.isArray(doc.rules) || !Array.isArray(doc.deleted) || !Array.isArray(doc.conflicts) ||
       doc.rules.length>500 || doc.deleted.length>2000 || doc.conflicts.length>500)throw new Error('利用先ルールの形式が不正です。');
   const ids=new Set<string>();
   const rules=doc.rules.map(item=>{
@@ -169,7 +200,17 @@ export function validateRules(raw:unknown):MerchantRulesDocument {
   const available=new Set(listCategories({categoryColors,categoryDefinitions,deletedCategories}).map(item=>item.id));
   if(rules.some(item=>item.categoryId && !available.has(item.categoryId)))
     throw new Error('利用先ルールに存在しないカテゴリーが設定されています。');
-  return {format:'finance-merchant-rules-v1',rules,deleted:[...new Set(doc.deleted)],conflicts:clone(doc.conflicts),
+  const fixedKeys=new Set<string>(),legacyIds=new Set<string>();
+  for(const rule of rules){if(!rule.fixedCost)continue;const key=fixedRuleKey(rule);
+    if(fixedKeys.has(key))throw new Error('同じカードと利用先の固定費が重複しています。');fixedKeys.add(key);
+    if(rule.fixedCost.legacyId){if(legacyIds.has(rule.fixedCost.legacyId))throw new Error('固定費の移行先が重複しています。');legacyIds.add(rule.fixedCost.legacyId);}}
+  const receipts=doc.fixedCostMigrations;
+  if(receipts!==undefined&&(!Array.isArray(receipts)||receipts.length>2000||receipts.some(id=>typeof id!=='string'||!/^[a-zA-Z0-9-]{6,80}$/.test(id))))throw new Error('固定費の移行情報が不正です。');
+  const migrations=[...new Set([...(receipts??[]),...legacyIds])].sort();
+  if(migrations.length>2000)throw new Error('固定費の移行情報が多すぎます。');
+  // Older clients must not silently drop rule-based fixed costs when merging.
+  const format=doc.format==='finance-merchant-rules-v2'||fixedKeys.size||migrations.length?'finance-merchant-rules-v2':'finance-merchant-rules-v1';
+  return {format,rules,deleted:[...new Set(doc.deleted)],conflicts:clone(doc.conflicts),...(migrations.length?{fixedCostMigrations:migrations}:{}),
     ...(categoryColors?{categoryColors}:{}),...(categoryDefinitions?{categoryDefinitions}:{}),...(deletedCategories?{deletedCategories}:{})};
 }
 const modeRank:Record<MatchMode,number>={exact:3,prefix:2,contains:1};
@@ -247,7 +288,7 @@ export function mergeRules(base:MerchantRulesDocument, local:MerchantRulesDocume
     if(!bv && lv && !rv){result.push(clone(lv));deleted.delete(id);continue;}
     if(!bv && rv && !lv){result.push(clone(rv));deleted.delete(id);continue;}
     const merged:Record<string,unknown>={};
-    for(const key of ['id','pattern','patterns','mode','displayName','cardId','enabled','priority','categoryId'] as const){
+    for(const key of ['id','pattern','patterns','mode','displayName','cardId','enabled','priority','categoryId','fixedCost'] as const){
       const value=field(id,key,bv?bv[key]:missing,lv?lv[key]:missing,rv?rv[key]:missing);
       if(value!==missing)merged[key]=value;
     }
@@ -310,7 +351,8 @@ export function mergeRules(base:MerchantRulesDocument, local:MerchantRulesDocume
     }
   }
   const hasColors=Object.keys(colors).length>0;
-  return validateRules({format:'finance-merchant-rules-v1',rules:result,deleted:[...deleted],conflicts:conflicts.slice(-300),
+  const fixedCostMigrations=[...new Set([...(base.fixedCostMigrations??[]),...(local.fixedCostMigrations??[]),...(remote.fixedCostMigrations??[])])];
+  return validateRules({format:[base,local,remote].some(d=>d.format==='finance-merchant-rules-v2')?'finance-merchant-rules-v2':'finance-merchant-rules-v1',rules:result,deleted:[...deleted],conflicts:conflicts.slice(-300),...(fixedCostMigrations.length?{fixedCostMigrations}:{}),
     ...(hasColors?{categoryColors:colors}:{}),
     ...(categoryDefinitions.length?{categoryDefinitions}:{}),
     ...(deletedCategories.size?{deletedCategories:[...deletedCategories]}:{})});

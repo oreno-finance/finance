@@ -116,6 +116,20 @@ export function analyzePeriods(source:MonthlySource,periods:readonly string[],cu
   const groups={card:createGroups(months,'card'),category:createGroups(months,'category'),merchant:createGroups(months,'merchant')};
   return {months,totals,groups,categoryChanges:changes(groups.category),merchantChanges:changes(groups.merchant)};
 }
+ /** Running balance from the start of the selected period, not an account balance. */
+export function cumulativeBalances(months:readonly AnalysisMonth[]):{period:string;amount:number|null;reference:boolean}[]{
+  let amount:number|null=0,reference=false;
+  return months.map(month=>{
+    amount=amount===null||month.balance===null?null:add(amount,month.balance);
+    reference=reference||month.coverage!=='registered'||month.report.incomeEstimates.length>0||hasScheduledSalary(month.report);
+    return {period:month.period,amount,reference};
+  });
+}
+/** Same eligible months as the displayed net balance; do not subtract partial totals. */
+export function balanceWithoutNisa(months:readonly AnalysisMonth[]):number|null{
+  if(!months.length||months.some(month=>month.balance===null||month.nisa===null))return null;
+  return months.reduce((total,month)=>add(total,add(month.balance!,month.nisa!)),0);
+}
 export function rollingAnalytics(source:MonthlySource,endPeriod:string,count:3|6|12,currentPeriod:string):PeriodAnalytics{
   if(!isValidPeriod(endPeriod)||endPeriod>currentPeriod)throw new Error('未来の月は選択できません。');
   const periods=Array.from({length:count},(_,i)=>changePeriod(endPeriod,i+1-count));

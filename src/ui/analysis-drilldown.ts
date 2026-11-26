@@ -3,6 +3,7 @@
 import { displayMerchant, matchingRule } from '../cloud/merchant-rules.js';
 import { monthlyReport, prepareMonthlyReports, isNisaCardRow, isValidPeriod, type MonthlyReport, type MonthlySource, type SummaryRecurring } from '../summary/monthly-summary.js';
 import type { AnalysisDimension } from '../analysis/period-analytics.js';
+import {formatMonth} from './formatters.js';
 
 export type DrilldownDimension = AnalysisDimension;
 /** A single click/render snapshot. Never persist across vault updates. */
@@ -61,8 +62,8 @@ export function analysisDrilldownMatches(source: MonthlySource, request: Analysi
 }
 
 export function drilldownPeriodLabel(periods: readonly string[]): string {
-  if (periods.length === 1) return periods[0]!;
-  return `${periods[0]}〜${periods[periods.length - 1]}`;
+  if (periods.length === 1) return formatMonth(periods[0]);
+  return `${formatMonth(periods[0])}〜${formatMonth(periods[periods.length - 1])}`;
 }
 
 

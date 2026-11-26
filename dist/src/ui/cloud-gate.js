@@ -17,8 +17,7 @@ function appendAction(target, label, callback, primary = false) {
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = label;
-    if (primary)
-        button.className = 'finance-cloud-gate-primary';
+    button.className = primary ? 'save-action' : 'secondary-action';
     button.addEventListener('click', callback);
     target.append(button);
 }
@@ -39,10 +38,12 @@ export function syncFinanceCloudGates(state) {
             gate.className = 'finance-cloud-gate';
             view.prepend(gate);
         }
-        const displayTitle = state.checking ? 'OneDriveを確認中' :
-            state.locked ? 'OneDrive保管庫はロックされています' : 'OneDriveに接続できません';
-        const displayMessage = state.checking ? 'Microsoftアカウントと保管庫の状態を確認しています。' :
-            state.locked ? '保管庫を解除すると、このページのデータを表示できます。' : state.notice.message;
+        const displayTitle = state.checking ? (state.progress ?? 'OneDriveに接続中…') :
+            state.locked ? 'OneDrive保管庫はロックされています' :
+                state.notice.kind === 'connected' ? 'OneDrive保管庫が見つかりません' : 'OneDriveに接続できません';
+        const displayMessage = state.checking ? '' :
+            state.locked ? '保管庫を解除すると、このページのデータを表示できます。' :
+                state.notice.kind === 'connected' ? '設定から接続先を確認してください。' : state.notice.message;
         const key = JSON.stringify([page.id, displayTitle, displayMessage, state.locked, state.checking, state.notice.kind]);
         if (gate.dataset.renderKey === key)
             continue;
@@ -67,13 +68,19 @@ export function syncFinanceCloudGates(state) {
         panel.setAttribute('aria-label', 'OneDriveの接続状態');
         const title = document.createElement('h2');
         title.textContent = displayTitle;
+        if (state.checking) {
+            title.setAttribute('role', 'status');
+            panel.append(title);
+            gate.replaceChildren(heading, panel);
+            continue;
+        }
         const description = document.createElement('p');
         description.textContent = displayMessage;
         const actions = document.createElement('div');
         actions.className = 'finance-cloud-gate-actions';
-        if (state.locked && !state.checking)
+        if (state.locked)
             appendAction(actions, '保管庫を解除', state.onUnlock, true);
-        else if (!state.checking) {
+        else if (state.notice.kind !== 'connected') {
             appendAction(actions, state.notice.kind === 'not-connected' ? 'Microsoftアカウントで接続' : '通信を再試行', state.onRetry, true);
             appendAction(actions, 'Microsoft認証をやり直す', state.onReauthenticate);
         }

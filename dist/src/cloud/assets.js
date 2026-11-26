@@ -10,6 +10,21 @@ export const ASSET_ACCOUNTS = [
     { id: 'cash-savings', name: '現金貯金専用口座', detail: '楽天銀行から定期送金', icon: '🐖' },
     { id: 'nisa', name: 'NISA口座', detail: '積立投資の評価額', icon: '🌱' },
 ];
+export const BALANCE_WARNING_ACCOUNTS = ['rakuten-bank', 'mizuho-bank'];
+export function validateBalanceWarningLimits(value) {
+    if (value === undefined)
+        return {};
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+        throw new Error('残高警告の設定が不正です。');
+    const result = {};
+    for (const [id, amount] of Object.entries(value)) {
+        if (!BALANCE_WARNING_ACCOUNTS.some(account => account === id) || typeof amount !== 'number' || !Number.isSafeInteger(amount) || amount < 0)
+            throw new Error('残高警告の下限額は0円以上の整数で指定してください。');
+        if (amount > 0)
+            result[id] = amount;
+    }
+    return result;
+}
 /** For legacy assets (without history), the existing rule applies to all dates. */
 export function nisaRuleOnDay(settings, day) {
     for (const entry of settings.nisaCardRuleHistory ?? []) {
@@ -391,6 +406,7 @@ export function validateAssets(raw) {
         throw new Error('資産設定の競合履歴が不正です。');
     return { format: doc.format, snapshots, recurring, deletedSnapshots, deletedRecurring, conflicts: clone(doc.conflicts), nisaCardRule: validateNisaCardRule(doc.nisaCardRule),
         ...(doc.nisaCardRuleHistory !== undefined ? { nisaCardRuleHistory: validateNisaRuleHistory(doc.nisaCardRuleHistory) } : {}), payrollDepositAccount: validatePayrollDepositAccount(doc.payrollDepositAccount),
+        ...(doc.balanceWarningLimits !== undefined ? { balanceWarningLimits: validateBalanceWarningLimits(doc.balanceWarningLimits) } : {}),
         ...(validateMizuhoPlan(doc.mizuhoTransferPlan) ? { mizuhoTransferPlan: validateMizuhoPlan(doc.mizuhoTransferPlan) } : {}),
         ...(doc.mizuhoFundingChecks !== undefined ? { mizuhoFundingChecks: validateMizuhoFundingChecks(doc.mizuhoFundingChecks) } : {}),
         ...(doc.cardNoUseMonths !== undefined ? { cardNoUseMonths: [...new Set(doc.cardNoUseMonths)].sort() } : {}),
@@ -483,6 +499,8 @@ export function detectAssetsEditCollisions(base, local, remote) {
         sameEdit('card-recurring-decisions', id, base.cardRecurringDecisions?.[id], local.cardRecurringDecisions?.[id], remote.cardRecurringDecisions?.[id]);
     for (const month of new Set([...Object.keys(base.mizuhoFundingChecks ?? {}), ...Object.keys(local.mizuhoFundingChecks ?? {}), ...Object.keys(remote.mizuhoFundingChecks ?? {})]))
         sameEdit('mizuho-funding', month, base.mizuhoFundingChecks?.[month], local.mizuhoFundingChecks?.[month], remote.mizuhoFundingChecks?.[month]);
+    for (const id of BALANCE_WARNING_ACCOUNTS)
+        sameEdit('balance-warning-limits', id, base.balanceWarningLimits?.[id] ?? 0, local.balanceWarningLimits?.[id] ?? 0, remote.balanceWarningLimits?.[id] ?? 0);
     sameEdit('mizuho-transfer-plan', 'mizuhoTransferPlan', base.mizuhoTransferPlan, local.mizuhoTransferPlan, remote.mizuhoTransferPlan);
     return collisions;
 }
@@ -665,6 +683,15 @@ export function mergeAssets(base, local, remote, now = new Date().toISOString(),
         if (!same(left, original) && !same(right, original) && !same(left, right))
             conflicts.push({ itemId: 'mizuho-funding', field: month, discarded: right ?? null, chosen: left ?? null, at: now });
     }
+    const balanceWarningLimits = {};
+    for (const id of BALANCE_WARNING_ACCOUNTS) {
+        const original = base.balanceWarningLimits?.[id] ?? 0, left = local.balanceWarningLimits?.[id] ?? 0, right = remote.balanceWarningLimits?.[id] ?? 0;
+        const next = left === original ? right : left;
+        if (next > 0)
+            balanceWarningLimits[id] = next;
+        if (left !== original && right !== original && left !== right)
+            conflicts.push({ itemId: 'balance-warning-limits', field: id, discarded: right, chosen: left, at: now });
+    }
     const bPlan = base.mizuhoTransferPlan, lPlan = local.mizuhoTransferPlan, rPlan = remote.mizuhoTransferPlan;
     const plan = same(lPlan, bPlan) ? rPlan : lPlan;
     if (!same(lPlan, bPlan) && !same(rPlan, bPlan) && !same(lPlan, rPlan))
@@ -677,6 +704,7 @@ export function mergeAssets(base, local, remote, now = new Date().toISOString(),
         ...(base.fixedCosts !== undefined || local.fixedCosts !== undefined || remote.fixedCosts !== undefined ? { fixedCosts: fixedCosts.entries } : {}),
         ...(base.deletedFixedCosts !== undefined || local.deletedFixedCosts !== undefined || remote.deletedFixedCosts !== undefined ? { deletedFixedCosts: fixedCosts.deleted } : {}),
         ...(plan ? { mizuhoTransferPlan: plan } : {}),
+        ...(Object.keys(balanceWarningLimits).length ? { balanceWarningLimits } : {}),
         ...(base.mizuhoFundingChecks !== undefined || local.mizuhoFundingChecks !== undefined || remote.mizuhoFundingChecks !== undefined ? { mizuhoFundingChecks } : {}),
         ...(base.cardNoUseMonths !== undefined || local.cardNoUseMonths !== undefined || remote.cardNoUseMonths !== undefined ? { cardNoUseMonths: cardNoUseMonths.sort() } : {}), ...(base.oneTime !== undefined || local.oneTime !== undefined || remote.oneTime !== undefined ? { oneTime: oneTimes.entries } : {}),
         ...(base.deletedOneTime !== undefined || local.deletedOneTime !== undefined || remote.deletedOneTime !== undefined ? { deletedOneTime: oneTimes.deleted } : {}) });
@@ -713,6 +741,8 @@ export function describeAssetsEditCollisions(base, local, remote, collisions) {
         }
         else if (item.itemId === 'mizuho-transfer-plan')
             label = 'みずほ送金予測';
+        else if (item.itemId === 'balance-warning-limits')
+            label = `残高警告（${ASSET_ACCOUNTS.find(a => a.id === item.field)?.name ?? '銀行口座'}）`;
         else if (item.itemId === 'mizuho-funding')
             label = `みずほ銀行への${item.field}分送金確認`;
         else if (item.itemId === 'card-preferences')
@@ -752,6 +782,11 @@ export function describeAssetsEditCollisions(base, local, remote, collisions) {
         else if (item.itemId === 'card-debit-accounts') {
             left = local.cardDebitAccounts?.[item.field];
             right = remote.cardDebitAccounts?.[item.field];
+        }
+        else if (item.itemId === 'balance-warning-limits') {
+            const id = item.field;
+            left = local.balanceWarningLimits?.[id] ?? 0;
+            right = remote.balanceWarningLimits?.[id] ?? 0;
         }
         else if (item.itemId === 'mizuho-funding') {
             left = local.mizuhoFundingChecks?.[item.field];

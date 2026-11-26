@@ -1,4 +1,3 @@
-import {bindModalDismiss} from './modal.js';
 /** Finance-wide, ephemeral feedback. No financial information is persisted here. */
 export type ActivityKind = 'working' | 'good' | 'warn' | 'bad' | 'info';
 let dismissal: ReturnType<typeof setTimeout> | undefined;
@@ -6,49 +5,51 @@ let previousMessage = '';
 let previousKind: ActivityKind | '' = '';
 let previousAt = 0;
 let dismissBound=false;
-type ActivityEntry={message:string;kind:ActivityKind;at:number;unread:boolean};
+type ActivityEntry={message:string;kind:'good'|'warn'|'bad';at:number};
+const activityLabels={good:'完了',warn:'警告',bad:'エラー'} as const;
 const history:ActivityEntry[]=[];
 let dropped=0;
 export function activityHistory():ReadonlyArray<Readonly<ActivityEntry>>{return history.map(entry=>({...entry}));}
-function updateHistory():void{
+function logRow(entry:ActivityEntry):HTMLElement{
+  const row=document.createElement('div');row.className='activity-log-entry';row.dataset.kind=entry.kind;
+  const meta=document.createElement('div');meta.className='activity-log-meta';
+  const time=document.createElement('time');const at=new Date(entry.at);time.dateTime=at.toISOString();time.textContent=at.toLocaleString('ja-JP');
+  const kind=document.createElement('span');kind.className='activity-log-kind';kind.textContent=activityLabels[entry.kind];
+  meta.append(time,kind);
+  const message=document.createElement('p');message.textContent=entry.message;
+  row.append(meta,message);return row;
+}
+function updateHistory(added?:ActivityEntry):void{
   if(typeof document==='undefined')return;
-  const count=history.filter(entry=>entry.unread).length;
-  const button=document.getElementById('activity-history-open');
-  if(button){button.setAttribute('aria-label',count?`通知履歴（未確認 ${count}件）`:'通知履歴');button.classList.toggle('has-unread',count>0);}
-  const badge=document.getElementById('activity-history-count');if(badge)badge.textContent=count?String(count):'';
-  const markRead=document.getElementById('activity-history-read') as HTMLButtonElement|null;
-  if(markRead)markRead.disabled=count===0;
-  const dialog=document.getElementById('activity-history-dialog') as HTMLDialogElement|null;
-  const list=document.getElementById('activity-history-list');
-  if(!list||!dialog?.open)return;
-  list.replaceChildren();
-  if(dropped){const p=document.createElement('p');p.textContent=`古い通知 ${dropped}件は保持上限に達したため省略しました。`;list.append(p);}
-  if(!history.length){const p=document.createElement('p');p.textContent='通知はありません。';list.append(p);}
-  for(const entry of history){
-    const row=document.createElement('div');row.className='activity-history-entry';row.dataset.kind=entry.kind;
-    const time=document.createElement('small');time.textContent=new Date(entry.at).toLocaleTimeString('ja-JP');
-    const message=document.createElement('p');message.textContent=entry.message;
-    row.append(time,message);list.append(row);
+  const list=document.getElementById('activity-log-list');
+  if(!list)return;
+  const count=document.getElementById('activity-log-count');
+  if(count)count.textContent=`${history.length}件`;
+  const omitted=document.getElementById('activity-log-omitted');
+  if(omitted){omitted.hidden=dropped===0;omitted.textContent=dropped?`保持上限により古いログ ${dropped}件を省略しました。`:'';}
+  if(added){
+    const previousTop=list.scrollTop;
+    const row=logRow(added);
+    list.querySelector('.activity-log-empty')?.remove();
+    list.prepend(row);
+    if(list.childElementCount>200)list.lastElementChild?.remove();
+    if(previousTop>0)list.scrollTop=previousTop+row.offsetHeight;
+    return;
   }
+  const fragment=document.createDocumentFragment();
+  if(!history.length){const p=document.createElement('p');p.className='activity-log-empty';p.textContent='操作ログはありません。';fragment.append(p);}
+  else for(const entry of history)fragment.append(logRow(entry));
+  list.replaceChildren(fragment);list.scrollTop=0;
 }
-export function initActivityHistory():void{
-  const dialog=document.getElementById('activity-history-dialog') as HTMLDialogElement|null;
-  const button=document.getElementById('activity-history-open');
-  if(!dialog||!button)return;
-  button.addEventListener('click',()=>{if(!dialog.open){dialog.showModal();updateHistory();}});
-  const close=()=>dialog.close();
-  document.getElementById('activity-history-close')?.addEventListener('click',close);
-  bindModalDismiss(dialog,close);
-  document.getElementById('activity-history-read')?.addEventListener('click',()=>{for(const entry of history)entry.unread=false;updateHistory();});
-  updateHistory();
-}
+export function initActivityLog():void{updateHistory();}
 function recordActivity(message:string,kind:ActivityKind,at:number):void{
   if(kind==='working'||kind==='info')return;
   const last=history[0];
   if(last?.message===message&&last.kind===kind&&at-last.at<1000)return;
-  history.unshift({message,kind,at,unread:kind==='warn'||kind==='bad'});
-  if(history.length>200){let ordinary=history.length-1;while(ordinary>=0&&history[ordinary]!.unread)ordinary--;history.splice(ordinary<0?history.length-1:ordinary,1);dropped++;}
-  updateHistory();
+  const entry={message,kind,at};
+  history.unshift(entry);
+  if(history.length>200){history.pop();dropped++;}
+  updateHistory(entry);
 }
 function hideToast():void {
   if(dismissal){clearTimeout(dismissal);dismissal=undefined;}
@@ -57,9 +58,7 @@ function hideToast():void {
 export function clearActivity():void {
   history.splice(0);dropped=0;
   if(typeof document==='undefined')return;
-  const historyDialog=document.getElementById('activity-history-dialog') as HTMLDialogElement|null;
-  if(historyDialog?.open)historyDialog.close();
-  document.getElementById('activity-history-list')?.replaceChildren();updateHistory();
+  updateHistory();
   hideToast();previousMessage='';previousKind='';previousAt=0;
   const panel=document.getElementById('toast');
   const label=panel?.querySelector<HTMLElement>('.activity-message');if(label)label.textContent='';

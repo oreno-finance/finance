@@ -12,9 +12,9 @@
 .assets-account-layout .assets-latest .assets-balance-date{font-size:10px;line-height:1.55}
 .assets-account-layout .assets-balance-form{margin-top:auto}
 .assets-account-layout .assets-history{margin-top:10px}
-.assets-account-info-panel{margin:11px 0 19px;border:1px solid var(--line);border-radius:10px;padding:0 14px;background:var(--panel)}
-.assets-account-info-panel summary{padding:12px 0;cursor:pointer;font-size:12px;font-weight:700;color:var(--ink)}
-.assets-account-info{border-top:1px solid var(--line);padding:10px 0}
+.assets-account-info-panel{margin:0;padding:14px 18px;border-top:1px solid var(--line)}
+.assets-account-info-panel h3{margin:0 0 8px;font-size:12px;font-weight:700;color:var(--ink)}
+.assets-account-info{padding:0}
 .assets-info-row{display:grid;grid-template-columns:150px minmax(0,1fr);gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:11px}
 .assets-info-row:last-child{border:0}
 .assets-info-row>strong{font-size:11px}

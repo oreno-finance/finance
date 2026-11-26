@@ -63,9 +63,11 @@ test('fixed-cost failures stay visible across tabs and preserve the current navi
   const candidate=source.split('async function markCandidate(')[1]?.split('function render():void')[0]??'';
   const render=source.split('function render():void {')[1]?.split('function reset():void')[0]??'';
   assert.ok(candidate,'candidate handler must exist');
-  assert.match(candidate,/catch\(e\)\{notice=e instanceof Error\?e\.message:'保存に失敗しました。';/);
-  assert.match(candidate,/finally\{busy=false;render\(\);\}/);
-  assert.doesNotMatch(candidate,/notice\s*=\s*''/);
+  assert.match(candidate,/catch\(e\)\{[\s\S]*?notice=unknown\?/);
+  assert.match(candidate,/showActivity\(notice,unknown\?'warn':'bad'\)/);
+  assert.match(candidate,/finally\{if\(current\(\)\)\{busy=false;render\(\);\}\}/);
+  assert.match(candidate,/notice='';deps\.onSaved\(\)/);
+  assert.doesNotMatch(render,/notice\s*=\s*''/);
   assert.match(render,/if\(notice\)root!\.append\(el\('p','subscriptions-notice error',notice\)\)/);
   assert.match(render,/\(\)=>\{tab=value;render\(\);\}/);
   // An uncertain OneDrive write remains an explicit warning in the open form.

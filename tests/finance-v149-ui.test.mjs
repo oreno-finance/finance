@@ -8,7 +8,7 @@ const monthly=readFileSync(new URL('src/ui/monthly-summary.ts',root),'utf8');
 const css=readFileSync(new URL('public/styles/layout-v149.css',root),'utf8');
 const sidebar=html.slice(html.indexOf('<aside id="finance-sidebar" class="sidebar">'),html.indexOf('</aside>'));
 
-test('sidebar exposes both statement routes directly, with settings and Payroll at bottom',()=>{
+test('sidebar exposes both statement routes directly, with settings at bottom',()=>{
   assert.doesNotMatch(sidebar,/id="nav-statements-group"/);
   assert.match(sidebar,/id="mobile-nav-toggle"/);
   for(const name of ['nav-import','nav-manage'])assert.equal(sidebar.split(`id="${name}"`).length-1,1);
@@ -17,7 +17,7 @@ test('sidebar exposes both statement routes directly, with settings and Payroll 
   assert.match(sidebar,/id="nav-rules"[^>]*>[\s\S]*?<span class="nav-text">利用先ルール<\/span><\/button>/);
   const bottom=sidebar.slice(sidebar.indexOf('class="sidebar-bottom-actions"'),sidebar.indexOf('class="sidebar-footer"'));
   assert.match(bottom,/id="nav-settings"/);
-  assert.match(bottom,/id="nav-payroll"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/);
+  assert.doesNotMatch(bottom,/id="nav-payroll"/);
   assert.match(css,/\.sidebar \.sidebar-bottom-actions\{[^}]*margin-top:auto/);
 });
 
@@ -28,7 +28,8 @@ test('management pager navigates by a whole calendar month without rewriting imp
   assert.doesNotMatch(html,/id="manage-filter-(year|month)"/);
   assert.match(main,/bindMonthNavigator\(\$\('manage-period-controls'\)/);
   assert.doesNotMatch(main,/function manageShiftMonth/);
-  assert.match(main,/return managerIndices\(context\)/);
+  assert.match(main,/const indices=managerIndices\(context\)/);
+  assert.match(main,/syncManagerPeriod\?\.\(\);\s*return indices;/);
 });
 
 test('aliases have explicit add and remove controls, not a separator convention',()=>{

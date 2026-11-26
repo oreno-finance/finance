@@ -51,6 +51,6 @@ test('mobile: menu items retain standard 13px instead of 10/11px',()=>{
 
 test('mobile: no finance data model, encryption or salary rules are touched',()=>{
   assert.doesNotMatch(css,/@media \(min-width:/);
-  assert.match(html,/id="nav-payroll"[^>]*target="_blank"/);
+  assert.doesNotMatch(html,/id="nav-payroll"/);
   assert.match(styleOrder,/styles\/mobile-v151\.css/);
 });

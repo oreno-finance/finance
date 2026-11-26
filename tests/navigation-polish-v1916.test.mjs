@@ -31,7 +31,7 @@ test('ホバー展開は340msで、収納時もワークスペース幅を変え
 
 test('開閉ボタンは他のナビゲーションと同じ下部領域に置く',()=>{
   const nav=html.slice(html.indexOf('class="sidebar-bottom-actions"'),html.indexOf('class="sidebar-footer"'));
-  assert.match(nav,/id="nav-settings"[\s\S]*id="nav-payroll"[\s\S]*id="sidebar-collapse-toggle"/);
+  assert.match(nav,/id="nav-settings"[\s\S]*id="sidebar-collapse-toggle"/);
   assert.match(nav,/id="sidebar-collapse-toggle" class="nav-entry sidebar-collapse-toggle"/);
   assert.match(main,/sidebar-collapse-label/);
   assert.match(css,/\.sidebar-bottom-actions #sidebar-collapse-toggle\{[\s\S]*?position:static!important/);
