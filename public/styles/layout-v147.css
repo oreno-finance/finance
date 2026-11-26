@@ -11,19 +11,17 @@ select:not([multiple]){
   background-position:right 13px center!important;
 }
 
-/* Leave Finance open when navigating to Payroll. */
-.sidebar #nav-payroll{
-  margin-top:auto;
-  display:flex;
-  align-items:center;
-  text-decoration:none;
-  color:#b5c2d1;
-  cursor:pointer;
+/* Quiet, legible non-editable fields in both themes; keep layout unchanged. */
+:is(select,textarea,input:not([type]),input:is([type="text"],[type="password"],[type="number"],[type="date"],[type="month"],[type="email"],[type="url"],[type="search"],[type="tel"],[type="time"])):disabled,
+:is(input,textarea)[readonly]:not([type="hidden"]){
+  background-color:var(--bg)!important;
+  color:color-mix(in srgb,var(--ink) 35%,var(--muted))!important;
+  -webkit-text-fill-color:currentColor;
+  opacity:1!important;
+  cursor:default;
 }
-.sidebar #nav-payroll:hover{background:#273750;color:#fff}
-.sidebar #nav-payroll:focus-visible{outline:2px solid #74d3b0;outline-offset:2px}
-@media(max-width:800px){
-  .sidebar #nav-payroll{display:inline-flex!important;flex:0 0 auto;width:auto;font-size:11px;padding:9px 11px;margin-top:4px}
+select:not([multiple]):disabled{
+  background-image:none!important;
 }
 
 /* Put the developer panel underneath the app registration card. */

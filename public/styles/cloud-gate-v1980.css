@@ -13,13 +13,14 @@
   border:1px solid var(--line,#d8e1e8);border-radius:14px;background:var(--panel,#fff);
   color:var(--ink,#18283e);display:grid;gap:12px}
 .finance-cloud-gate-panel h2{font-size:18px;line-height:1.45;font-weight:750;margin:0;color:inherit}
+.finance-cloud-gate-panel h2[role="status"]{font-size:14px;font-weight:600;color:var(--muted)}
 .finance-cloud-gate-panel p{font-size:13px;line-height:1.7;margin:0;color:var(--muted,#65758a)}
 .finance-cloud-gate-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.finance-cloud-gate-actions button{box-sizing:border-box;min-height:38px;padding:8px 14px;border-radius:9px;
-  border:1px solid var(--line,#cbd5e0);background:var(--panel,#fff);color:var(--ink,#18283e);
-  font-size:12px;font-weight:650;cursor:pointer}
-.finance-cloud-gate-actions button.finance-cloud-gate-primary{background:var(--accent,#257969);border-color:transparent;color:#fff}
-.finance-cloud-gate-actions button:focus-visible{outline:3px solid #62ac9f;outline-offset:2px}
+.finance-cloud-gate-actions button{box-sizing:border-box;width:auto}
+/* Hide unavailable settings during automatic connection; preserve the existing controls and drafts. */
+.cloud-pending-status{display:none;margin:0;color:var(--muted);font-size:13px}
+.settings-view.cloud-connection-pending .cloud-pending-status{display:block}
+.settings-view.cloud-connection-pending :is(.cloud-overview-info,.cloud-primary-actions,.cloud-account-actions,.cloud-remember-controls,.cloud-rotate-panel,#settings-nisa-panel,#settings-card-disclosure,#settings-payroll-disclosure,#cloud-advanced,#activity-log-panel){display:none!important}
 .cloud-auth-diagnostics{margin-top:12px;font-size:12px}
 .cloud-auth-diagnostics summary{cursor:pointer;display:list-item;font-weight:650}
 .cloud-auth-diagnostics pre{font:12px/1.65 ui-monospace,SFMono-Regular,monospace;white-space:pre-wrap;
@@ -116,18 +117,16 @@ body dialog .finance-modal-x:focus-visible{outline:2px solid var(--accent);outli
 .rules-list-tools{justify-content:flex-end}
 
 /* Polish 2: compact financial state and optional details. */
-#home-view .home-funding-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
-#home-view .home-funding-amount{font-size:17px;font-variant-numeric:tabular-nums;line-height:1.3}
-#home-view .home-funding-controls button{min-height:40px;font-size:13px}
+:is(#home-view,#assets-funding-history) .home-funding-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+:is(#home-view,#assets-funding-history) .home-funding-amount{font-size:17px;font-variant-numeric:tabular-nums;line-height:1.3}
+:is(#home-view,#assets-funding-history) .home-funding-controls button{min-height:40px;font-size:13px}
 .monthly-chart-date-controls{margin:6px 0}
 .monthly-chart-date-controls .monthly-chart-dates{margin-top:8px}
 .reports-previous-reminder{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 8px}
 .reports-revision-bar{flex-wrap:wrap;gap:8px}
 .points-benefits > .points-benefits-empty{margin:8px 0 0}
-@media(max-width:720px){#home-view .home-funding-controls button{min-height:44px}}
-#home-view .home-funding-heading>strong:first-child{font-size:13px}
-#home-view .home-funding-completed>summary{cursor:pointer;padding:6px 2px;font-size:12px}
-#home-view .home-funding-completed[open]>summary{margin-bottom:6px}
+@media(max-width:720px){:is(#home-view,#assets-funding-history) .home-funding-controls button{min-height:44px}}
+:is(#home-view,#assets-funding-history) .home-funding-heading>strong:first-child{font-size:13px}
 
 /* Polish 3: compact account/contract management without changing controls. */
 .fixed-cost-next{white-space:pre-line}
@@ -154,7 +153,6 @@ body dialog .finance-modal-x:focus-visible{outline:2px solid var(--accent);outli
 .settings-view #cloud-auth-state[data-state="connected"]{display:none}
 .settings-view .cloud-primary-actions:has(#cloud-login.hidden):has(#cloud-reauth.hidden){grid-template-columns:repeat(auto-fit,minmax(min(140px,100%),1fr))}
 .settings-view .cloud-auth-diagnostic-output{font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted);margin:0 0 12px}
-#home-view .home-funding-review{border:1px solid var(--line);background:var(--panel);color:var(--ink)}
 #home-view .home-metric small{font-size:10px;line-height:1.45}
 #manage-view .manage-toolbar-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
 #manage-view .manage-row-delete{width:30px;min-width:30px;height:30px;min-height:30px;padding:0;border:0;background:transparent;border-radius:7px;box-shadow:none;font-size:21px;line-height:1;color:var(--muted);text-align:center}
@@ -162,15 +160,8 @@ body dialog .finance-modal-x:focus-visible{outline:2px solid var(--accent);outli
 #manage-view .manage-editor .transaction-table .col-operation{width:44px}
 :is(#import-view .statement-index-panel,#manage-view .manage-index){padding-inline:12px!important}
 :is(#import-view,#manage-view) .statement-list{padding-inline:1px!important;scrollbar-gutter:auto}
-.assets-reconcile-shared{font-size:11px;color:var(--muted);margin:6px 0 12px;padding:0 16px;line-height:1.6}
-#assets-fixed-cost-list .assets-recurring-item{display:grid;gap:6px;padding:13px;min-width:0;overflow-wrap:anywhere}
-#assets-fixed-cost-list .assets-recurring-top{margin:0;min-width:0}
-#assets-fixed-cost-list .assets-recurring-top>b{white-space:nowrap}
-#assets-fixed-cost-list .assets-recurring-route{margin:0}
-#assets-fixed-cost-list .assets-recurring-actions{display:flex;justify-content:flex-end;gap:8px}
-.assets-fixed-cost-reference{padding:18px 16px;min-width:0}
 .fixed-cost-registered-item{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto 1fr;align-items:start;gap:6px 12px}
-.fixed-cost-registered-item .fixed-cost-item-info{grid-column:1;grid-row:1 / span 2;min-width:0;align-self:center}
+.fixed-cost-registered-item .fixed-cost-item-info{grid-column:1;grid-row:1 / span 2;min-width:0;align-self:start;text-align:left}
 .fixed-cost-registered-item .fixed-cost-item-price{grid-column:2;grid-row:2;justify-self:end;align-self:end;min-width:0;text-align:right}
 .fixed-cost-registered-item .fixed-cost-item-price>strong{white-space:nowrap}
 .fixed-cost-registered-item .fixed-cost-item-actions{grid-column:2;grid-row:1;justify-self:end}
@@ -247,3 +238,16 @@ body .settings-payroll-fields>button:is(.save-action,.secondary-action){min-heig
 /* Consistent cashflow balance tones, shared across the four views. */
 .workspace .cashflow-positive>strong{color:var(--accent)}
 .workspace .cashflow-negative>strong{color:var(--danger,#bf4c51)}
+
+/* Missing data is a quiet status, not a monetary KPI. Keep the value slot
+   aligned with genuine amounts without giving missing text their visual weight. */
+.workspace :is(.home-metric,.monthly-metric,.analysis-metric,.reports-metric,.monthly-bank-metric) > strong.data-status-muted,
+.workspace :is(.home-account-balance,.assets-balance,.home-funding-amount).data-status-muted {
+  font-size:13px!important;font-weight:500!important;letter-spacing:0;line-height:1.5!important;color:var(--muted);
+}
+.workspace :is(.home-metric,.monthly-metric,.analysis-metric,.reports-metric) > strong {min-height:1.6rem;display:flex;align-items:center}
+#summary-view .monthly-metric small{font-size:11px;line-height:1.45}
+
+/* Save each account alongside its own amount, at all viewport widths. */
+.assets-account-layout .assets-balance-form{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:8px}
+.assets-account-layout .assets-balance-form .save-action{height:39px;min-height:39px;width:auto;margin:0;padding:0 12px;white-space:nowrap}

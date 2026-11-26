@@ -13,7 +13,6 @@
 .sidebar .sidebar-subnav .nav-symbol{font-size:13px}
 .sidebar .sidebar-bottom-actions{display:flex;flex-direction:column;margin-top:auto;padding-top:11px;gap:4px;border-top:1px solid #334158;min-width:0}
 .sidebar .sidebar-bottom-actions>.nav-entry{width:100%;margin:0;padding:12px 13px}
-.sidebar .sidebar-bottom-actions #nav-payroll{margin:0!important}
 .sidebar .sidebar-footer{margin-top:9px}
 
 /* An ordered, editable list of aliases. No separator syntax to remember. */

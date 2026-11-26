@@ -1,7 +1,7 @@
 /** P1-C: read-only detection of card-paid recurring charges.
  * Payment month is the ONLY period axis. A suggestion never changes household cashflow. */
 import { CARDS } from '../models/types.js';
-import { displayMerchant, normalizeMerchant } from '../cloud/merchant-rules.js';
+import { displayMerchant, normalizeMerchant, fixedRuleKey } from '../cloud/merchant-rules.js';
 import { cardRecurringKey, nisaRuleOnDay } from '../cloud/assets.js';
 import { contractMerchantKeys, contractPaymentHistory, paymentTermsOn } from '../fixed-costs/payment-history.js';
 import { importErrors } from '../importers/batch-policy.js';
@@ -12,7 +12,7 @@ const median = (items) => [...items].sort((a, b) => a - b)[Math.floor(items.leng
 const todayPeriod = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
 /** A single evidence pipeline for suggestions and registered charge comparisons.
  * This never edits a saved decision and excludes unsafe/ambiguous source records. */
-function eligibleCardChargeGroups(source, asOf) {
+function eligibleCardChargeGroups(source, asOf, allowFuturePayment = false) {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(asOf))
         throw new Error('検出対象の年月が不正です。');
     const permittedCards = new Set(CARDS.map(item => item.id));
@@ -31,10 +31,10 @@ function eligibleCardChargeGroups(source, asOf) {
             importErrors(s, s.sourceKind !== 'pdf' || !!record.originalId).length)
             continue;
         const period = s.paymentDate.slice(0, 7);
-        if (period > asOf || periodNumber(asOf) - periodNumber(period) > 37)
+        if ((!allowFuturePayment && period > asOf) || periodNumber(asOf) - periodNumber(period) > 37)
             continue;
         for (const row of s.rows) {
-            if (!Number.isSafeInteger(row.amount) || row.amount <= 0 || !validDate(row.usedOn))
+            if (!Number.isSafeInteger(row.amount) || row.amount === 0 || (!allowFuturePayment && row.amount < 0) || !validDate(row.usedOn))
                 continue;
             const nisa = nisaRuleOnDay(source.assets, row.usedOn);
             if (nisa?.enabled && nisa.cardId === s.cardId && normalizeMerchant(row.merchant).includes(normalizeMerchant(nisa.merchantContains)))
@@ -50,6 +50,13 @@ function eligibleCardChargeGroups(source, asOf) {
         }
     }
     return groups;
+}
+/** Actual usage, not a manually maintained contract price. Include imported future-debit statements. */
+export function fixedCostEvidence(source, today) {
+    return new Map([...eligibleCardChargeGroups(source, today.slice(0, 7), true)].map(([key, group]) => [key, group.values.filter(x => x.usedOn <= today)]));
+}
+export function fixedRuleRegisteredKeys(source) {
+    return new Set(source.rules.flatMap(r => r.fixedCost ? [fixedRuleKey(r), ...(r.fixedCost.previous ?? []).map(x => x.key)] : []));
 }
 export function latestRegisteredCardCharges(source, asOf = todayPeriod()) {
     const result = new Map();
@@ -154,6 +161,8 @@ export function detectCardSubscriptions(source, asOf = todayPeriod()) {
 export function pendingCardSubscriptions(source, asOf) {
     const decisions = source.assets.cardRecurringDecisions ?? {};
     const registered = contractMerchantKeys(source.assets);
+    for (const key of fixedRuleRegisteredKeys(source))
+        registered.add(key);
     return detectCardSubscriptions(source, asOf).filter(candidate => !matchedCardRecurringDecision(decisions, candidate) && !registered.has(candidate.key));
 }
 export function subscriptionDecision(candidate, state, now = new Date().toISOString()) {

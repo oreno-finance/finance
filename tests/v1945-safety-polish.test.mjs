@@ -83,6 +83,7 @@ test('month switch during an in-flight report load supersedes old loading and fi
     const ui=initMonthlyReports({source:()=>null,vault:()=>vault,openMonth:()=>{}});
     ui.openPeriod('2026-11');ui.render();
     assert.equal(ui.isBusy(),true);
+    assert.deepEqual(root.children.map(n=>[n.tag,n.textContent,n.attrs.role]),[['p','読み込み中…','status']]);
     ui.openPeriod('2026-10');ui.render();
     assert.equal(ui.isBusy(),true);
     pending.get('2026-11').resolve(null);
@@ -113,6 +114,7 @@ test('saving locks its target month and reset discards any late UI response',asy
     assert.ok(action,'report save action must become available');
     action.handlers.click();
     assert.equal(ui.isBusy(),true);
+    assert.deepEqual(root.children.map(n=>[n.tag,n.textContent,n.attrs.role]),[['p','保存中…','status']]);
     ui.openPeriod('2026-11'); // Cannot change the save's selected period mid-flight.
     assert.equal(writtenPeriod,'2026-10');
     ui.reset(); // Simulate a lock or account change while cloud write is pending.

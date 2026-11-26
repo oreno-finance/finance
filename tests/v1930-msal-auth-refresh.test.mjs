@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { OneDriveTestClient, GraphError } from '../dist/src/cloud/onedrive-api.js';
-import { selectMicrosoftAccount, classifyMicrosoftAuthError, coalesceSilentToken } from '../dist/src/cloud/msal-auth.js';
+import { selectMicrosoftAccount, classifyMicrosoftAuthError, coalesceSilentToken, retrySilentTimeout } from '../dist/src/cloud/msal-auth.js';
 
 const one={homeAccountId:'user-one',username:'first@example.com'};
 const two={homeAccountId:'user-two',username:'second@example.com'};
@@ -175,4 +175,29 @@ test('GitHub Pages ships an isolated MSAL v5 bridge, no login redirects on passi
   assert.match(startup,/graphClientWithoutRedirect\(\)/);
   assert.doesNotMatch(startup,/\b(?:loginRedirect|loginPopup|acquireTokenRedirect|acquireTokenPopup)\s*\(/);
   assert.match(main,/readBrowserKey\(browserContext\)/);
+});
+
+test('silent timeout is retried once before any Graph write, shared acquisition still coalesces',async()=>{
+  let tokens=0,writes=0;const jobs=new Map();
+  const provider=()=>coalesceSilentToken(jobs,'account',()=>retrySilentTimeout(async()=>{
+    if([1,4].includes(++tokens))throw {errorCode:'iframe_bridge_timeout'};return 'fixture-token';
+  },()=>{}));
+  const api=new OneDriveTestClient(provider,async(url,init)=>{
+    if(url.endsWith('/me/drive/special/approot'))return Response.json({id:'folder'});
+    if(init.method==='PUT'){writes++;return Response.json({id:'file',eTag:'e1'});}
+    throw new Error('unexpected request');
+  });
+  await Promise.all([provider(),provider()]);assert.equal(tokens,2);
+  await api.uploadEncryptedProbe('fixture');assert.equal(writes,1);assert.equal(tokens,5);
+  const blocked=new OneDriveTestClient(()=>retrySilentTimeout(async()=>{throw {errorCode:'iframe_bridge_timeout'};},()=>{}),async()=>{throw new Error('Graph must not be contacted');});
+  await assert.rejects(blocked.uploadEncryptedProbe('fixture'),e=>e.errorCode==='iframe_bridge_timeout');
+});
+test('persistent timeout is bounded; interaction and account changes never retry',async()=>{
+  const timeout={errorCode:'iframe_bridge_timeout'};let attempts=0;
+  await assert.rejects(retrySilentTimeout(async()=>{attempts++;throw timeout;},()=>{}),e=>e===timeout);
+  assert.equal(attempts,2);attempts=0;
+  await assert.rejects(retrySilentTimeout(async()=>{attempts++;throw {errorCode:'interaction_required'};},()=>{}),e=>e.errorCode==='interaction_required');
+  assert.equal(attempts,1);attempts=0;let valid=true;
+  await assert.rejects(retrySilentTimeout(async()=>{attempts++;valid=false;throw timeout;},()=>{if(!valid)throw new Error('account changed');}),/account changed/);
+  assert.equal(attempts,1);
 });

@@ -40,7 +40,7 @@ test('Mizuho prediction closed in details yet its form and controls remain avail
   assert.match(html, /<details class="panel mizuho-plan-panel" id="mizuho-plan-panel">/);
   assert.match(html, /<summary id="mizuho-plan-title">みずほ銀行への送金予測<\/summary>/);
   assert.match(html, /id="mizuho-plan-form"/);
-  assert.match(css,/#mizuho-plan-panel:not\(\[open\]\)>form\{display:none!important\}/);
+  assert.match(css,/#mizuho-plan-panel:not\(\[open\]\)>form,#balance-warning-panel:not\(\[open\]\)>form\{display:none!important\}/);
 });
 test('recurring form shows amount and bank routes in same responsive row, expenses use fixed costs',()=>{
   const section=html.slice(html.indexOf('<div class="recurring-account-row">'),html.indexOf('<div class="recurring-schedule-row">'));
@@ -48,7 +48,7 @@ test('recurring form shows amount and bank routes in same responsive row, expens
   assert.ok(section.includes('id="assets-recurring-from"'));
   assert.ok(section.includes('id="assets-recurring-to"'));
   assert.ok(!section.includes('id="assets-recurring-category"'));
-  assert.match(html, /id="assets-fixed-cost-list"/);
+  assert.doesNotMatch(html, /id="assets-fixed-cost-(list|open)"/);
   assert.match(css,/\.recurring-account-row\{display:grid!important;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
 });
 test('one-time modal confirms changed drafts on close and freezes background scroll',()=>{

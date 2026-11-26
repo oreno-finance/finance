@@ -153,3 +153,18 @@ test('future savings and NISA projection include a single planned transfer exact
   const result=futureProjection(assets,[],options);
   assert.deepEqual(result.points.map(p=>[p.month,p.cash,p.nisa]),[['2026-11',60000,10000],['2026-12',60000,15000]]);
 });
+
+test('dedicated actual funding save refuses a stale second-device duplicate, preserves the first transfer and remains usable',async()=>{
+ const store=new Map(),vault=new LiveVault(new Graph(store));await vault.create(secret);
+ await vault.setMizuhoTransferPlan({enabled:true,leadDays:3,extraForSmallBills:true});
+ const second=new LiveVault(new Graph(store));await second.unlock(secret);
+ const snapshot={billId:'invoice-demo',paymentDate:'2025-11-27',billAmount:24245,transferAmount:30000};
+ const movement=once('actual-funding-a',{date:'2025-11-26',kind:'transfer',name:'送金',amount:28000,fromAccountId:'rakuten-bank',toAccountId:'mizuho-bank',cardFunding:true});
+ await vault.upsertOneTime(movement,snapshot);
+ const encrypted=store.get('assets').text;
+ await assert.rejects(second.upsertOneTime({...movement,id:'actual-funding-b',amount:31000},snapshot),/振替が登録/);
+ assert.equal(store.get('assets').text,encrypted);
+ await second.refresh();assert.deepEqual(second.assetSettings().oneTime.map(e=>[e.id,e.amount]),[['actual-funding-a',28000]]);
+ assert.equal(second.assetSettings().mizuhoFundingChecks,undefined);
+ await second.upsertOneTime(once('independent-entry'));assert.equal(second.assetSettings().oneTime.length,2);
+});

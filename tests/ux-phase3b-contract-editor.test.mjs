@@ -130,3 +130,22 @@ test('将来の料金と支払条件を同時に修正・取消しても適用�
  await a.editContract(revised,{...basic,price:{cancelDate:tomorrow()},payment:{cancelDate:tomorrow()}});assert.equal(graph.writes,n+2);
  const result=a.assetSettings().recurring[0];assert.equal(result.amount,1000);assert.deepEqual(result.pricing,[{effectiveOn:bank.startOn,amount:1000}]);assert.equal(result.paymentHistory,undefined);assert.equal(a.assetSettings().format,'finance-assets-v2');
 });
+
+test('検出候補の支払カード変更は旧候補の除外と新契約を一括保存する',async()=>{
+ const {a,graph}=await create();const before=graph.writes;
+ const decision={cardId:'smbc-nl',merchant:'synthetic service',label:'合成候補',amount:1000,frequency:'monthly',state:'ignored',updatedAt:new Date().toISOString()};
+ const changed={...card,cardId:'amazon',merchantKey:cardRecurringKey('amazon',decision.merchant)};
+ await a.upsertFixedCost(changed,decision);assert.equal(graph.writes,before+1);
+ const saved=a.assetSettings();assert.equal(saved.fixedCosts.length,1);assert.equal(saved.fixedCosts[0].merchantKey,changed.merchantKey);
+ assert.equal(saved.cardRecurringDecisions[key].state,'ignored');assert.equal(saved.cardRecurringDecisions[changed.merchantKey],undefined);
+ const b=new LiveVault(graph);await b.unlock(secret);assert.deepEqual(b.assetSettings(),JSON.parse(JSON.stringify(saved)));
+ await assert.rejects(a.upsertFixedCost({...changed,id:'duplicate-test'},decision),/重複|登録・確認/);assert.deepEqual(a.assetSettings(),saved);
+});
+test('検出候補のカード変更は不一致や別端末の登録済み候補を上書きしない',async()=>{
+ const {a,graph}=await create();const decision={cardId:'smbc-nl',merchant:'synthetic service',label:'合成候補',amount:1000,frequency:'monthly',state:'ignored',updatedAt:new Date().toISOString()};
+ const changed={...card,cardId:'amazon',merchantKey:cardRecurringKey('amazon',decision.merchant)};
+ const before=graph.writes;await assert.rejects(a.upsertFixedCost({...changed,merchantKey:key},decision),/対応関係/);
+ await assert.rejects(a.upsertFixedCost(changed,{...decision,state:'registered'}),/対応関係/);assert.equal(graph.writes,before);
+ const b=new LiveVault(graph);await b.unlock(secret);await b.upsertFixedCost(card,{...decision,state:'registered'});
+ const writes=graph.writes;await assert.rejects(a.upsertFixedCost(changed,decision),/登録・確認/);assert.equal(graph.writes,writes);await a.refresh();assert.equal(a.assetSettings().fixedCosts[0].cardId,'smbc-nl');
+});

@@ -78,12 +78,11 @@
     width:220px;padding:0 1px!important;margin:0!important;
     border:0!important;justify-content:flex-start!important;
   }
-  #finance-sidebar :is(.desktop-theme-toggle,.activity-history-open){
+  #finance-sidebar .desktop-theme-toggle{
     box-sizing:border-box;flex:0 0 42px;width:42px;height:42px;
     margin:0;padding:0;display:inline-flex;align-items:center;justify-content:center;
   }
-  #finance-sidebar .activity-history-open{margin-left:1px}
-  /* Keep the appearance control directly below Settings/Payroll; the sidebar's
+  /* Keep the appearance control directly below Settings; the sidebar's
      bottom navigation already owns the automatic remaining-space margin. */
   #finance-sidebar .sidebar-footer{margin:10px 0 0!important;padding-top:0!important}
   .app-shell.nav-collapsed:not(.nav-peeking) #finance-sidebar .sidebar-footer{

@@ -1,5 +1,6 @@
 /** P0 notices are derived, never persisted and never modify financial records. */
 import { getCard } from '../models/types.js';
+import { BALANCE_WARNING_ACCOUNTS } from '../cloud/assets.js';
 import { shiftedDay } from './account-events.js';
 const dayValid = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v + 'T00:00:00Z')) && new Date(v + 'T00:00:00Z').toISOString().slice(0, 10) === v;
 /** Issuer dates are approximate action thresholds, never online confirmation.
@@ -70,14 +71,25 @@ export function homeActions(source, report, forecast, today) {
     const actions = [];
     const add = (item) => { if (!actions.some(x => x.id === item.id))
         actions.push(item); };
-    // Only trust a shortage when the account baseline and all modeled debits are usable.
+    // Use the existing daily net cashflow (including direct debits and transfers).
+    // Never invent a balance when the baseline is unavailable or too old.
     for (const account of forecast.accounts) {
-        if (!account.reliable)
+        if (!account.observed || account.projected === null)
             continue;
-        const danger = account.days.find(day => day.date >= today && day.balance < 0 && day.events.some(e => e.kind === 'card'));
-        if (danger)
-            add({ id: `shortage:${account.accountId}:${danger.date}`, kind: 'shortage', severity: 'high',
-                title: `${account.name}の引落後残高が不足する見込み`, detail: `${danger.date.slice(5).replace('-', '/')} · 予定反映後`, target: 'assets' });
+        const limit = BALANCE_WARNING_ACCOUNTS.some(id => id === account.accountId)
+            ? source.assets.balanceWarningLimits?.[account.accountId] ?? 0 : 0;
+        const current = account.days.filter(day => day.date <= today).at(-1)?.balance ?? account.observed.balance;
+        const days = [{ date: today, balance: current }, ...account.days.filter(day => day.date > today)];
+        // One action per account. A real negative prediction takes priority over a reserve warning.
+        const danger = days.find(day => day.balance < 0) ?? days.find(day => day.balance < limit);
+        if (!danger)
+            continue;
+        const uncertain = !account.reliable || account.days.some(day => day.date <= danger.date && day.events.some(e => e.kind === 'salary-estimate' || e.estimated || e.movementStatus === 'estimated' || (e.kind === 'card' && e.confirmation !== 'confirmed')));
+        const negative = danger.balance < 0;
+        const yen = (amount) => `${amount.toLocaleString('ja-JP')}円`;
+        add({ id: `shortage:${account.accountId}:${danger.date}`, kind: 'shortage', severity: negative && !uncertain ? 'high' : 'medium',
+            title: negative ? `${account.name}の残高が不足する${uncertain ? '可能性' : '見込み'}` : `${account.name}の残高が設定下限を下回る${uncertain ? '可能性' : '見込み'}`,
+            detail: `${danger.date.slice(5).replace('-', '/')} · 推定 ${yen(danger.balance)}${negative ? `（不足 ${yen(-danger.balance)}）` : ` / 下限 ${yen(limit)}`}${uncertain ? ' · 暫定・未取得等を含む概算' : ''}`, target: 'assets' });
     }
     for (const cardId of forecast.missingCardIds) {
         if (!forecast.debits.some(card => card.cardId === cardId))
@@ -89,9 +101,6 @@ export function homeActions(source, report, forecast, today) {
         add({ id: `invalid:${issue.id}`, kind: 'invalid-statement', severity: 'high', title: `${issue.title}の明細を確認`,
             detail: issue.reason, target: 'manage', recordId: issue.id });
     }
-    if (report.unclassifiedCount > 0)
-        add({ id: `unclassified:${report.period}`, kind: 'unclassified', severity: 'medium',
-            title: `未分類の取引 ${report.unclassifiedCount}件`, detail: '今月の明細を確認', target: 'manage' });
     for (const card of report.cardLines.filter(card => card.confirmation === 'unknown')) {
         add({ id: `unknown:${card.id}`, kind: 'unknown-confirmation', severity: 'medium',
             title: `${card.name}の確定状態を確認`, detail: `${card.billingMonth ?? report.period}の明細`, target: 'manage', recordId: card.id });
@@ -133,11 +142,5 @@ export function homeActions(source, report, forecast, today) {
     }
     if (!source.payroll.ready)
         add({ id: 'payroll:not-ready', kind: 'payroll', severity: 'medium', title: 'Payrollの同期を確認', target: 'settings' });
-    else if (source.payroll.syncedAt) {
-        const days = Math.floor((Date.parse(`${today}T12:00:00Z`) - source.payroll.syncedAt) / 86400000);
-        if (days >= 14)
-            add({ id: 'payroll:old', kind: 'payroll', severity: 'low', title: 'Payrollのデータを更新',
-                detail: `最終同期から${days}日`, target: 'settings' });
-    }
     return actions.sort((a, b) => severityRank[a.severity] - severityRank[b.severity] || a.id.localeCompare(b.id));
 }

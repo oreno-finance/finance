@@ -43,8 +43,9 @@ test('analysis money stays on one line within horizontal-scrolling table',()=>{
   assert.match(css,/white-space:nowrap;word-break:normal;overflow-wrap:normal/);
 });
 test('dark mobile CSV/PDF button and monthly report quality warning are low-glare',()=>{
-  assert.match(css,/:root\[data-theme="dark"\] #pdf-pane \.dropzone\{/);
-  assert.match(css,/background:#263b44!important/);
+  assert.doesNotMatch(css,/#pdf-pane \.dropzone/);
+  assert.match(read('public/styles/mobile-v151.css'),/background:var\(--finance-action-fill\)!important/);
+  assert.match(read('public/styles/style.css'),/:root\[data-theme="dark"\]\{--finance-action-fill:#347f72/);
   assert.match(css,/:root\[data-theme="dark"\] \.reports-quality\{/);
   assert.match(css,/background:#3a3229/);
 });

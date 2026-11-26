@@ -84,5 +84,7 @@ test('analysis drilldown shares one set of month reports between card matching a
  assert.throws(()=>analysisDrilldownBreakdown(s,{...request,periods:Array.from({length:100},()=> '2026-11')},reports),/不正/);
  const main=readFileSync('src/main.ts','utf8');
  assert.match(main,/seed\.source\.records===source\.records/);
- assert.match(main,/analysisDrilldownBreakdown\(source,request,context\?\.reports\)/);
+ assert.match(main,/analysisDrilldownMatches\(source,activeAnalysisDrilldown,context\?\.reports\)/);
+ assert.match(main,/const indices=managerIndices\(context\)/);
+ assert.match(main,/const matches=drilldownRows\.get\(record\.id\)/);
 });

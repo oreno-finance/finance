@@ -1,3 +1,6 @@
+import {legacyCardCostForRule,legacyRuleFixedCost,ruleFixedCharge,prepareCardFixedRule,editRuleFixedDraft,ruleFixedState} from './fixed-costs/rule-fixed-costs.js';
+import type {FixedCostEntry} from './fixed-costs/contracts.js';
+import type {SubscriptionCandidate} from './subscriptions/detect.js';
 import {bindModalDismiss,requestConfirmation,confirmationPending,cancelAllConfirmations} from './ui/modal.js';
 import {formatYen,formatDate,formatMonth,formatPoints,formatNumber} from './ui/formatters.js';
 import {bindMonthNavigator,localMonth,monthInRange} from './ui/period-navigator.js';
@@ -6,21 +9,21 @@ import { parseStatementText } from './importers/statement-parser.js';
 import { parsePdfFile, assertPdfLimits } from './importers/pdf-reader.js';
 import { decodeCardCsv, identifyCardCsv, parseCardCsv } from './importers/card-csv.js';
 import { cardPaymentDate } from './importers/payment-date.js';
-import { prepareStatementRevision, type RevisionDiff } from './importers/revision-review.js';
+import { prepareStatementRevision, isConfirmationOnlyRevision, type RevisionDiff } from './importers/revision-review.js';
 import { planStatementImport, statementSignature } from './importers/import-policy.js';
 import { hasVault, unlockVault, readStatements, readOriginal, exportEncryptedBackup, deleteLegacyVault, lockVault, type LocalSource } from './storage/encrypted-vault.js';
 import { verifyLegacyMigration, verifyDownloadedBackup } from './storage/legacy-cleanup.js';
-import { graphClientWithoutRedirect, initCloudSettings, cloudConnectPrompt, activeMicrosoftAccountId, cloudConnectionNotice, recordCloudConnectionFailure, type CloudConnectPrompt } from './cloud/cloud-settings.js';
+import { graphClientWithoutRedirect, initCloudSettings, cloudConnectPrompt, activeMicrosoftAccountId, cloudConnectionNotice, cloudConnectionPending, recordCloudConnectionFailure, type CloudConnectPrompt } from './cloud/cloud-settings.js';
 import { syncFinanceCloudGates } from './ui/cloud-gate.js';
 import { LiveVault, CloudWriteUncertainError, CloudEditCancelledError, BrowserKeyGenerationChangedError, type PendingBatchResult } from './cloud/live-vault.js';
 import { GraphError } from './cloud/onedrive-api.js';
 import { readBrowserKey, rememberBrowserKey, forgetBrowserKey, applyBrowserRetentionChoice, isBrowserRemembered, InvalidRememberedBrowserKeyError, isManuallyLocked, setManualLock, clearManualLock, notifyOtherFinanceTabs, CROSS_TAB_LOCK_KEY, type BrowserKeyContext } from './cloud/remembered-browser.js';
 import type { CloudRecord } from './cloud/merge.js';
-import { displayMerchant, matchingRule, sortedRules, normalizeMerchant, PALETTE, type CategoryDefinition, type MerchantRule, type MatchMode, type CategoryId, type PaletteId } from './cloud/merchant-rules.js';
+import { displayMerchant, matchingRule, sortedRules, normalizeMerchant, fixedRuleEligible, fixedRuleKey, PALETTE, type RuleFixedCost, type CategoryDefinition, type MerchantRule, type MatchMode, type CategoryId, type PaletteId } from './cloud/merchant-rules.js';
 import { importErrors, importDisplayErrors, cardSelectionPending, duplicateMonths, redundantImportDrafts } from './importers/batch-policy.js';
 import { prioritizedIndices, orderedPreviewRows, type PreviewSort } from './ui/preview-order.js';
 import { calendarBillingPeriod, filteredStatementIndices } from './ui/manage-filter.js';
-import { recentMerchants } from './ui/recent-merchants.js';
+import { recentMerchants, type RecentMerchant } from './ui/recent-merchants.js';
 import { planCategoryBatch, categoryBatchChanged } from './ui/category-draft.js';
 import { initAssetsSettings, type AssetsUi } from './ui/assets-settings.js';
 import { measureFinancePhase } from './cloud/performance-diagnostics.js';
@@ -31,12 +34,12 @@ import { initPasswordFields, hidePasswordField, clearPasswordField } from './ui/
 import { saveLastView, type FinanceView } from './ui/view-preference.js';
 import { initHome, type HomeUi } from './ui/home.js';
 import { initAnalysis, type AnalysisUi } from './ui/analysis.js';
-import {analysisDrilldownMatches,analysisDrilldownBreakdown,drilldownPeriodLabel,type AnalysisDrilldown,type AnalysisReportContext} from './ui/analysis-drilldown.js';
+import {analysisDrilldownMatches,drilldownPeriodLabel,type AnalysisDrilldown,type AnalysisReportContext} from './ui/analysis-drilldown.js';
 import {monthlyReport,prepareMonthlyReports,type MonthlySource} from './summary/monthly-summary.js';
 import { initMonthlyReports, type MonthlyReportsUi } from './ui/monthly-reports.js';
 import { initSubscriptions, type SubscriptionsUi } from './ui/subscriptions.js';
 import { initCardSettings, type CardSettingsUi } from './ui/card-settings.js';
-import { showActivity, simpleActivity, finishActivity, clearActivity, initActivityHistory } from './ui/activity-feedback.js';
+import { showActivity, simpleActivity, finishActivity, clearActivity, initActivityLog } from './ui/activity-feedback.js';
 import { initReleaseHistory } from './ui/release-history.js';
 import { statementPoints } from './summary/point-benefits.js';
 import { hasInterruptionRisk, shouldRefreshOnFocus, type InterruptionSnapshot } from './ui/safety-policy.js';
@@ -360,7 +363,7 @@ function clearUnlockedFinanceViews():void {
   manageProvisionalOnly=false;
   $('cloud-lock-check-result').textContent='';
   // Hidden views and the import render deferral must not retain financial DOM.
-  for(const id of ['statement-list','transaction-rows','notice-list','manage-list','manage-rows','manage-drilldown-breakdown','manage-drilldown-title','manage-validation'])$(id).replaceChildren();
+  for(const id of ['statement-list','transaction-rows','notice-list','manage-list','manage-rows','manage-drilldown-title','manage-drilldown-description','manage-validation'])$(id).replaceChildren();
   for(const id of ['card-display','detail-month','detail-date','detail-count','amount-stated','amount-calculated','amount-diff','manage-month','manage-payment','manage-status'])$(id).textContent='—';
   $('manage-points').querySelector('strong')!.textContent='—';
   $<HTMLSelectElement>('manage-card').replaceChildren();
@@ -415,11 +418,15 @@ function div(className: string, content?: string): HTMLDivElement {
   return node;
 }
 
+function confirmationOnlyImport(s:ParsedStatement):boolean {
+  const matches=statements.filter(other=>other!==s&&other.cardId===s.cardId&&other.billingMonth===s.billingMonth);
+  return matches.length===1&&isConfirmationOnlyRevision(matches[0]!,s);
+}
 /** Shared statement card for the import screen and the management screen. */
 function createStatementEntry(index: number, withDelete: boolean): HTMLElement {
   const statement = statements[index]!;
   const collision=withDelete?importCollision(statement):null;
-  const state = collision==='duplicate'?'duplicate':collision?'conflict':displayIssues(statement).length ? 'review' : cardSelectionPending(statement) ? 'selection' : statement.confirmation === 'provisional' ? 'provisional' : 'verified';
+  const state = collision==='duplicate'?'duplicate':collision?'conflict':displayIssues(statement).length ? 'review' : cardSelectionPending(statement) ? 'selection' : statement.confirmation !== 'confirmed' ? 'provisional' : 'verified';
   const entry = div(`statement-entry${withDelete ? ' has-delete' : ''}`);
   const item = document.createElement('button');
   item.type = 'button';
@@ -433,7 +440,7 @@ function createStatementEntry(index: number, withDelete: boolean): HTMLElement {
   const right = div('statement-end');
   const amount = document.createElement('strong'); amount.textContent = yen(statement.statedTotal);
   const flag = document.createElement('span'); flag.className = `statement-flag ${state}`;
-  flag.textContent = collision==='duplicate'?'同一明細・重複':collision==='revision'?'差し替え確認':collision==='blocked'?'競合・要確認':statement.sourceKind==='csv'&&!statement.paymentDate ? '引落日未設定' : state === 'review' ? '要確認' : state === 'selection' ? 'カード選択待ち' : state === 'provisional' ? '暫定明細' : statement.confirmation==='unknown'?'確定状態不明':isZeroUsage(statement)?'利用なし確認済み':'照合OK';
+  flag.textContent = collision==='duplicate'?'同一明細・重複':collision==='revision'?(confirmationOnlyImport(statement)?'確定更新待ち':'差し替え確認'):collision==='blocked'?'競合・要確認':statement.sourceKind==='csv'&&!statement.paymentDate ? '引落日未設定' : state === 'review' ? '要確認' : state === 'selection' ? 'カード選択待ち' : statement.confirmation==='unknown'?'確定状態不明':state === 'provisional' ? '暫定明細' :isZeroUsage(statement)?'利用なし確認済み':'照合OK';
   // Save state is shown in the batch action / management status, not on every list row.
   right.append(amount, flag);
   left.append(title, subtitle);
@@ -672,7 +679,7 @@ function renderSummary(): void {
   const collision=importCollision(s);
   const validationIssues=displayIssues(s).filter(error=>!collision||error!=='同じカード・請求月が重複しています');
   if(collision==='duplicate')setBadgeState('pill neutral','重複・保存対象外');
-  else if(collision==='revision')setBadgeState('pill warn','差し替え確認待ち');
+  else if(collision==='revision')setBadgeState('pill warn',confirmationOnlyImport(s)?'確定更新待ち':'差し替え確認待ち');
   else if(collision==='blocked')setBadgeState('pill warn','競合・要確認');
   else if (s.sourceKind==='csv'&&!s.paymentDate) setBadgeState('pill warn', '引落日未設定');
   else if (validationIssues.length) setBadgeState('pill bad', '要確認');
@@ -696,7 +703,7 @@ function renderSummary(): void {
   }
   if(collision==='blocked')notices.append(notice('同じカード・請求月に競合があります。カード選択または不要な下書きを確認してください。確定済み明細は未確定の明細で置き換えません。','warn'));
   if(collision==='revision'){
-    const resolve=document.createElement('button');resolve.type='button';resolve.className='secondary-action';resolve.textContent='登録済み明細との差分を確認';
+    const resolve=document.createElement('button');resolve.type='button';resolve.className='secondary-action';resolve.textContent=confirmationOnlyImport(s)?'確定に更新':'登録済み明細との差分を確認';
     resolve.disabled=batchBusy||filesBusy||revisionBusy||!!liveVault?.hasPendingYearBatch;
     resolve.addEventListener('click',()=>{void resolveSelectedImport(s);});notices.append(resolve);
   }
@@ -880,12 +887,13 @@ function updateBatchStatus(): void {
   duplicateAction.disabled=batchBusy||filesBusy||revisionBusy||recovery||confirmationPending();
   duplicateAction.textContent=`重複${redundant}件を除外`;
   button.textContent = batchBusy ? '保存中…' : eligible.length ? `${eligible.length}件を保存` : '保存';
-  const collisions=blocked.filter(s=>importCollision(s)!==null).length;
+  const confirmationUpdates=blocked.filter(s=>importCollision(s)==='revision'&&confirmationOnlyImport(s)).length;
+  const collisions=blocked.filter(s=>importCollision(s)!==null).length-confirmationUpdates;
   const otherErrors=errors.filter(s=>!importCollision(s)&&!(s.sourceKind==='csv'&&!s.paymentDate&&issues(s).every(e=>e==='支払日が不明または不正です'))).length+failedImports.length;
   const status = otherErrors
     ? `${otherErrors}件に不備があります`
     : missingPaymentCards.length ? `${missingPaymentCards.length}枚のカードの引落日が未設定`
-      : collisions ? `${collisions}件の重複・競合${redundant?`（${redundant}件を一括除外可能）`:''}`
+      : collisions||confirmationUpdates ? [collisions?`${collisions}件の重複・競合${redundant?`（${redundant}件を一括除外可能）`:''}`:'',confirmationUpdates?`${confirmationUpdates}件の確定更新待ち`:''].filter(Boolean).join('／')
       : selectionOnly.length ? `${selectionOnly.length}件のカード選択待ち`
         : errorCount ? `${errorCount}件に不備があります`
           : eligible.length ? `${eligible.length}件の明細` : '保存対象はありません';
@@ -897,6 +905,11 @@ function updateBatchStatus(): void {
 function syncCloudGate():void {
   const notice=cloudConnectionNotice();
   const opening=cloudStartupRunning||currentModal!==null;
+  const checking=opening||notice.kind==='checking'||(!liveVault?.unlocked&&cloudConnectionPending());
+  const pending=!liveVault?.unlocked&&checking;
+  const progress=$('cloud-live-status').textContent==='自動復号中'?'保管庫を復号中…':'OneDriveに接続中…';
+  $('settings-view').classList.toggle('cloud-connection-pending',pending);
+  $('cloud-pending-status').textContent=pending?progress:'';
   const refresh=$<HTMLButtonElement>('cloud-live-refresh');
   refresh.disabled=opening;
   refresh.textContent=opening?'保管庫を確認中…':liveVault?.exists&&!liveVault.unlocked&&vaultDiscoveryCompleted?'保管庫を解除':'最新データ取得';
@@ -905,7 +918,7 @@ function syncCloudGate():void {
   syncFinanceCloudGates({
     blocked:!liveVault?.unlocked,
     locked:!!liveVault?.exists&&vaultDiscoveryCompleted&&notice.kind==='connected',
-    checking:opening||notice.kind==='checking',
+    checking,progress,
     notice,
     onRetry:()=>{$<HTMLButtonElement>('cloud-login').click();},
     onReauthenticate:()=>{$<HTMLButtonElement>('cloud-reauth').click();},
@@ -932,6 +945,7 @@ function render(): void {
   if (!$('rules-view').classList.contains('hidden')) renderRules();
   if (!$('summary-view').classList.contains('hidden')) summaryUi?.render();
   if (!$('home-view').classList.contains('hidden')) homeUi?.render();
+  if (!$('assets-page').classList.contains('hidden')) homeUi?.renderFundingHistory();
   if (!$('analysis-view').classList.contains('hidden')) analysisUi?.render();
   if (!$('subscriptions-view').classList.contains('hidden')) subscriptionsUi?.render();
   // The report page owns its fetched snapshot; avoid refreshing on unrelated edits.
@@ -1051,11 +1065,11 @@ function showCloudConnectDialog(mode:CloudConnectPrompt):void {
 async function startCloud():Promise<void> {
   if(cloudStartupRunning||liveVault?.unlocked)return;
   cloudStartupRunning=true;
+  $('cloud-live-status').textContent='接続中';
   syncCloudGate();
   const startedWithLockSequence=lockSequence;
   vaultDiscoveryCompleted=false;
   // Connecting is a background task. It must not block navigation or silently redirect.
-  $('cloud-live-status').textContent='接続中';
   showActivity('OneDriveに接続中…','working');
   const slowNotice=setTimeout(()=>{
     if(!cloudStartupRunning)return;
@@ -1094,6 +1108,7 @@ async function startCloud():Promise<void> {
           const remembered=await readBrowserKey(browserContext);
           if(remembered){
             $('cloud-live-status').textContent='自動復号中';
+            syncCloudGate();
             showActivity('OneDriveの保管庫を自動復号中…','working');
             await liveVault.unlockBrowserKey(remembered);
             if(lockSequence!==startedWithLockSequence||isManuallyLocked(local!)){liveVault.lock();return;}
@@ -1434,7 +1449,7 @@ function showView(view: FinanceView): void {
   if (view === 'manage') renderManager();
   if (view === 'import') render();
   if (view === 'rules') {renderRules();}
-  if (view === 'assets') assetsUi?.render();
+  if (view === 'assets') {assetsUi?.render();homeUi?.renderFundingHistory();}
   if (view === 'settings') cardSettingsUi?.render();
   if (view === 'future') futureUi?.render();
   if (view === 'summary') summaryUi?.render();
@@ -1469,15 +1484,32 @@ function selectVisibleManagerStatement(): void {
 function renderManagerFilters(context?:AnalysisReportContext|null): number[] { /* finance-v149 / P2 payment-month drill-down */
   const drilldown=activeAnalysisDrilldown;
   $('manage-drilldown').classList.toggle('hidden',!drilldown);
+  $('manage-view').classList.toggle('manage-with-drilldown',!!drilldown);
   $('manage-period-controls').classList.toggle('hidden',!!drilldown);
   $('manage-provisional-only').classList.toggle('hidden',!!drilldown);
   $<HTMLButtonElement>('manage-provisional-only').setAttribute('aria-pressed',String(manageProvisionalOnly));
+  const indices=managerIndices(context);
   if(drilldown){
     $('manage-drilldown-title').textContent=`${drilldown.label} · ${drilldownPeriodLabel(drilldown.periods)}`;
-    $('manage-drilldown-description').textContent='支払月で絞り込み中 · 該当する取引行のみ表示';
+    const source=context?.source??analysisSourceProvider?.();
+    let detail='支払月で絞り込み中 · カード取引のみ表示';
+    if(source){
+      let amount=0;
+      const visibleIds=new Set(indices.map(index=>savedIds.get(statements[index]!)));
+      for(const record of source.records){
+        if(!visibleIds.has(record.id))continue;
+        const matches=drilldownRows.get(record.id);
+        for(const row of record.statement.rows)if(matches?.has(row.id))amount+=row.amount;
+      }
+      detail+=Number.isSafeInteger(amount)?` · 合計 ${yen(amount)}`:' · 合計算出不可';
+    }
+    $('manage-drilldown-description').textContent=detail;
+  }else{
+    $('manage-drilldown-title').textContent='';
+    $('manage-drilldown-description').textContent='';
   }
   syncManagerPeriod?.();
-  return managerIndices(context);
+  return indices;
 }
 let syncManagerPeriod:(()=>void)|undefined;
 const managerPeriodOptions=()=>({label:'請求月',today:localMonth(),all:()=>{manageYear='all';manageMonth='all';selectVisibleManagerStatement();renderManager();}});
@@ -1505,74 +1537,6 @@ function openRecurringForReview(entryId:string):void {
   void assetsUi?.openRecurring(entryId);
 }
 
-function renderManagerDrilldownBreakdown(context?:AnalysisReportContext|null):void {
-  const block=$('manage-drilldown-breakdown');
-  block.classList.toggle('hidden',!activeAnalysisDrilldown);
-  $('manage-view').classList.toggle('manage-with-drilldown',!!activeAnalysisDrilldown);
-  block.replaceChildren();
-  const request=activeAnalysisDrilldown,source=context?.source??analysisSourceProvider?.();
-  if(!request||!source)return;
-  try{
-    const data=analysisDrilldownBreakdown(source,request,context?.reports);
-    const heading=document.createElement('h2');heading.textContent='対象金額の内訳';block.append(heading);
-    const summary=div('manage-breakdown-totals');
-    for(const [label,amount] of [['カード取引',data.cardAmount],['銀行・現金の固定支出予定',data.recurringAmount],['単発支出（実行済み）',data.oneTimeAmount],['分析の合計',data.total]] as const){
-      const item=div('manage-breakdown-total');
-      const name=document.createElement('span');name.textContent=label;
-      const value=document.createElement('strong');value.textContent=yen(amount);
-      item.append(name,value);summary.append(item);
-    }
-    block.append(summary);
-    if(data.byYear.length>1){
-      const compare=div('manage-breakdown-yearly');
-      const title=document.createElement('h3');title.textContent='年別の内訳';compare.append(title);
-      for(const row of data.byYear){
-        const item=div('manage-breakdown-total');
-        const year=document.createElement('span');year.textContent=`${row.year}年（カード${yen(row.cardAmount)}／定期${yen(row.recurringAmount)}／単発${yen(row.oneTimeAmount)}）`;
-        const total=document.createElement('strong');total.textContent=yen(row.total);
-        item.append(year,total);compare.append(item);
-      }
-      block.append(compare);
-    }
-    if(data.oneTime.length){
-      const list=div('manage-breakdown-recurring');
-      const title=document.createElement('h3');title.textContent='実行済みの単発支出';list.append(title);
-      for(const entry of data.oneTime){
-        const line=div('manage-breakdown-recurring-item');
-        const label=div('manage-breakdown-recurring-name');
-        const name=document.createElement('strong');name.textContent=entry.name;
-        const detail=document.createElement('small');detail.textContent=`${formatDate(entry.date)} · ${yen(entry.amount)}`;
-        label.append(name,detail);
-        const button=document.createElement('button');button.type='button';button.className='secondary-action';
-        button.textContent='口座管理で確認';button.addEventListener('click',()=>showView('assets'));
-        line.append(label,button);list.append(line);
-      }
-      block.append(list);
-    }
-    if(data.recurring.length){
-      const note=document.createElement('p');note.className='manage-breakdown-note';
-      note.textContent='銀行・現金の固定支出は予定として計上しています。カード取引とは別に、以下から確認・修正できます。';
-      block.append(note);
-      const list=div('manage-breakdown-recurring');
-      for(const entry of data.recurring){
-        const row=div('manage-breakdown-recurring-item');
-        const name=div('manage-breakdown-recurring-name');
-        const title=document.createElement('strong');title.textContent=entry.name;
-        const detail=document.createElement('small');detail.textContent=`${formatDate(entry.date)} · ${yen(entry.amount)}${entry.cardOverlap?' · カードと重複の可能性':''}`;
-        name.append(title,detail);
-        const button=document.createElement('button');button.type='button';button.className='secondary-action';
-        button.textContent='固定費管理で確認';button.addEventListener('click',()=>openRecurringForReview(entry.entryId));
-        row.append(name,button);list.append(row);
-      }
-      block.append(list);
-    }
-  }catch(error){
-    const message=document.createElement('p');
-    message.textContent=`内訳を表示できません：${error instanceof Error?error.message:'データを確認してください。'}`;
-    block.append(message);
-  }
-}
-
 /** Update editing feedback without replacing inputs, rows or action buttons. */
 function updateManagerEditState(s:ParsedStatement):void {
   $('manage-status').textContent=hasUnsavedChanges(s)?'未保存の変更':'保存済み';
@@ -1580,14 +1544,17 @@ function updateManagerEditState(s:ParsedStatement):void {
   $('manage-points').querySelector('strong')!.textContent=s.cardId&&!displayIssues(s).length?formatPoints(statementPoints(s,liveVault?.unlocked?liveVault.assetSettings().cardPreferences:undefined)):'—';
   $<HTMLButtonElement>('manage-save').disabled=batchBusy||filesBusy||!hasUnsavedChanges(s);
   const errors=displayIssues(s);
-  $('manage-validation').textContent=errors.length?`要修正：${errors.join(' / ')}`:cardSelectionPending(s)?'カード選択待ち':hasUnsavedChanges(s)?'変更は保存ボタンを押すまで反映されません。':isZeroUsage(s)?'請求0円・取引なし（PDF確認済み）':'検証OK。';
+  $('manage-validation').textContent=errors.length?`要修正：${errors.join(' / ')}`:cardSelectionPending(s)?'カード選択待ち':hasUnsavedChanges(s)?'変更は保存ボタンを押すまで反映されません。':isZeroUsage(s)?'請求0円・取引なし（PDF確認済み）':s.confirmation==='unknown'?'金額照合OK・確定状態不明。カード会社で請求確定を確認してください。':s.confirmation==='provisional'?'金額照合OK・暫定明細。カード会社で請求確定を確認してください。':'確定明細・照合OK。';
+  const confirm=$<HTMLButtonElement>('manage-confirm-statement');
+  confirm.classList.toggle('hidden',!canConfirmManagedStatement(s));
+  confirm.disabled=batchBusy||filesBusy||cloudRefreshing||revisionBusy;
   const selected=$('manage-list').querySelector<HTMLElement>('.statement-card.selected');
   const flag=selected?.querySelector<HTMLElement>('.statement-flag');
   if(selected&&flag){
-    const state=errors.length?'review':cardSelectionPending(s)?'selection':s.confirmation==='provisional'?'provisional':'verified';
+    const state=errors.length?'review':cardSelectionPending(s)?'selection':s.confirmation!=='confirmed'?'provisional':'verified';
     selected.className=`statement-card ${state} selected`;
     flag.className=`statement-flag ${state}`;
-    flag.textContent=s.sourceKind==='csv'&&!s.paymentDate?'引落日未設定':state==='review'?'要確認':state==='selection'?'カード選択待ち':state==='provisional'?'暫定明細':isZeroUsage(s)?'利用なし確認済み':'照合OK';
+    flag.textContent=s.sourceKind==='csv'&&!s.paymentDate?'引落日未設定':state==='review'?'要確認':state==='selection'?'カード選択待ち':s.confirmation==='unknown'?'確定状態不明':state==='provisional'?'暫定明細':isZeroUsage(s)?'利用なし確認済み':'照合OK';
   }
 }
 
@@ -1621,7 +1588,6 @@ function renderManager(): void {
       context={source,reports:new Map(request.periods.map(p=>[p,monthlyReport(p,source,prepared)]))};}
   }
   const indices = renderManagerFilters(context);
-  renderManagerDrilldownBreakdown(context);
   $('manage-list-count').textContent = `${indices.length}件`;
   const managerList = $('manage-list');
   if (!indices.includes(activeIndex)) activeIndex = indices[0] ?? -1;
@@ -1754,7 +1720,7 @@ function renderRulePatternAlternatives(values:readonly string[]):void {
     input.setAttribute('aria-label','追加の利用先名');
     const remove=document.createElement('button');remove.type='button';remove.className='rule-pattern-remove';
     remove.textContent='削除';remove.setAttribute('aria-label','この利用先を削除');
-    remove.addEventListener('click',()=>{row.remove();$<HTMLButtonElement>('rule-pattern-add').disabled=rulePatternInputs().length>=19;});
+    remove.addEventListener('click',()=>{row.remove();$<HTMLButtonElement>('rule-pattern-add').disabled=rulePatternInputs().length>=19;updateFixedRulePreview();});
     row.append(input,remove);container.append(row);
   }
   $<HTMLButtonElement>('rule-pattern-add').disabled=values.length>=19;
@@ -1765,6 +1731,44 @@ function addRulePatternAlternative():void {
   const latest=rulePatternInputs();latest[latest.length-1]?.focus();
 }
 let ruleEditorBaseline:string|null=null;
+let fixedRuleDraft:RuleFixedCost|undefined;
+let fixedDraftKey:string|undefined;
+let pickedMerchant:{item:RecentMerchant;scope:string}|null=null;
+const ruleToday=()=>{const d=new Date();return `${localMonth()}-${String(d.getDate()).padStart(2,'0')}`;};
+function ruleSource():MonthlySource|null {return analysisSourceProvider?.()??null;}
+function applyFixedRuleFields(fixed:RuleFixedCost|undefined,key?:string):void {
+  fixedRuleDraft=fixed;fixedDraftKey=fixed?key:undefined;
+  const state=fixed?ruleFixedState(fixed,ruleToday()):'active';
+  $<HTMLInputElement>('rule-fixed-cost').checked=!!fixed&&state!=='ended';
+  $<HTMLSelectElement>('rule-fixed-frequency').value=fixed?.frequency??'monthly';
+  $<HTMLSelectElement>('rule-fixed-state').value=state==='paused'?'paused':'active';
+  updateFixedRulePreview();
+}
+function fixedRuleForDraft(rule:MerchantRule):RuleFixedCost|undefined {
+  const on=$<HTMLInputElement>('rule-fixed-cost').checked;
+  if(!on&&!fixedRuleDraft)return undefined;
+  const state=on?$<HTMLSelectElement>('rule-fixed-state').value as 'active'|'paused':'ended';
+  const frequency=$<HTMLSelectElement>('rule-fixed-frequency').value as RuleFixedCost['frequency'];
+  return editRuleFixedDraft(rule,fixedRuleDraft,fixedDraftKey,state,frequency,ruleToday(),ruleSource());
+}
+function updateFixedRulePreview():void {
+  const on=$<HTMLInputElement>('rule-fixed-cost').checked;
+  $('rule-fixed-fields').hidden=!on;
+  const history=$('rule-history-evidence'),scope=$<HTMLSelectElement>('rule-card').value;
+  const name=normalizeMerchant($<HTMLInputElement>('rule-pattern').value);
+  if(pickedMerchant&&name!==normalizeMerchant(pickedMerchant.item.merchant))pickedMerchant=null;
+  const picked=pickedMerchant;
+  const item=picked?(scope===picked.scope?picked.item:recentMerchants(statements.filter(s=>savedIds.has(s)&&!importStaged.has(s)),{cardId:scope,merchant:name})[0]):undefined;
+  history.hidden=!picked;
+  history.textContent=!picked?'':!item?'履歴の利用実績：未取得':`履歴の直近利用：${formatYen(item.amount,0,'金額不明')}（${formatDate(item.lastDate,'利用日不明')}）`;
+  if(!on)return;
+  const rule=proposedRule(),source=ruleSource();
+  $('rule-fixed-evidence').textContent=!rule||!fixedRuleEligible(rule)?'固定費はカード1枚・完全一致の利用先1件で設定してください。':!source?'金額は確定明細から自動取得します。':(()=>{
+    const charge=ruleFixedCharge(source,rule,ruleToday());
+    return charge?`直近の利用実績：${yen(charge.amount)}（${formatDate(charge.usedOn)}）`:'明細未取得・照合不可。金額は確定明細から自動取得します。';
+  })();
+}
+
 function ruleFormFingerprint():string {
   const form=$<HTMLFormElement>('rules-form');
   return JSON.stringify([...form.querySelectorAll<HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement>('input,select,textarea')]
@@ -1772,7 +1776,7 @@ function ruleFormFingerprint():string {
 }
 function ruleFormHasChanges():boolean {return ruleEditorBaseline!==null&&ruleFormFingerprint()!==ruleEditorBaseline;}
 function resetRuleEditor():void {
-  editingRuleId=null;
+  editingRuleId=null;pickedMerchant=null;
   $('rules-editor-title').textContent='新しいルール';
   $<HTMLFormElement>('rules-form').reset();
   renderRulePatternAlternatives([]);
@@ -1782,6 +1786,7 @@ function resetRuleEditor():void {
   $<HTMLInputElement>('rule-priority').value='100';
   $<HTMLInputElement>('rule-enabled').checked=true;
   $<HTMLButtonElement>('rule-save').textContent='保存';
+  applyFixedRuleFields(undefined);
   ruleEditorBaseline=ruleFormFingerprint();
 
 }
@@ -1796,9 +1801,9 @@ async function editRuleWithGuard(rule:MerchantRule):Promise<void>{
   if(JSON.stringify(rules().find(x=>x.id===rule.id))!==JSON.stringify(rule))return;
   populateRuleEditor(rule);
 }
-function populateRuleEditor(rule:MerchantRule):void {
-  editingRuleId=rule.id;
-  $('rules-editor-title').textContent='ルールの編集';
+function populateRuleEditor(rule:MerchantRule,fixed?:RuleFixedCost,sourceKey?:string,isNew=false):void {
+  editingRuleId=isNew?null:rule.id;pickedMerchant=null;
+  $('rules-editor-title').textContent=isNew?'新しいルール':'ルールの編集';
   $<HTMLInputElement>('rule-pattern').value=rule.pattern;
   renderRulePatternAlternatives(rule.patterns??[]);
   $<HTMLSelectElement>('rule-mode').value=rule.mode;
@@ -1811,6 +1816,8 @@ function populateRuleEditor(rule:MerchantRule):void {
   $<HTMLInputElement>('rule-priority').value=String(rule.priority);
   $<HTMLInputElement>('rule-enabled').checked=rule.enabled;
   $<HTMLButtonElement>('rule-save').textContent='保存';
+  const source=ruleSource(),legacy=source&&!rule.fixedCost&&fixedRuleEligible(rule)?legacyCardCostForRule(source,rule):undefined;
+  applyFixedRuleFields(fixed??rule.fixedCost??(legacy?legacyRuleFixedCost(legacy):undefined),sourceKey??(fixedRuleEligible(rule)?fixedRuleKey(rule):undefined));
   ruleEditorBaseline=ruleFormFingerprint();
 
   $<HTMLInputElement>('rule-pattern').focus();
@@ -1824,9 +1831,18 @@ function proposedRule():MerchantRule | null {
   const displayName=$<HTMLInputElement>('rule-display-name').value;
   const priority=Number($<HTMLInputElement>('rule-priority').value);
   if(!normalizeMerchant(pattern)||!displayName.trim()||!Number.isSafeInteger(priority)||priority<0||priority>1000)return null;
-  return {id:editingRuleId??'preview-rule',pattern,...(patterns.length>1?{patterns:patterns.slice(1)}:{}),mode:$<HTMLSelectElement>('rule-mode').value as MatchMode,
+  const rule:MerchantRule={id:editingRuleId??'preview-rule',pattern,...(patterns.length>1?{patterns:patterns.slice(1)}:{}),mode:$<HTMLSelectElement>('rule-mode').value as MatchMode,
     displayName,cardId:$<HTMLSelectElement>('rule-card').value||null,enabled:$<HTMLInputElement>('rule-enabled').checked,priority,
     categoryId:($<HTMLSelectElement>('rule-category').value||null) as CategoryId|null};
+  const fixed=fixedRuleForDraft(rule);if(fixed)rule.fixedCost=fixed;return rule;
+}
+/** Candidate and legacy entry points open the same rule editor, never a second price form. */
+async function openCardFixedRule(target:{rule?:MerchantRule;candidate?:SubscriptionCandidate;legacy?:FixedCostEntry}={}):Promise<void>{
+  if(!await allowRuleReplacement())return;
+  const source=ruleSource();if(!source)return;
+  if(target.rule){const current=source.rules.find(r=>r.id===target.rule!.id);if(!current)return;showView('rules');populateRuleEditor(current);return;}
+  const {rule,fixed,key,isNew}=prepareCardFixedRule(source,ruleToday(),target);
+  showView('rules');populateRuleEditor(rule,fixed,key,isNew);
 }
 function renderRules():void {
   const unlocked=!!liveVault?.unlocked;
@@ -1850,6 +1866,7 @@ function renderRules():void {
     metaLine.append(div('rules-item-meta',rule.priority===100?card:`${card} · 優先 ${rule.priority}`));
     const category=categoryById(rule.categoryId);
     if(category)metaLine.append(categoryChip(category));
+    if(rule.fixedCost&&ruleFixedState(rule.fixedCost,ruleToday())!=='ended')metaLine.append(div('rules-item-meta',ruleFixedState(rule.fixedCost,ruleToday())==='paused'?'固定費・停止中':'固定費'));
     main.append(metaLine);
     top.append(main,div('rules-tag',rule.enabled?'有効':'無効'));item.append(top);
     const buttons=div('rules-item-actions');
@@ -1979,23 +1996,27 @@ async function saveCategoryDialog():Promise<void> {
     renderRules();
   }
 }
-/** Picker is read-only: selecting a merchant fills the predicate field only. */
+/** Picker is read-only: it fills the predicate and selected card scope without saving. */
 function renderRecentMerchants():void {
   if(!liveVault?.unlocked){$('recent-merchants-list').replaceChildren();$('recent-merchants-count').textContent='';return;}
-  const candidates=recentMerchants(statements.filter(s=>savedIds.has(s)&&!importStaged.has(s)));
   const card=$<HTMLSelectElement>('recent-merchants-card').value;
+  const candidates=recentMerchants(statements.filter(s=>savedIds.has(s)&&!importStaged.has(s)),{cardId:card,rules:rules()});
   const search=normalizeMerchant($<HTMLInputElement>('recent-merchants-search').value);
-  const filtered=candidates.filter(item=>(!card||item.cardId===card)&&(!search||normalizeMerchant(item.merchant).includes(search)));
+  const filtered=candidates.filter(item=>!search||normalizeMerchant(item.merchant).includes(search));
   const list=$('recent-merchants-list');list.replaceChildren();
   $('recent-merchants-count').textContent=filtered.length>60?`${filtered.length}件（最新60件）`:filtered.length?`${filtered.length}件`:'';
   for(const item of filtered.slice(0,60)) {
     const button=document.createElement('button');button.type='button';button.className='recent-merchant-item';
     const name=document.createElement('strong');name.textContent=item.merchant;
     const detail=document.createElement('small');
-    detail.textContent=`${cardDisplayName(item.cardId)??'カード不明'} · 最終利用 ${formatDate(item.lastDate,'不明')} · ${item.count}回`;
+    detail.textContent=`${formatDate(item.lastDate,'利用日不明')}${item.count>1?` 他${item.count-1}件`:''}`;
     button.append(name,detail);
     button.addEventListener('click',()=>{
       $<HTMLInputElement>('rule-pattern').value=item.merchant;
+      const scope=card||(item.partiallyRegistered&&item.cardId!=='unknown'?item.cardId:'');
+      $<HTMLSelectElement>('rule-card').value=scope;
+      const selected=scope!==card?recentMerchants(statements.filter(s=>savedIds.has(s)&&!importStaged.has(s)),{cardId:scope,merchant:normalizeMerchant(item.merchant)})[0]??item:item;
+      pickedMerchant={item:selected,scope};updateFixedRulePreview();
       $<HTMLDialogElement>('recent-merchants-dialog').close();
       $<HTMLInputElement>('rule-pattern').focus();
     });
@@ -2035,7 +2056,7 @@ async function deleteRule(rule:MerchantRule):Promise<void> {
   if(!unchanged())return;
   const editor=editingRuleId,form=ruleFormFingerprint();
   if(!await requestConfirmation({owner:ordinaryConfirmationOwner,title:'利用先ルールを削除しますか？',
-    message:`「${rule.pattern} → ${rule.displayName}」を削除します。\n元のカード明細は変更されません。${editor===rule.id&&ruleFormHasChanges()?'\n編集中の入力も破棄されます。':''}`,acceptLabel:'削除する',destructive:true}))return;
+    message:`「${rule.pattern} → ${rule.displayName}」を削除します。\n元のカード明細は変更されません。${rule.fixedCost?'\n固定費管理からも削除されます。':''}${editor===rule.id&&ruleFormHasChanges()?'\n編集中の入力も破棄されます。':''}`,acceptLabel:'削除する',destructive:true}))return;
   if(epoch!==lockSequence||liveVault!==vault||!vault.unlocked||rulesBusy)return;
   if(!unchanged()||editingRuleId!==editor||ruleFormFingerprint()!==form){toast('ルールまたは入力が更新されました。再確認してください。');return;}
   rulesBusy=true;
@@ -2131,6 +2152,31 @@ async function clearManagerChanges():Promise<void>{
   savedIds.set(restored,id);savedFingerprints.set(restored,statementWorkingFingerprint(restored));
   importedSignatures.set(restored,statementSignature(restored));if(current.originalId)originalSaved.add(restored);
   statements.splice(activeIndex,1,restored);render();$('manage-add-row').focus();
+}
+
+/** Confirm a saved bill only after the user verifies the issuer's current final bill.
+ * Keep the existing ID, rows, original and every local annotation. */
+function canConfirmManagedStatement(s:ParsedStatement):boolean {
+  return !!liveVault?.unlocked&&!liveVault.hasPendingYearBatch&&!cloudStartupRunning&&
+    !activeAnalysisDrilldown&&s.confirmation!=='confirmed'&&savedIds.has(s)&&
+    !importStaged.has(s)&&!hasUnsavedChanges(s)&&!issues(s).length&&
+    new Set(s.rows.map(row=>row.id)).size===s.rows.length;
+}
+async function confirmManagedStatement():Promise<void> {
+  const s=active(),vault=liveVault;
+  if(!s||!vault||!canConfirmManagedStatement(s)||batchBusy||filesBusy||revisionBusy||cloudRefreshing||confirmationPending())return;
+  const id=savedIds.get(s)!,valid=confirmationContext(),baseline=JSON.stringify(s);
+  const record=vault.readonlyRecords().find(item=>item.id===id);
+  if(!record||JSON.stringify(record.statement)!==baseline)return;
+  const original=JSON.stringify(record);
+  if(!await requestConfirmation({owner:ordinaryConfirmationOwner,title:'明細の確定',
+    message:'明細を確定します。よろしいですか？',
+    acceptLabel:'はい',cancelLabel:'キャンセル'}))return;
+  if(!valid()||active()!==s||savedIds.get(s)!==id||JSON.stringify(s)!==baseline||
+    !canConfirmManagedStatement(s)||batchBusy||filesBusy||revisionBusy||cloudRefreshing||
+    JSON.stringify(vault.readonlyRecords().find(item=>item.id===id))!==original)return;
+  s.confirmation='confirmed';dirty.add(s);
+  await saveEditedStatement(s,true);
 }
 
 async function saveEditedStatement(s:ParsedStatement, manual=false):Promise<void> {
@@ -2257,13 +2303,17 @@ function confirmStatementRevision(old:ParsedStatement,newStatement:ParsedStateme
     const warning=$('import-revision-override-warning');
     const acknowledged=$<HTMLInputElement>('import-revision-override-accept');
     const details=$('import-revision-details');details.replaceChildren();
+    const confirmationOnly=diff.confirmationOnly===true;
+    $('import-revision-title').textContent=confirmationOnly?'明細を確定に更新':'既存明細との差分確認';
+    $('import-revision-note').textContent=confirmationOnly?'内容は変更せず、確定状態と新しい取り込み元を更新します。保存操作でOneDriveへ反映されます。':'差し替えは取込待ちに追加され、保存操作でOneDriveへ反映されます。';
+    ok.textContent=confirmationOnly?'確定に更新':'差し替える';cancel.textContent=confirmationOnly?'キャンセル':'差し替えない';
     const needsAck=diff.overridesLost.length>0;
     warning.classList.toggle('hidden',!needsAck);acknowledged.checked=false;ok.disabled=needsAck;
     const label=cardDisplayName(newStatement.cardId)??'カード';
     $('import-revision-summary').textContent=
-      `${label}　${newStatement.billingMonth}分\n既存（${old.confirmation==='provisional'?'暫定':old.confirmation==='confirmed'?'確定':'確定状態不明'}）：${old.sourceKind==='paste'?'テキスト':old.sourceKind.toUpperCase()} ${yen(old.statedTotal)}（${old.rows.length}件）\n`+
+      `${label}　${formatMonth(newStatement.billingMonth,'年月未取得')}分\n既存（${old.confirmation==='provisional'?'暫定':old.confirmation==='confirmed'?'確定':'確定状態不明'}）：${old.sourceKind==='paste'?'テキスト':old.sourceKind.toUpperCase()} ${yen(old.statedTotal)}（${old.rows.length}件）\n`+
       `新規（${newStatement.confirmation==='provisional'?'暫定':newStatement.confirmation==='confirmed'?'確定':'確定状態不明'}）：${newStatement.sourceKind==='paste'?'テキスト':newStatement.sourceKind.toUpperCase()} ${yen(newStatement.statedTotal)}（${newStatement.rows.length}件）`;
-    const stats=$('import-revision-stats');stats.replaceChildren();
+    const stats=$('import-revision-stats');stats.replaceChildren();stats.classList.toggle('hidden',confirmationOnly);details.classList.toggle('hidden',confirmationOnly);
     for(const [name,count] of [['一致',diff.matched],['新規',diff.added.length],['削除',diff.removed.length],
       ['補足変更',diff.changed.length],['重複・曖昧',diff.ambiguous.length],['表示名引継ぎ',diff.transferred],['補足引継ぎ',diff.notesTransferred]] as const){
       const span=document.createElement('span');span.textContent=`${name} ${count}件`;stats.append(span);
@@ -2393,7 +2443,7 @@ async function acceptStatement(s: ParsedStatement, source?: LocalSource, queued?
       importStaged.add(revised);
       const draftIndex=statements.indexOf(s);importStaged.delete(s);pendingSources.delete(s);statements.splice(draftIndex,1);
       activeIndex=statements.indexOf(revised);render();
-      toast(`${cardDisplayName(s.cardId)??'カード'}の${s.billingMonth}分を差し替え待ちにしました。まだOneDriveには保存していません。`);
+      toast(`${cardDisplayName(s.cardId)??'カード'}の${s.billingMonth}分を${prepared.diff.confirmationOnly?'確定更新':'差し替え'}待ちにしました。まだOneDriveには保存していません。`);
     }finally{revisionBusy=false;render();}
     return true;
   }
@@ -2580,7 +2630,7 @@ function init(): void {
   $('nav-settings').addEventListener('click',()=>showView('settings'));
   $('import-payment-settings').addEventListener('click',()=>showView('settings'));
   initCloudActionControls();
-  initActivityHistory();
+  initActivityLog();
   initReleaseHistory();
   // storage events fire only in *other* tabs of this origin, never the sender.
   window.addEventListener('storage',event=>{
@@ -2674,13 +2724,13 @@ function init(): void {
   const homeSource=()=>{
     if(!liveVault?.unlocked)return null;
     return {records:liveVault.readonlyRecords(),rules:liveVault.merchantRules(),
-      categories:liveVault.merchantCategories(),assets:liveVault.assetSettings(),
+      categories:liveVault.merchantCategories(),assets:liveVault.assetSettings(),fixedCostMigrations:liveVault.fixedCostMigrations(),
       payroll:assetsUi?.payrollSnapshot()??{ready:false,syncedAt:null,entries:[]}};
   };
   analysisSourceProvider=homeSource;
   const openCardSettings=()=>{showView('settings');const panel=document.getElementById('settings-card-disclosure') as HTMLDetailsElement|null;if(panel){panel.open=true;panel.scrollIntoView({block:'start'});}};
-  homeUi=initHome({source:homeSource,openCardSettings,navigate:(destination,recordId,drilldown)=>{
-    activeAnalysisDrilldown=drilldown??null;
+  homeUi=initHome({source:homeSource,openCardSettings,openFundingMovement:snapshot=>{if(!$('home-view').classList.contains('hidden'))homeNavigationPending=true;showView('assets');assetsUi?.openFundingMovement(snapshot);},navigate:(destination,recordId)=>{
+    activeAnalysisDrilldown=null;analysisDrilldownSeed=null;drilldownRows.clear();
     if(destination==='manage'&&recordId){
       const index=statements.findIndex(item=>savedIds.get(item)===recordId);
       if(index<0){toast('明細が見つかりません。OneDriveを更新してください。');return;}
@@ -2690,6 +2740,7 @@ function init(): void {
       manageMonth=manageYear==='all'?'all':billing!.slice(5);
       activeIndex=index;
     }
+    if(destination==='subscription-candidates'){subscriptionsUi?.selectCandidates();homeNavigationPending=true;showView('subscriptions');return;}
     homeNavigationPending=true;showView(destination);
   },saveMizuhoFunding:async(month,done,snapshot)=>{
     if(!liveVault?.unlocked)throw new Error('OneDrive保管庫を解除してください。');
@@ -2713,7 +2764,7 @@ function init(): void {
       if(!$('summary-view').classList.contains('hidden'))summaryUi?.render();
       if(!$('analysis-view').classList.contains('hidden'))analysisUi?.render();
       if(!$('assets-page').classList.contains('hidden'))assetsUi?.render();
-    },openAccountSettings:()=>showView('assets')});
+    },openAccountSettings:()=>showView('assets'),openCardRule:target=>{void openCardFixedRule(target);}});
   reportsUi=initMonthlyReports({source:homeSource,vault:()=>liveVault,openMonth:(period)=>{summaryUi?.setPeriod(period);showView('summary');}});
   summaryUi=initMonthlySummary({
     source:homeSource,
@@ -2794,6 +2845,7 @@ function init(): void {
     finally{await updateBrowserRememberStatus();}
   })();});
   initCloudSettings({
+    onConnectionStateChange:syncCloudGate,
     hasUnsavedChanges:()=>{const state=interruptionState();return !!(state.busy.length||state.unsaved.length);},
     canNavigate:()=>confirmInterruption('認証画面へ移動'),
     recoveryPending:()=>!!liveVault?.hasPendingYearBatch,
@@ -2934,10 +2986,16 @@ function init(): void {
   document.querySelectorAll<HTMLInputElement>('input[name="rule-mode-choice"]').forEach(radio=>radio.addEventListener('change',()=>{
     if(radio.checked)$<HTMLSelectElement>('rule-mode').value=radio.value;
   }));
-  $('rule-pattern-add').addEventListener('click',addRulePatternAlternative);
+  $('rule-pattern-add').addEventListener('click',()=>{addRulePatternAlternative();updateFixedRulePreview();});
+  $('rules-form').addEventListener('input',updateFixedRulePreview);
+  $('rules-form').addEventListener('change',updateFixedRulePreview);
   $<HTMLFormElement>('rules-form').addEventListener('submit',event=>{
     event.preventDefault();const candidate=proposedRule();
     if(!candidate){toast('利用先ルールの入力内容を確認してください。');return;}
+    if(candidate.fixedCost&&!fixedRuleEligible(candidate)){toast('固定費にはカード1枚と完全一致の利用先1件を指定してください。');return;}
+    // When registering a candidate on a different card, keep the old classification rule.
+    const original=rules().find(r=>r.id===editingRuleId);
+    if(candidate.fixedCost&&original&&!original.fixedCost&&fixedDraftKey&&fixedRuleKey(candidate)!==fixedDraftKey)editingRuleId=null;
     // Use a stable ID so a failed upload can be retried without duplicating it.
     if(!editingRuleId){editingRuleId=crypto.randomUUID();candidate.id=editingRuleId;}
     void saveRule(candidate);
@@ -2973,6 +3031,7 @@ function init(): void {
   });
   $('batch-import').addEventListener('click', () => { void saveAllPending(); });
   $('manage-clear-changes').addEventListener('click',()=>{void clearManagerChanges();});
+  $('manage-confirm-statement').addEventListener('click',()=>{void confirmManagedStatement();});
   $('manage-save').addEventListener('click',()=>{const s=active();if(s){if(savedIds.has(s)){void saveEditedStatement(s,true);}else void saveAllPending();}});
   $('manage-delete').addEventListener('click', () => { if (activeIndex >= 0) void deleteStatement(activeIndex); });
   $('manage-add-row').addEventListener('click', () => { const s = active(); if (!s||isZeroUsage(s)) return; s.rows.push({id: crypto.randomUUID(), usedOn: new Date().toISOString().slice(0,10),merchant:'',amount:0}); markDirty(s); });

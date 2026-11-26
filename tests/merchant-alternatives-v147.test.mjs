@@ -55,7 +55,7 @@ test('UI keeps one rule editor and verifies side-by-side layouts',async()=>{
  assert.match(main,/patterns\.length>1\?\{patterns:patterns\.slice\(1\)\}/);
  assert.doesNotMatch(html,/id="manage-total"/);
  assert.doesNotMatch(main,/\$\('manage-total'\)/);
- assert.match(html,/id="nav-payroll"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/);
+ assert.doesNotMatch(html,/id="nav-payroll"/);
  assert.match(html,/class="recurring-top-row"/);
  assert.match(html,/class="recurring-account-row"/);
  assert.match(html,/class="recurring-schedule-row"/);

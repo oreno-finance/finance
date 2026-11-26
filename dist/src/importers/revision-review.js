@@ -1,8 +1,16 @@
 import { normalize, squish } from './utils.js';
+import { statementSignature, statementMonthKey } from './import-policy.js';
 function identity(row) {
     return JSON.stringify([row.usedOn, squish(row.merchant).toUpperCase(), row.amount]);
 }
 function rowDescription(row) { return normalize(row.description ?? '').trim(); }
+/** Only actual current content equality permits a confirmation-only update.
+ * Ignore presentation overrides but compare every issuer row, including notes. */
+export function isConfirmationOnlyRevision(existing, incoming) {
+    return existing.confirmation !== 'confirmed' && incoming.confirmation === 'confirmed' &&
+        !!statementMonthKey(existing) && statementMonthKey(existing) === statementMonthKey(incoming) &&
+        statementSignature({ ...existing, confirmation: 'confirmed' }) === statementSignature(incoming);
+}
 /** Never trust row-1/row-2 identifiers when switching between pasted tables and CSVs. */
 export function prepareStatementRevision(existing, incoming) {
     const next = structuredClone(incoming);
@@ -16,6 +24,14 @@ export function prepareStatementRevision(existing, incoming) {
         after.set(key, [...(after.get(key) ?? []), r]);
     }
     const diff = { matched: 0, added: [], removed: [], changed: [], ambiguous: [], transferred: 0, notesTransferred: 0, overridesLost: [] };
+    if (isConfirmationOnlyRevision(existing, incoming)) {
+        // A state-only update never rematches or discards edits on repeated rows.
+        next.rows = structuredClone(existing.rows);
+        diff.confirmationOnly = true;
+        diff.matched = next.rows.length;
+        diff.transferred = next.rows.filter(row => !!row.merchantOverride).length;
+        return { statement: next, diff };
+    }
     for (const key of new Set([...before.keys(), ...after.keys()])) {
         const old = before.get(key) ?? [], fresh = after.get(key) ?? [];
         if (old.length !== 1 || fresh.length !== 1) {

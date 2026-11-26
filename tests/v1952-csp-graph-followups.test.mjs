@@ -85,7 +85,7 @@ test('touch has no native highlight; keyboard has visible focus and filters rest
 });
 
 test('balance comparison explicitly says it is recalculated from current settings',()=>{
-  assert.match(bank,/前回確認残高からの再計算と今回実績/);
+  assert.match(bank,/残高照合（再計算と実績）/);
   assert.match(bank,/現在の設定による再計算残高/);
   assert.match(bank,/当時保存していた予測値ではありません/);
   assert.match(bank,/使途不明金とは断定できません/);

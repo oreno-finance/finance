@@ -9,7 +9,8 @@
 .fixed-cost-metric span{font-size:12px;color:var(--muted,#687387)}
 .fixed-cost-metric strong{font-size:clamp(1rem,1.4vw,1.4rem);overflow-wrap:anywhere}
 .fixed-cost-toolbar{display:flex;gap:12px;justify-content:space-between;align-items:center;flex-wrap:wrap}
-.fixed-cost-toolbar>.save-action{white-space:nowrap;min-height:40px;padding:8px 13px}
+.fixed-cost-registration-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-left:auto}
+.fixed-cost-registration-actions button{white-space:nowrap;min-height:38px;width:auto}
 .fixed-cost-item{display:flex;gap:14px;align-items:center;padding:16px;flex-wrap:wrap;min-width:0}
 .fixed-cost-item-info{display:grid;gap:5px;min-width:150px;flex:1 1 180px;overflow-wrap:anywhere}
 .fixed-cost-item-info strong{font-size:15px}
@@ -38,9 +39,6 @@
 /* Purpose-specific contract forms and read-only bank cost references. */
 .fixed-cost-form .fixed-cost-equivalent{grid-column:1/-1;font-size:12px;color:var(--muted);margin:0;overflow-wrap:anywhere}
 .fixed-cost-form-actions{flex-wrap:wrap}
-.assets-fixed-cost-reference{margin-top:18px}
-.assets-fixed-cost-reference .panel-heading{flex-wrap:wrap;gap:10px}
-.assets-fixed-cost-reference .assets-recurring-item>.assets-item-button{align-self:flex-start;margin-top:6px}
 
 /* Dated payment terms and read-only point rate history. */
 .card-setting-rate-history-line>div{display:grid;gap:4px;min-width:0;overflow-wrap:anywhere}
@@ -61,6 +59,7 @@
   .fixed-cost-create-mode{grid-template-columns:repeat(12,minmax(0,1fr));align-items:start}
   .fixed-cost-create-mode>.fixed-cost-field,.fixed-cost-create-mode>.fixed-cost-price-choices{grid-column:span 4}
   .fixed-cost-create-mode>.fixed-cost-field:has(:is([name="name"],[name="note"])){grid-column:1/-1}
+  .fixed-cost-create-mode[data-method="card"]>.fixed-cost-field:has([name="merchant"]),
   .fixed-cost-create-mode[data-method="cash"]>.fixed-cost-field:has([name="method"]),
   .fixed-cost-create-mode:not([data-method="card"])>.fixed-cost-field:has([name="category"]){grid-column:span 8}
   .fixed-cost-create-mode[data-frequency="yearly"]>.fixed-cost-field:has(:is([name="frequency"],[name="startOn"],[name="month"],[name="day"])){grid-column:span 3}

@@ -9,7 +9,7 @@ test('警告とエラーは後続通知で失われず、ロックで消去す�
  const panel={dataset:{},classList:{add:k=>classes.add(k),remove:k=>classes.delete(k),contains:k=>classes.has(k)},querySelector:s=>s==='.activity-message'?label:s==='.activity-dismiss'?button:null,setAttribute(){}};
  const old=globalThis.document;globalThis.document={getElementById:id=>id==='toast'?panel:null};
  const oldTimer=globalThis.setTimeout;let scheduled=0;globalThis.setTimeout=(...args)=>{scheduled++;return oldTimer(...args);};
- try{clearActivity();showActivity('test warning','warn');showActivity('test error','bad');assert.equal(scheduled,0);dismiss();showActivity('test success','good');assert.equal(scheduled,1);assert.deepEqual(activityHistory().map(x=>x.kind),['good','bad','warn']);assert.equal(activityHistory().filter(x=>x.unread).length,2);clearActivity();assert.equal(activityHistory().length,0);}
+ try{clearActivity();showActivity('test warning','warn');showActivity('test error','bad');assert.equal(scheduled,0);dismiss();showActivity('test success','good');assert.equal(scheduled,1);assert.deepEqual(activityHistory().map(x=>x.kind),['good','bad','warn']);assert.ok(activityHistory().every(x=>!('unread' in x)));showActivity('test working','working');showActivity('test info','info');assert.equal(activityHistory().length,3);for(let i=0;i<205;i++)showActivity('test complete '+i,'good');assert.equal(activityHistory().length,200);assert.equal(activityHistory()[0].message,'test complete 204');assert.equal(activityHistory().at(-1).message,'test complete 5');clearActivity();assert.equal(activityHistory().length,0);}
  finally{clearActivity();globalThis.document=old;globalThis.setTimeout=oldTimer;}
 });
 test('通常保存の結果はトーストへ統一し、復旧内訳と再送禁止を維持する',()=>{

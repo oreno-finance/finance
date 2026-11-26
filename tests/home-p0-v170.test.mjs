@@ -56,11 +56,12 @@ test('unassigned card debit has no made-up bank account or after-balance and sug
 
 test('no snapshot means no invented forecast or balance-shortage alert',()=>{
   const home=homeOverview(source(),today);
-  assert.equal(home.accounts[0].predicted,null);
+  assert.equal(home.accounts[0].current,null);
+  assert.ok(!home.accounts.some(a=>'predicted' in a));
   assert.ok(!home.actions.some(a=>a.kind==='shortage'));
 });
 
-test('warning uses reliable snapshot + known card debit; no false alarm after same-day salary',()=>{
+test('warning uses daily net balance; no false alarm after same-day salary',()=>{
   const s=source();s.assets.payrollDepositAccount='rakuten-bank';s.payroll.entries=[];s.assets.snapshots.push(snapshot('snap-1','rakuten-bank',10000,'2026-11-15'));
   let home=homeOverview(s,today);
   assert.ok(home.actions.some(a=>a.kind==='shortage'));
@@ -73,9 +74,10 @@ test('warning uses reliable snapshot + known card debit; no false alarm after sa
 test('incomplete Payroll, provisional bills and invalid statements suppress confident shortage claims',()=>{
   const s=source();s.assets.snapshots.push(snapshot('snap-1','rakuten-bank',1));
   s.payroll.ready=false;
-  assert.ok(!homeOverview(s,today).actions.some(a=>a.kind==='shortage'));
+  const warn=()=>homeOverview(s,today).actions.find(a=>a.kind==='shortage');
+  assert.equal(warn()?.severity,'medium');assert.match(warn().title,/可能性/);
   s.payroll.ready=true;s.records[0].statement.confirmation='provisional';
-  assert.ok(!homeOverview(s,today).actions.some(a=>a.kind==='shortage'));
+  assert.equal(warn()?.severity,'medium');assert.match(warn().detail,/概算/);
   s.records[0].statement.confirmation='confirmed';s.records[0].statement.statedTotal=999;
   assert.ok(!homeOverview(s,today).actions.some(a=>a.kind==='shortage'));
 });
@@ -115,10 +117,11 @@ test('issuer schedule reminders appear only after their guideline date and stop 
   assert.equal(homeActions(s,report,forecast,'2026-11-18').filter(x=>x.kind==='provisional').length,0);
 });
 
-test('uncategorized, stale balance, payroll and invalid statement actions remain actionable',()=>{
+test('uncategorized remains counted but not actionable on home; balance and payroll notices remain',()=>{
   const s=source();s.assets.snapshots.push(snapshot('snap-old','rakuten-bank',200000,'2026-09-01'));
-  const actions=homeOverview(s,today).actions;
-  assert.ok(actions.some(x=>x.kind==='unclassified'&&x.target==='manage'));
+  const overview=homeOverview(s,today),actions=overview.actions;
+  assert.ok(monthlyReport(today.slice(0,7),s).unclassifiedCount>0);
+  assert.ok(!actions.some(x=>x.kind==='unclassified'));
   assert.ok(actions.some(x=>x.kind==='stale-balance'&&x.target==='assets'));
   s.payroll.ready=false;
   assert.ok(homeOverview(s,today).actions.some(x=>x.kind==='payroll'&&x.target==='settings'));
@@ -141,10 +144,12 @@ test('UI has home first on reload, locked-data protection and safe text renderin
 
 test('unknown payroll deposit destination or stale payroll sync does not trigger a confident shortage',()=>{
   const s=source();s.assets.snapshots.push(snapshot('snap-1','rakuten-bank',100));
-  assert.equal(homeOverview(s,today).actions.filter(x=>x.kind==='shortage').length,0);
+  assert.equal(homeOverview(s,today).actions.find(x=>x.kind==='shortage')?.severity,'medium');
   s.assets.payrollDepositAccount='rakuten-bank';
   s.payroll.syncedAt=Date.parse('2026-10-01T00:00:00Z');
-  assert.equal(homeOverview(s,today).actions.filter(x=>x.kind==='shortage').length,0);
+  assert.ok(!homeOverview(s,today).actions.some(x=>x.kind==='shortage'),'stale income still covers the modeled debit');
+  s.payroll.entries=[];
+  assert.equal(homeOverview(s,today).actions.find(x=>x.kind==='shortage')?.severity,'medium');
 });
 
 test('10th-payment SMBC review guidance handles year rollover',()=>{
@@ -154,14 +159,13 @@ test('10th-payment SMBC review guidance handles year rollover',()=>{
 });
 
 
-test('home balance cards share current and next-month projections, with NISA, zero and unavailable payroll',()=>{
+test('home balance cards share current balances, with NISA, zero and unavailable payroll',()=>{
   const s=source();s.assets.snapshots=[snapshot('r','rakuten-bank',100000),snapshot('m','mizuho-bank',0),snapshot('n','nisa',20000)];
   s.assets.payrollDepositAccount='rakuten-bank';s.payroll.ready=false;
   const work=prepareBankForecast(s.records,s.assets);
   const now=forecastBankBalances(s.assets,today,s.records,[],'rakuten-bank',today,work).accounts;
-  const next=forecastBankBalances(s.assets,'2026-12-31',s.records,[],'rakuten-bank',today,work).accounts;
   const h=homeOverview(s,today);
-  for(const a of h.accounts){assert.equal(a.current,now[a.id].balance);assert.equal(a.predicted,next[a.id].balance);}
+  for(const a of h.accounts){assert.equal(a.current,now[a.id].balance);assert.ok(!('predicted' in a));}
   assert.equal(h.accounts.find(a=>a.id==='mizuho-bank').current,0);
   assert.equal(h.accounts.find(a=>a.id==='cash-savings').current,null);
   assert.equal(h.accounts.find(a=>a.id==='nisa').current,20000);
@@ -173,4 +177,63 @@ test('movement identity pairs only the original transfer, including a single NIS
   assert.equal(transfers.length,5);
   assert.deepEqual([...new Set(transfers.map(x=>x.transferId))],['once:a','once:b','once:c']);
   assert.equal(transfers.filter(x=>x.transferId==='once:a').reduce((v,x)=>v+x.amount,0),0);
+});
+
+
+test('card plus direct recurring bank expense warns about shortage on the actual date',()=>{
+  const s=source([card('bill','smbc-nl',150000)]);
+  s.payroll.entries=[];s.assets.payrollDepositAccount='rakuten-bank';
+  s.assets.snapshots=[snapshot('snap-r','rakuten-bank',190000,'2026-11-17')];
+  s.assets.recurring=[{id:'direct-expense',name:'銀行引落',kind:'expense',amount:50000,fromAccountId:'rakuten-bank',toAccountId:null,
+    frequency:'monthly',dayOfMonth:28,monthOfYear:null,weekday:null,startOn:'2026-11-01',endOn:'2026-11-30',categoryId:null,enabled:true}];
+  let action=homeOverview(s,today).actions.find(a=>a.kind==='shortage');
+  assert.equal(action.severity,'high');assert.match(action.detail,/11\/28.*-10,000円.*不足 10,000円/);
+  s.records=[];s.assets.snapshots[0].balance=40000;
+  action=homeOverview(s,today).actions.find(a=>a.kind==='shortage');assert.match(action.detail,/11\/28.*-10,000円/);
+  s.assets.snapshots[0].balance=50000;
+  assert.ok(!homeOverview(s,today).actions.some(a=>a.kind==='shortage'),'zero does not trigger a default warning');
+});
+
+test('configured floor is per bank, strict below, and detects current or future shortfalls without card events',()=>{
+  const s=source([]);s.payroll.entries=[];s.assets.payrollDepositAccount='rakuten-bank';
+  s.assets.snapshots=[snapshot('snap-r','rakuten-bank',190000,'2026-11-17'),snapshot('snap-m','mizuho-bank',5000,'2026-11-17')];
+  s.assets.balanceWarningLimits={'rakuten-bank':50000,'mizuho-bank':5000};
+  s.assets.oneTime=[{id:'once-transfer',date:'2026-11-20',name:'送金',amount:150000,kind:'transfer',status:'planned',fromAccountId:'rakuten-bank',toAccountId:'mizuho-bank'}];
+  let actions=homeOverview(s,today).actions.filter(a=>a.kind==='shortage');
+  assert.equal(actions.length,1);assert.match(actions[0].title,/楽天銀行.*設定下限/);assert.match(actions[0].detail,/11\/20.*40,000円.*50,000円/);
+  s.assets.balanceWarningLimits={'rakuten-bank':40000,'mizuho-bank':6000};
+  actions=homeOverview(s,today).actions.filter(a=>a.kind==='shortage');
+  assert.equal(actions.length,1);assert.match(actions[0].title,/みずほ銀行/);assert.match(actions[0].detail,/11\/18.*5,000円.*6,000円/);
+  s.assets.snapshots[1].observedAt='2026-01-01T00:00:00Z';
+  assert.ok(!homeOverview(s,today).actions.some(a=>a.kind==='shortage'),'no fabricated balance from stale snapshot');
+});
+
+test('future negative balance wins over floor warning, past dips and events outside the 45-day horizon do not warn',()=>{
+  const s=source([]);s.payroll.entries=[];s.assets.payrollDepositAccount='rakuten-bank';
+  s.assets.snapshots=[snapshot('snap-r','rakuten-bank',100000,'2026-11-01')];s.assets.balanceWarningLimits={'rakuten-bank':50000};
+  const once=(id,date,amount,kind)=>({id,date,amount,kind,name:'架空の入出金',status:'planned',fromAccountId:kind==='expense'?'rakuten-bank':null,toAccountId:kind==='income'?'rakuten-bank':null});
+  s.assets.oneTime=[once('past-out','2026-11-02',120000,'expense'),once('past-in','2026-11-03',120000,'income'),once('future-out','2027-01-03',200000,'expense')];
+  assert.ok(!homeOverview(s,today).actions.some(a=>a.kind==='shortage'));
+  s.assets.oneTime.push(once('floor-out','2026-11-25',60000,'expense'),once('negative-out','2026-11-26',50000,'expense'));
+  const a=homeOverview(s,today).actions.filter(a=>a.kind==='shortage');assert.equal(a.length,1);assert.match(a[0].detail,/11\/26.*-10,000円/);
+});
+
+test('home balance delta uses both payment-month reports and does not invent a missing comparison',()=>{
+ const records=[card('now'),card('prev','smbc-nl',10000,'2026-10-27','confirmed','2026-09')];
+ const s=source(records);s.payroll.entries.push(salary('prev-pay','2026-10-10',15000));
+ assert.equal(homeOverview(s,today).balanceDelta,5000);
+ assert.equal(homeOverview({...s,records:[records[0]]},today).balanceDelta,null);
+ assert.equal(homeOverview({...s,records:[records[1]]},today).balanceDelta,null);
+ s.payroll.entries[0].netPay=10000;
+ assert.equal(homeOverview(s,today).balanceDelta,-15000);
+});
+
+
+test('old but successfully synced Payroll is not a home action; failed sync and missing card month still are',()=>{
+ const s=source([card('prev','smbc-nl',20000,'2026-10-27','confirmed','2026-09')]);
+ s.payroll.syncedAt=Date.parse('2026-10-01T00:00:00Z');
+ let actions=homeOverview(s,today).actions;
+ assert.ok(!actions.some(a=>a.kind==='payroll'));assert.ok(actions.some(a=>a.kind==='missing-statements'));
+ s.payroll.ready=false;actions=homeOverview(s,today).actions;
+ assert.ok(actions.some(a=>a.id==='payroll:not-ready'));assert.ok(actions.some(a=>a.kind==='missing-statements'));
 });

@@ -8,19 +8,17 @@
 #import-view > .home-return-bar{order:0;flex:0 0 auto}
 
 /* Manual monthly Mizuho funding check: not an account transaction. */
-#home-view .home-funding{display:grid;gap:5px;padding:10px 12px;border:1px solid var(--line,#dde2e8);border-radius:10px}
-#home-view .home-funding-overdue{border-color:var(--danger,#bf4c51)}
-#home-view .home-funding-state{font-size:14px;line-height:1.45}
-#home-view .home-funding-overdue .home-funding-state{color:var(--danger,#bf4c51)}
-#home-view .home-funding-facts{font-size:12px;line-height:1.5;margin:0}
-#home-view .home-funding-controls{display:flex;flex-wrap:wrap;gap:8px}
-#home-view .home-funding-controls button{width:auto;min-height:38px;padding:7px 15px;border-radius:9px}
-#home-view .home-funding-save{background:var(--accent,#238669);color:white;border:1px solid transparent}
-#home-view .home-funding-revoke{background:transparent;color:inherit;border:1px solid var(--line,#dde2e8)}
-#home-view .home-funding-controls button:disabled{opacity:.6;cursor:wait}
-#home-view .home-funding-error{color:var(--danger,#bf4c51);font-size:12px;margin:0}
-#home-view .home-funding-disclaimer{font-size:11px;line-height:1.5}
-@media(max-width:440px){#home-view .home-funding-controls button{width:100%}}
+:is(#home-view,#assets-funding-history) .home-funding{display:grid;gap:5px;padding:10px 12px;border:1px solid var(--line,#dde2e8);border-radius:10px}
+:is(#home-view,#assets-funding-history) .home-funding-overdue{border-color:var(--danger,#bf4c51)}
+:is(#home-view,#assets-funding-history) .home-funding-state{font-size:11px;font-weight:500;color:var(--muted);line-height:1.45}
+:is(#home-view,#assets-funding-history) .home-funding-overdue .home-funding-state{color:var(--danger,#bf4c51)}
+:is(#home-view,#assets-funding-history) .home-funding-facts{font-size:12px;line-height:1.5;margin:0}
+:is(#home-view,#assets-funding-history) .home-funding-body{display:flex;align-items:center;justify-content:space-between;gap:8px 12px;min-width:0}
+:is(#home-view,#assets-funding-history) .home-funding-copy{display:grid;gap:5px;min-width:0;flex:1}
+:is(#home-view,#assets-funding-history) .home-funding-controls{display:flex;flex:0 1 auto;flex-wrap:wrap;justify-content:flex-end;gap:8px;max-width:50%;margin-inline-start:auto}
+:is(#home-view,#assets-funding-history) .home-funding-controls button{width:auto;min-width:0;max-width:100%;padding:7px 12px;margin:0}
+:is(#home-view,#assets-funding-history) .home-funding-error{color:var(--danger,#bf4c51);font-size:12px;margin:0}
+:is(#home-view,#assets-funding-history) .home-funding-disclaimer{font-size:11px;line-height:1.5}
 
-#home-view .home-funding-prior{border-color:var(--danger,#bf4c51)}
-#home-view .home-funding-prior .home-funding-state{color:var(--danger,#bf4c51)}
+:is(#home-view,#assets-funding-history) .home-funding-prior{border-color:var(--danger,#bf4c51)}
+:is(#home-view,#assets-funding-history) .home-funding-prior .home-funding-state{color:var(--danger,#bf4c51)}

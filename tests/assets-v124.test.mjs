@@ -195,3 +195,20 @@ test('LiveVault keeps NISA rule history encrypted and restores it after refresh 
   assert.equal(first.assetSettings().nisaCardRuleHistory.length,2);
   assert.equal(first.assetSettings().nisaCardRuleHistory[1].previous.cardId,'amazon');
 });
+
+
+test('bank warning settings survive encrypted writes, unlock, independent edits and clearing',async()=>{
+  const store=new Map(),a=new LiveVault(new FakeGraph(store));await a.create(secret);
+  await a.addBalanceSnapshot(snap());
+  const b=new LiveVault(new FakeGraph(store));await b.unlock(secret);
+  await a.setBalanceWarningLimits({'rakuten-bank':50000});
+  await b.setBalanceWarningLimits({'mizuho-bank':10000});
+  const c=new LiveVault(new FakeGraph(store));await c.unlock(secret);
+  assert.deepEqual(c.assetSettings().balanceWarningLimits,{'rakuten-bank':50000,'mizuho-bank':10000});
+  assert.equal(c.assetSettings().snapshots[0].balance,125000);
+  assert.ok(!store.get('assets').text.includes('balanceWarningLimits'));
+  await assert.rejects(c.setBalanceWarningLimits({'rakuten-bank':-1}),/残高警告/);
+  await c.setBalanceWarningLimits({'rakuten-bank':0,'mizuho-bank':10000});
+  c.lock();await c.unlock(secret);
+  assert.deepEqual(c.assetSettings().balanceWarningLimits,{'mizuho-bank':10000});
+});

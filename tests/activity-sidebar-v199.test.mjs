@@ -6,7 +6,7 @@ const read=path=>readFileSync(new URL(`../${path}`,import.meta.url),'utf8');
 
 test('sidebar text is a single nowrap layer and all icons keep a fixed horizontal rail',()=>{
  const html=read('public/index.html'),css=read('public/styles/layout-v196.css');
- for(const id of ['home','import','manage','summary','analysis','subscriptions','reports','rules','assets','future','settings','payroll']){
+ for(const id of ['home','import','manage','summary','analysis','subscriptions','reports','rules','assets','future','settings']){
   const tag=html.match(new RegExp(`id="nav-${id}"[^>]*>[\\s\\S]*?<span class="nav-text">([^<]+)</span>`));
   assert.ok(tag,`the ${id} label must be wrapped independently of its SVG`);
  }

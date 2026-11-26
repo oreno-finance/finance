@@ -57,7 +57,7 @@ test('card settings use one flat panel with CSV payment, bank account, point rat
   assert.equal(CARDS.find(c=>c.id==='rakuten-etc').name,'楽天カード');
 });
 test('analysis-to-management breakdown enables normal page scrolling rather than fixed viewport clipping',()=>{
-  assert.match(main,/classList\.toggle\('manage-with-drilldown',!!activeAnalysisDrilldown\)/);
+  assert.match(main,/classList\.toggle\('manage-with-drilldown',!!drilldown\)/);
   const drilldown=readFileSync(new URL('../public/styles/drilldown-v190.css',import.meta.url),'utf8');
   assert.match(drilldown,/#manage-view\.manage-with-drilldown:not\(\.hidden\)/);
   assert.match(drilldown,/overflow-y:auto/);

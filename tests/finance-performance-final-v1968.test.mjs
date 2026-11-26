@@ -90,12 +90,12 @@ test('Phase 4B: 同期後は表示中の画面だけ一度描画し、給与同�
   const code=readFileSync(new URL('../dist/src/main.js',import.meta.url),'utf8');
   const render=code.slice(code.indexOf('function render() {'),code.indexOf('function attachSource('));
   const refresh=code.slice(code.indexOf('async function refreshCloud() {'),code.indexOf('async function migrateLegacy('));
-  const counts={rules:0,assets:0,future:0,home:0,payroll:0};let visible='home-view';
+  const counts={rules:0,assets:0,future:0,home:0,fundingHistory:0,payroll:0};let visible='home-view';
   const vault={unlocked:true,exists:true,refresh:async()=>[]};
   const ctx=vm.createContext({filesBusy:false,revisionBusy:false,$:id=>({classList:{contains:()=>id!==visible}}),
     liveVault:vault,vaultDiscoveryCompleted:true,cloudStartupRunning:false,currentModal:null,cloudRefreshing:false,lastCloudCheckAt:0,assertRefreshSafe(){},
     renderRules:()=>counts.rules++,assetsUi:{render:()=>counts.assets++,refreshPayroll:async()=>{counts.payroll++;}},
-    futureUi:{render:()=>counts.future++},homeUi:{render:()=>counts.home++},summaryUi:null,analysisUi:null,subscriptionsUi:null,
+    futureUi:{render:()=>counts.future++},homeUi:{render:()=>counts.home++,renderFundingHistory:()=>counts.fundingHistory++},summaryUi:null,analysisUi:null,subscriptionsUi:null,
     syncCloudGate(){},updateCloudStatus(){}});
   vm.runInContext(render+refresh+'\nthis.doRefresh=refreshCloud;this.replaceCloudRecords=()=>render();',ctx);
   ctx.cloudStartupRunning=true;await assert.rejects(ctx.doRefresh(),/保管庫を確認中/);ctx.cloudStartupRunning=false;
@@ -104,5 +104,5 @@ test('Phase 4B: 同期後は表示中の画面だけ一度描画し、給与同�
     visible=view;for(const k of Object.keys(counts))counts[k]=0;await ctx.doRefresh();results.push({...counts});
   }
   t.diagnostic(JSON.stringify(results));
-  assert.deepEqual(results,[{rules:0,assets:0,future:0,home:1,payroll:1},{rules:1,assets:0,future:0,home:0,payroll:1},{rules:0,assets:1,future:0,home:0,payroll:1},{rules:0,assets:0,future:1,home:0,payroll:1}]);
+  assert.deepEqual(results,[{rules:0,assets:0,future:0,home:1,fundingHistory:0,payroll:1},{rules:1,assets:0,future:0,home:0,fundingHistory:0,payroll:1},{rules:0,assets:1,future:0,home:0,fundingHistory:1,payroll:1},{rules:0,assets:0,future:1,home:0,fundingHistory:0,payroll:1}]);
 });

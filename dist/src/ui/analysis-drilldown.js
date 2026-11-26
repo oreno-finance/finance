@@ -2,6 +2,7 @@
  * The payment month (not billing/usage month) decides membership. No cloud mutation occurs. */
 import { displayMerchant, matchingRule } from '../cloud/merchant-rules.js';
 import { monthlyReport, prepareMonthlyReports, isNisaCardRow, isValidPeriod } from '../summary/monthly-summary.js';
+import { formatMonth } from './formatters.js';
 export function validateAnalysisDrilldown(request) {
     if (!request || !['card', 'category', 'merchant'].includes(request.dimension) ||
         !Array.isArray(request.periods) || !request.periods.length || request.periods.length > 24 ||
@@ -52,8 +53,8 @@ export function analysisDrilldownMatches(source, request, reports) {
 }
 export function drilldownPeriodLabel(periods) {
     if (periods.length === 1)
-        return periods[0];
-    return `${periods[0]}〜${periods[periods.length - 1]}`;
+        return formatMonth(periods[0]);
+    return `${formatMonth(periods[0])}〜${formatMonth(periods[periods.length - 1])}`;
 }
 /** The category aggregate includes scheduled bank recurrences; show them alongside card rows.
  * Merchant and card aggregates contain card rows only. No mutation and no heuristic matching. */

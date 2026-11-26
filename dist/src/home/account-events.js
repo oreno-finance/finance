@@ -1,3 +1,4 @@
+import { fixedCostCalculationAssets, fixedCostRuleViews } from '../fixed-costs/rule-fixed-costs.js';
 import { recurringForCalculation } from '../fixed-costs/payment-history.js';
 /** Read-only account-level cashflow. Bank balances are projections from a manually
  * observed snapshot, never a bank API balance. No assets or statements are mutated. */
@@ -119,7 +120,8 @@ export function forecastAccounts(source, today, horizonDays = 45, reportForMonth
                 addMovement(`fund:${card.id}`, funding.date, 'みずほ銀行へ送金（見込み）', funding.amount, 'transfer', 'rakuten-bank', 'mizuho-bank', 'estimated');
         }
     }
-    const estimates = estimatedCardFixedBills(source.assets, source.records, today, until);
+    const fixedAssets = fixedCostCalculationAssets(source, today);
+    const estimates = estimatedCardFixedBills(fixedAssets, source.records, today, until);
     for (const item of estimates) {
         const assigned = source.assets.cardDebitAccounts?.[item.cardId];
         if (!assigned || assigned === 'nisa') {
@@ -129,7 +131,7 @@ export function forecastAccounts(source, today, horizonDays = 45, reportForMonth
         push({ id: item.id, date: item.paymentDate, accountId: assigned, amount: -item.amount,
             title: item.name, kind: 'card-estimate', cardId: item.cardId, confirmation: 'unknown', estimated: true });
     }
-    for (const funding of estimatedMizuhoFunding(source.assets, source.records, today, until)) {
+    for (const funding of estimatedMizuhoFunding(fixedAssets, source.records, today, until)) {
         for (const [accountId, sign] of [['rakuten-bank', -1], ['mizuho-bank', 1]])
             push({ id: `${funding.id}:${accountId}`, date: funding.date, title: 'みずほ銀行へ送金（見込み）', amount: sign * funding.amount,
                 kind: 'transfer', accountId, estimated: true, movementStatus: 'estimated', transferId: funding.id, route: '楽天銀行 → みずほ銀行' });
@@ -152,6 +154,7 @@ export function forecastAccounts(source, today, horizonDays = 45, reportForMonth
     }
     events.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
     const payrollStale = !!source.payroll.syncedAt && Date.parse(`${today}T12:00:00Z`) - source.payroll.syncedAt > 14 * 86400000;
+    const unknownFixedCards = fixedCostRuleViews(source, today).filter(x => x.status === 'active' && !x.charge).map(x => x.rule.cardId);
     const forecasts = bankIds.map(accountId => {
         const snapshot = observed.get(accountId) ?? null;
         const name = ASSET_ACCOUNTS.find(a => a.id === accountId).name;
@@ -161,12 +164,13 @@ export function forecastAccounts(source, today, horizonDays = 45, reportForMonth
         const affectedInvalid = start && invalidMonths.some(month => month >= period(start));
         const reason = !start ? 'no-snapshot' : start < cutoff ? 'stale-snapshot' : unknownAfterBaseline ? 'missing-card-account' :
             affectedOverlap ? 'possible-duplicate' : affectedInvalid ? 'invalid-statement' : unverified ? 'unverified-debit' :
-                (events.some(e => e.accountId === accountId && (e.kind === 'card-estimate' || e.estimated === true)) ||
+                (unknownFixedCards.some(id => id && source.assets.cardDebitAccounts?.[id] === accountId) || events.some(e => e.accountId === accountId && (e.kind === 'card-estimate' || e.estimated === true)) ||
                     (accountId === 'rakuten-bank' && estimates.some(e => { const funding = mizuhoTransferForBill(e, source.assets); return !!funding && funding.date < today; }))) ? 'estimated-card-debit' :
                     ((!source.payroll.ready || payrollStale) && (!source.assets.payrollDepositAccount || source.assets.payrollDepositAccount === accountId)) ||
                         (source.payroll.entries.length > 0 && !source.assets.payrollDepositAccount) ? 'payroll-unavailable' : null;
+        const sameDayEvents = !!start && events.some(e => e.accountId === accountId && e.date === start);
         if (!snapshot || !start || start < cutoff)
-            return { accountId, name, observed: snapshot, projected: null, projectedAt: until,
+            return { accountId, name, observed: snapshot, projected: null, projectedAt: until, sameDayEvents,
                 reliable: false, days: [], reason };
         const days = [];
         let balance = snapshot.balance;
@@ -183,7 +187,7 @@ export function forecastAccounts(source, today, horizonDays = 45, reportForMonth
                 days.push({ date: event.date, balance, events: [event] });
         }
         return { accountId, name, observed: snapshot, projected: balance, projectedAt: until,
-            reliable: reason === null, days, reason };
+            reliable: reason === null, days, reason, sameDayEvents };
     });
     const predictedCards = estimates.map(e => ({ id: e.id, cardId: e.cardId, name: e.name,
         billingMonth: null, paymentDate: e.paymentDate, amount: e.amount, confirmation: 'unknown' }));

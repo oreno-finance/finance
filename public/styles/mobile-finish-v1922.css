@@ -23,16 +23,6 @@
   }
   /* Desktop-only pin/collapse control does not belong in the phone menu. */
   #finance-sidebar .mobile-nav-panel #sidebar-collapse-toggle{display:none!important}
-  /* Keep the phone CSV/PDF picker quiet in dark mode, not bright accent green. */
-  :root[data-theme="dark"] #pdf-pane .dropzone{
-    background:#263b44!important;color:#c8e0db!important;
-    border:1px solid #56776f!important;box-shadow:none!important;
-  }
-  :root[data-theme="dark"] #pdf-pane .dropzone:is(:hover,.dragover){
-    background:#314b53!important;border-color:#72978e!important;
-  }
-  :root[data-theme="dark"] #pdf-pane .dropzone .drop-mobile-label{color:#d0e8e1!important}
-  :root[data-theme="dark"] #pdf-pane .dropzone:focus-visible{outline-color:#79b5a7!important}
   #home-view .points-benefits{padding:15px 13px 13px}
   #home-view .points-benefits-row{padding:11px 12px}
 }

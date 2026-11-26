@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {planStatementImport,statementSignature} from '../dist/src/importers/import-policy.js';
-import {prepareStatementRevision} from '../dist/src/importers/revision-review.js';
+import {prepareStatementRevision,isConfirmationOnlyRevision} from '../dist/src/importers/revision-review.js';
 import {parseStatementText} from '../dist/src/importers/statement-parser.js';
 import {importErrors} from '../dist/src/importers/batch-policy.js';
 import {filteredStatementIndices} from '../dist/src/ui/manage-filter.js';
@@ -134,4 +134,33 @@ test('bulk exclusion checks original references, manual edits, pending IDs and n
  const start=main.indexOf("$('import-discard-duplicates').addEventListener");const end=main.indexOf("$('clear-all').addEventListener",start);
  vm.runInContext(main.slice(start,end),ctx);ctx.liveVault.hasPendingYearBatch=true;listeners['import-discard-duplicates']();assert.equal(ctx.statements.length,3);
  ctx.liveVault.hasPendingYearBatch=false;listeners['import-discard-duplicates']();assert.deepEqual(ctx.statements,[old]);
+});
+
+
+test('内容が同じ未確定→確定はID・重複行・表示名を維持し、変更のある明細とは区別する',()=>{
+ const old=bill('provisional');old.rows[0].merchantOverride='表示名A';old.rows.push({...old.rows[0],id:'second-row',merchantOverride:'表示名B'});old.statedTotal=2000;
+ const incoming=structuredClone(old);incoming.confirmation='confirmed';incoming.sourceName='final.pdf';incoming.rows=incoming.rows.map((r,i)=>({...r,id:`new-${i}`,merchantOverride:undefined})).reverse();
+ assert.equal(isConfirmationOnlyRevision(old,incoming),true);
+ const prepared=prepareStatementRevision(old,incoming);
+ assert.equal(prepared.diff.confirmationOnly,true);assert.equal(prepared.diff.matched,2);assert.deepEqual(prepared.diff.overridesLost,[]);
+ assert.deepEqual(prepared.statement.rows,old.rows);assert.equal(prepared.statement.sourceName,'final.pdf');assert.equal(prepared.statement.confirmation,'confirmed');assert.equal(old.confirmation,'provisional');
+ for(const next of [{...incoming,cardId:'rakuten-mizuho'},{...incoming,billingMonth:'2026-02'},{...incoming,paymentDate:'2026-01-28'},{...incoming,statedTotal:2001},{...incoming,confirmation:'unknown'},{...incoming,rows:incoming.rows.map((r,i)=>i?{...r,description:'NEW NOTE'}:r)}]){
+  assert.equal(isConfirmationOnlyRevision(old,next),false);assert.equal(prepareStatementRevision(old,next).diff.confirmationOnly,undefined);
+ }
+ assert.equal(isConfirmationOnlyRevision({...old,confirmation:'confirmed'},incoming),false);
+ assert.equal(isConfirmationOnlyRevision({...old,confirmation:'unknown'},incoming),true);
+});
+
+test('保存済み明細の手動確定は簡潔な確認・同一明細・未編集を要求し、金額・原本・IDを変えない',async()=>{
+ const old=bill('unknown');old.rows[0].merchantOverride='表示名';const stored={id:'saved',originalId:'original',statement:structuredClone(old)};
+ const saves=[];const ctx={active:()=>old,liveVault:{unlocked:true,readonlyRecords:()=>[stored]},savedIds:new WeakMap([[old,'saved']]),importStaged:new WeakSet(),dirty:new WeakSet(),
+ cloudStartupRunning:false,activeAnalysisDrilldown:null,hasUnsavedChanges:()=>false,issues:()=>[],batchBusy:false,filesBusy:false,revisionBusy:false,cloudRefreshing:false,confirmationPending:()=>false,
+ confirmationContext:()=>()=>true,ordinaryConfirmationOwner:{},cardDisplayName:()=> 'カード',yen:n=>String(n),requestConfirmation:async options=>{assert.equal(options.title,'明細の確定');assert.equal(options.message,'明細を確定します。よろしいですか？');assert.equal(options.acceptLabel,'はい');assert.equal(options.cancelLabel,'キャンセル');return false},saveEditedStatement:async(s,manual)=>saves.push({s:JSON.parse(JSON.stringify(s)),manual})};
+ vm.createContext(ctx);vm.runInContext(main.slice(main.indexOf('function canConfirmManagedStatement('),main.indexOf('async function saveEditedStatement('))+'\nthis.can=canConfirmManagedStatement;this.confirm=confirmManagedStatement;',ctx);
+ assert.equal(ctx.can(old),true);await ctx.confirm();assert.equal(old.confirmation,'unknown');assert.equal(saves.length,0);
+ ctx.requestConfirmation=async()=>{stored.statement.rows[0].amount=2000;return true};await ctx.confirm();assert.equal(saves.length,0);stored.statement.rows[0].amount=1000;
+ ctx.hasUnsavedChanges=()=>true;assert.equal(ctx.can(old),false);ctx.hasUnsavedChanges=()=>false;
+ ctx.liveVault.hasPendingYearBatch=true;assert.equal(ctx.can(old),false);ctx.liveVault.hasPendingYearBatch=false;
+ ctx.activeAnalysisDrilldown={};assert.equal(ctx.can(old),false);ctx.activeAnalysisDrilldown=null;
+ ctx.requestConfirmation=async()=>true;await ctx.confirm();assert.equal(saves.length,1);assert.deepEqual(saves[0],{s:{...stored.statement,confirmation:'confirmed'},manual:true});assert.equal(ctx.savedIds.get(old),'saved');assert.equal(stored.originalId,'original');assert.equal(stored.statement.confirmation,'unknown');assert.equal(ctx.can(old),false);
 });

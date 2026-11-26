@@ -1,7 +1,7 @@
+import {fixedCostCalculationAssets} from '../fixed-costs/rule-fixed-costs.js';
 /** Home uses the unchanged monthlyReport as its only household cashflow source. */
-import { ASSET_ACCOUNTS, type AssetsDocument, type AssetAccountId, type BalanceSnapshot } from '../cloud/assets.js';
+import { ASSET_ACCOUNTS, type AssetAccountId, type BalanceSnapshot } from '../cloud/assets.js';
 import { changePeriod, monthlyReport, monthlyCashflow, type MonthlyReport, type MonthlySource } from '../summary/monthly-summary.js';
-import { lastDayOfNextMonth } from '../cloud/asset-projection.js';
 import { prepareBankForecast, forecastBankBalances } from '../cloud/salary-projection.js';
 import { forecastAccounts, type AccountForecasts } from './account-events.js';
 import { homeActions, type HomeAction } from './action-items.js';
@@ -9,17 +9,18 @@ import {pendingCardSubscriptions} from '../subscriptions/detect.js';
 export type HomeCoverage='missing'|'partial'|'needs-review'|'provisional'|'registered';
 export interface HomeAccount {
   id:AssetAccountId; name:string; snapshot:BalanceSnapshot|null;
-  current:number|null; predicted:number|null; warning:string|null;
+  current:number|null; warning:string|null;
 }
 export interface HomeOverview {
   today:string; period:string; report:MonthlyReport; coverage:HomeCoverage;
-  outflow:number|null; cardNames:Record<string,string>; accounts:HomeAccount[]; forecast:AccountForecasts; actions:HomeAction[];
+  outflow:number|null; balanceDelta:number|null; cardNames:Record<string,string>; accounts:HomeAccount[]; forecast:AccountForecasts; actions:HomeAction[];
+  monthEnd:{date:string;rakuten:number|null;mizuho:number|null;total:number|null;reference:boolean;sameDayEvents:boolean};
   /** Prior-month card report for stale/unfinished funding reminders. */
   priorFundingReport:MonthlyReport|null;
 }
 export function homeOverview(source:MonthlySource,today:string):HomeOverview {
   const currentPeriod=today.slice(0,7);
-  const assets={...source.assets,snapshots:source.assets.snapshots??[]} as AssetsDocument;
+  const assets=fixedCostCalculationAssets(source,today);
   const work=prepareBankForecast(source.records,assets);
   const prepared=work.prepared;
   const adjusted={...source,currentPeriod};
@@ -32,10 +33,12 @@ export function homeOverview(source:MonthlySource,today:string):HomeOverview {
   const report=reportForMonth(currentPeriod);
   const forecast=forecastAccounts(source,today,45,reportForMonth);
   const previousPeriod=changePeriod(currentPeriod,-1);
+  const previousReport=reportForMonth(previousPeriod);
+  const balanceDelta=report.monthlyBalance===null||previousReport.monthlyBalance===null?null:report.monthlyBalance-previousReport.monthlyBalance;
   // Even a prior 'done' needs revalidation after a bill has changed.
   const priorFundingReport=source.assets.mizuhoTransferPlan?.enabled&&
     source.assets.cardDebitAccounts?.['rakuten-mizuho']==='mizuho-bank'
-      ?reportForMonth(previousPeriod):null;
+      ?previousReport:null;
   const cashflow=monthlyCashflow(report);
   const coverage:HomeCoverage=cashflow.coverage==='review'?'needs-review':cashflow.coverage;
   const outflow=cashflow.expense;
@@ -43,13 +46,26 @@ export function homeOverview(source:MonthlySource,today:string):HomeOverview {
   const income=source.payroll.ready?[...source.payroll.entries]:[];
   const deposit=assets.payrollDepositAccount??null;
   const current=forecastBankBalances(assets,today,source.records,income,deposit,today,work).accounts;
-  const next=forecastBankBalances(assets,lastDayOfNextMonth(new Date(`${today}T12:00:00`)),source.records,income,deposit,today,work).accounts;
   const accounts=ASSET_ACCOUNTS.map(({id,name})=>({id,name,snapshot:current[id].baseline,current:current[id].balance,
-    predicted:next[id].balance,warning:current[id].warning??next[id].warning}));
+    warning:current[id].warning}));
+  // Use the very same daily events as the Home debit warnings. Do not add the
+  // monthly household balance to observed money (that would count past flows twice).
+  const monthEndDate=`${currentPeriod}-${String(new Date(Date.UTC(Number(currentPeriod.slice(0,4)),Number(currentPeriod.slice(5)),0)).getUTCDate()).padStart(2,'0')}`;
+  const bankEnd=(id:'rakuten-bank'|'mizuho-bank')=>{
+    const account=forecast.accounts.find(a=>a.accountId===id);
+    if(!account?.observed||account.projected===null)return null;
+    return account.days.filter(day=>day.date<=monthEndDate).at(-1)?.balance??account.observed.balance;
+  };
+  const rakuten=bankEnd('rakuten-bank'),mizuho=bankEnd('mizuho-bank');
+  const sum=rakuten===null||mizuho===null?null:rakuten+mizuho;
+  const monthEnd={date:monthEndDate,rakuten,mizuho,total:sum!==null&&Number.isSafeInteger(sum)?sum:null,
+    sameDayEvents:forecast.accounts.some(a=>a.accountId!=='cash-savings'&&a.sameDayEvents),
+    reference:coverage!=='registered'||forecast.accounts.some(a=>a.accountId!=='cash-savings'&&(!a.reliable||a.sameDayEvents))||
+      forecast.accounts.some(a=>a.accountId!=='cash-savings'&&a.days.some(d=>d.date<=monthEndDate&&d.events.some(e=>e.kind==='salary-estimate'||e.estimated||e.movementStatus==='estimated'||e.movementStatus==='planned')))};
   const cardNames=Object.fromEntries(Object.entries(source.assets.cardPreferences??{}).filter(([,preference])=>!!preference.name).map(([id,preference])=>[id,preference.name!]));
   const actions=homeActions(source,report,forecast,today);
   const candidates=pendingCardSubscriptions(source,today.slice(0,7));
   if(candidates.length)actions.push({id:'card-subscription-candidates',kind:'subscription',severity:'low',
-    title:`定期支出の候補が${candidates.length}件あります`,target:'subscriptions'});
-  return {today,period:report.period,report,coverage,outflow,cardNames,accounts,forecast,actions,priorFundingReport};
+    title:`定期支出の候補が${candidates.length}件あります`,target:'subscription-candidates'});
+  return {today,period:report.period,report,coverage,outflow,balanceDelta,cardNames,accounts,forecast,actions,monthEnd,priorFundingReport};
 }
