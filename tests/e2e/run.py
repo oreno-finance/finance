@@ -4,6 +4,7 @@ Does not launch Finance auth, does not access Microsoft Graph, and never writes 
 Uses the actual compiled Finance UI modules and production CSS, not source regexes.
 """
 import http.server
+from html.parser import HTMLParser
 from pathlib import Path
 import threading
 import unittest
@@ -12,6 +13,73 @@ from urllib.parse import urlsplit, unquote
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+class OfflineFixtureMarkup(HTMLParser):
+    """Remove boot scripts and external assets from trusted build markup only."""
+
+    def __init__(self, source):
+        super().__init__(convert_charrefs=False)
+        self.source = source
+        self.line_offsets = [0] + [i + 1 for i, ch in enumerate(source) if ch == '\n']
+        self.ranges = []
+        self.script_start = None
+
+    def source_offset(self):
+        line, column = self.getpos()
+        return self.line_offsets[line - 1] + column
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'script':
+            self.script_start = self.source_offset()
+        elif tag == 'link' or (tag == 'meta' and any(
+            name == 'http-equiv' and (value or '').lower() == 'content-security-policy'
+            for name, value in attrs
+        )):
+            start = self.source_offset()
+            self.ranges.append((start, start + len(self.get_starttag_text())))
+
+    def handle_startendtag(self, tag, attrs):
+        if tag == 'script':
+            # HTML does not support self-closing script elements.
+            raise ValueError('Unexpected self-closing script in fixture markup')
+        self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag):
+        if tag == 'script' and self.script_start is not None:
+            end = self.source.index('>', self.source_offset()) + 1
+            self.ranges.append((self.script_start, end))
+            self.script_start = None
+
+    def render(self):
+        self.feed(self.source)
+        self.close()
+        if self.script_start is not None:
+            raise ValueError('Unclosed script in fixture markup')
+        parts, cursor = [], 0
+        for start, end in self.ranges:
+            parts.append(self.source[cursor:start])
+            cursor = end
+        parts.append(self.source[cursor:])
+        return ''.join(parts)
+
+
+class FixtureMarkupTests(unittest.TestCase):
+    def test_removes_scripts_regardless_of_case_and_preserves_other_markup(self):
+        source = ('<!DOCTYPE html><head>\n'
+                  '<SCRIPT src="boot.js"></SCRIPT>\n'
+                  '<sCrIpT data-label="a>b">if (1 < 2) { boot(); }</ScRiPt >\n'
+                  '<META HTTP-EQUIV="Content-Security-Policy" content="default-src self">\n'
+                  '<LiNk rel="stylesheet" href="app.css" />\n'
+                  '<title>Fixture &amp; test</title></head><body><p>日本語</p></body>')
+        expected = ('<!DOCTYPE html><head>\n\n\n\n\n'
+                    '<title>Fixture &amp; test</title></head><body><p>日本語</p></body>')
+        self.assertEqual(OfflineFixtureMarkup(source).render(), expected)
+
+    def test_rejects_unclosed_or_self_closing_scripts(self):
+        for source in ('<SCRIPT>boot()', '<script src="boot.js"/>'):
+            with self.subTest(source=source), self.assertRaises(ValueError):
+                OfflineFixtureMarkup(source).render()
 
 
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
@@ -114,10 +182,8 @@ class FinanceBrowserTests(unittest.TestCase):
     @staticmethod
     def offline_document(import_workspace=False):
         import base64, json, re
-        html=re.sub(r'<script\b[^>]*>.*?</script>','',(ROOT/'dist/index.html').read_text(encoding='utf-8'),flags=re.S)
-        # This is test-only document markup; production CSP is independently audited.
-        html=re.sub(r'<meta http-equiv="Content-Security-Policy"[^>]*>','',html)
-        html=re.sub(r'<link\b[^>]*>','',html)
+        # Trusted build fixture only; production CSP is independently audited.
+        html=OfflineFixtureMarkup((ROOT/'dist/index.html').read_text(encoding='utf-8')).render()
         html=html.replace('</head>','<style>'+(ROOT/'dist/styles/app.css').read_text(encoding='utf-8')+'</style></head>')
         module_root=(ROOT/'dist/src').resolve()
         modules={}
