@@ -48,8 +48,8 @@
 .manage-editor .manage-rule-text{color:var(--muted)}
 .manage-editor .transaction-table td input{font-size:12px;min-width:0;max-width:100%;box-sizing:border-box}
 /* Bank forecast graph: event-date step line and zero line. */
-.monthly-chart{margin:14px 0;padding:13px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);min-width:0}
-.monthly-balance-svg{width:100%;height:auto;min-height:170px;overflow:visible}
+
+
 .monthly-chart-grid{stroke:var(--line);stroke-width:1}
 .monthly-chart-zero{stroke:#ad727a;stroke-dasharray:5 5;stroke-width:1.5}
 .monthly-chart-label{fill:var(--muted);font-size:12px;font-family:inherit}
@@ -81,12 +81,7 @@
   .future-cards{grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:6px}
   .future-card{padding:9px!important}
   .future-card strong{font-size:clamp(12px,3.6vw,17px);overflow-wrap:anywhere}
-  .monthly-chart{padding:8px 2px}
-}
-/* Keep axis text legible on phones: scroll the graph, never the whole page. */
-@media(max-width:600px){
-  .monthly-chart{overflow-x:auto;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
-  .monthly-balance-svg{width:680px;min-width:680px;max-width:none;height:auto;min-height:0}
+
 }
 
 .manage-editor .manage-uncategorized{color:var(--muted);border-color:var(--line);background:var(--bg);font-weight:500}

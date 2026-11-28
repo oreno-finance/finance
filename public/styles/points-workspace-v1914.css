@@ -74,7 +74,7 @@
  #import-view.has-import-drafts .detail-panel #preview-content:not(.hidden){display:flex!important;height:auto!important;overflow:visible!important}
  #import-view.has-import-drafts .detail-panel .detail-summary-block{flex:0 0 auto!important;max-height:none!important;overflow:visible!important;padding:13px}
  #import-view.has-import-drafts .detail-panel .transactions-panel-inner{flex:0 0 auto!important;height:auto!important;overflow:visible!important}
- #import-view.has-import-drafts .transactions-panel-inner>.table-scroll{flex:0 0 auto!important;height:min(380px,46dvh)!important;min-height:190px!important;max-height:380px!important;overflow:auto!important}
+ #import-view.has-import-drafts .transactions-panel-inner>.table-scroll{flex:0 0 auto!important;height:auto!important;min-height:0!important;max-height:none!important;overflow-x:auto!important;overflow-y:visible!important;overscroll-behavior:auto;scrollbar-gutter:auto}
  #import-view.has-import-drafts .batch-bar{flex-wrap:wrap;flex:0 0 auto!important}
  .workspace:has(#import-view.has-import-drafts:not(.hidden)) footer{display:none!important}
 }

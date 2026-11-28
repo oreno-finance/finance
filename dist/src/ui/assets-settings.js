@@ -87,7 +87,8 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
     let recurringBaseline = '';
     let payrollSession = null;
     let payrollIncome = [];
-    let payrollSynced = false, payrollBusy = false, payrollAccountDirty = false, payrollAccountBaseline = '';
+    let payrollSynced = false, payrollAccountDirty = false, payrollAccountBaseline = '';
+    let payrollBusy = false;
     let payrollStale = false, payrollUseStale = false;
     let payrollSyncedAt = 0, lastPayrollAttemptAt = 0;
     let payrollOwner = null;
@@ -974,9 +975,11 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             $('assets-payroll-deposit').value = data.payrollDepositAccount ?? '';
             payrollAccountBaseline = JSON.stringify([data.payrollDepositAccount, data.payrollDepositAccountHistory]);
         }
+        for (const element of document.querySelectorAll('#assets-payroll-connect input, #assets-payroll-connect button, #assets-payroll-deposit-form select, #assets-payroll-deposit-form button'))
+            element.disabled = !!payrollBusy;
         const haveLast = payrollOwner === vault && payrollSyncedAt > 0;
-        $('assets-payroll-count').textContent = haveLast ? `${payrollIncome.length}件` : '0件';
-        $('assets-payroll-last').textContent = haveLast ? `${formatDateTime(payrollSyncedAt)}${payrollStale ? '（更新失敗・古いデータ）' : ''}` : '未同期';
+        $('assets-payroll-count').textContent = haveLast ? `${payrollIncome.length}件` : payrollBusy ? '—' : '0件';
+        $('assets-payroll-last').textContent = haveLast ? `${formatDateTime(payrollSyncedAt)}${payrollStale ? '（更新失敗・古いデータ）' : ''}` : payrollBusy ? '読み込み中…' : '未同期';
         const staleBox = $('assets-payroll-stale');
         staleBox.classList.toggle('hidden', !payrollStale || !haveLast);
         $('assets-payroll-use-stale').checked = payrollUseStale;
@@ -1020,26 +1023,24 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             } };
             const guard = () => { if (!current())
                 throw new Error('Payroll連携の操作が変更されました。'); };
-            payrollBusy = true;
+            payrollBusy = automatic ? 'automatic' : 'manual';
             lastPayrollAttemptAt = Date.now();
-            $('assets-payroll-sync').disabled = true;
-            $('assets-payroll-forget').disabled = true;
+            let notify = !payrollSynced;
             try {
+                renderPayroll();
                 const saved = await vault.readPayrollCredential(automatic ? hint : undefined);
                 guard();
                 const changed = payrollCredential !== undefined && payrollCredential !== saved;
                 observeVerifiedPayroll(saved);
                 if (changed) {
+                    notify = true;
                     renderAccounts();
                     renderPayroll();
-                    onPayrollChange();
+                    onPayrollChange(true);
                 }
                 if (!entered && !saved) {
                     if (!automatic)
                         status($('assets-payroll-status'), '初回連携にはPayrollのパスフレーズを入力してください。', true);
-                    renderAccounts();
-                    renderPayroll();
-                    onPayrollChange();
                     return;
                 }
                 // Even before the usual synchronization interval, observe credential revocation.
@@ -1100,16 +1101,15 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
                 payrollSessionGuard = vaultGuard;
                 payrollStale = false;
                 payrollUseStale = false;
+                notify = true;
                 const message = `Payrollから${items.length}件の給与実績を${automatic ? '自動取得' : '取得'}しました。`;
                 status($('assets-payroll-status'), credentialError === undefined ? message :
                     `${message} ただし自動連携設定の${mutationError(credentialError)}。取得済みの給与情報は維持しています。`, credentialError !== undefined);
-                renderAccounts();
-                renderPayroll();
-                onPayrollChange();
             }
             catch (error) {
                 if (!current())
                     return;
+                notify = true;
                 const lastVerified = payrollOwner === vault && payrollSyncedAt > 0;
                 payrollSession = null;
                 payrollSynced = false;
@@ -1120,15 +1120,19 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
                 else
                     payrollUseStale = false;
                 status($('assets-payroll-status'), `給与を取得できませんでした：${error instanceof Error ? error.message : '通信エラー'}。${lastVerified ? '最終成功時の給与はこのタブに保持しましたが、予測から除外しています。' : '設定から再接続できます。'}`, true);
-                renderAccounts();
-                renderPayroll();
-                onPayrollChange();
             }
             finally {
                 if (epoch === payrollEpoch) {
                     payrollBusy = false;
                     $('assets-payroll-sync').disabled = !getVault()?.unlocked;
                     $('assets-payroll-forget').disabled = !getVault()?.unlocked;
+                    if (current()) {
+                        if (notify)
+                            renderAccounts();
+                        renderPayroll();
+                        if (notify)
+                            onPayrollChange(true);
+                    }
                 }
             }
         });
@@ -1162,7 +1166,8 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
         } };
         if (!current() || busy || payrollBusy || vault.assetSettings().payrollAutoPassphrase !== credential)
             return;
-        payrollBusy = true;
+        payrollBusy = 'manual';
+        let changed = false;
         $('assets-payroll-forget').disabled = true;
         try {
             await vault.setPayrollAutoPassphrase(null, credential);
@@ -1173,9 +1178,8 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             observedLocalCredential = null;
             $('assets-payroll-secret').value = '';
             status($('assets-payroll-status'), 'Payroll連携を解除し、Financeの暗号化設定からパスフレーズを削除しました。');
+            changed = true;
             renderAccounts();
-            renderPayroll();
-            onPayrollChange();
         }
         catch (error) {
             if (current())
@@ -1184,7 +1188,13 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
         finally {
             if (epoch === payrollEpoch) {
                 payrollBusy = false;
-                $('assets-payroll-forget').disabled = !getVault()?.unlocked;
+                if (current()) {
+                    renderPayroll();
+                    if (changed)
+                        onPayrollChange(true);
+                }
+                else
+                    $('assets-payroll-forget').disabled = !getVault()?.unlocked;
             }
         }
     }
@@ -1220,7 +1230,7 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
     function render() {
         const unlocked = !!getVault()?.unlocked;
         for (const element of document.querySelectorAll('#assets-payroll-connect input, #assets-payroll-connect button, #assets-payroll-deposit-form select, #assets-payroll-deposit-form button'))
-            element.disabled = !unlocked;
+            element.disabled = !unlocked || !!payrollBusy;
         for (const element of document.querySelectorAll('#assets-nisa-link-form input, #assets-nisa-link-form select, #assets-nisa-link-form button'))
             element.disabled = !unlocked || busy;
         renderBirthMonth();
@@ -1397,7 +1407,7 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             if (vault?.unlocked)
                 observeLocalPayroll(vault);
             const ready = !!vault?.unlocked && payrollOwner === vault && (payrollSynced || (payrollStale && payrollUseStale && payrollOwner === vault));
-            return ready ? { ready: true, syncedAt: payrollSyncedAt, entries: structuredClone(payrollIncome) } : { ready: false, syncedAt: null, entries: [] };
+            return ready ? { ready: true, syncedAt: payrollSyncedAt, entries: structuredClone(payrollIncome) } : { ready: false, ...(payrollBusy ? { loading: true } : {}), syncedAt: null, entries: [] };
         }, reset: () => {
             onceEpoch++;
             cancelConfirmation(confirmationOwner);
@@ -1456,5 +1466,5 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             status($('assets-once-status'), '');
             render();
             onPayrollChange();
-        }, isBusy: () => busy || payrollBusy || confirming(), isDirty: () => onceHasChanges() || recurringHasChanges() || nisaDirty || birthDirty || payrollAccountDirty || mizuhoPlanDirty || balanceWarningDirty || [...amounts.values()].some(input => input.value.trim() !== '') };
+        }, isBusy: () => busy || payrollBusy === 'manual' || confirming(), isDirty: () => onceHasChanges() || recurringHasChanges() || nisaDirty || birthDirty || payrollAccountDirty || mizuhoPlanDirty || balanceWarningDirty || [...amounts.values()].some(input => input.value.trim() !== '') };
 }

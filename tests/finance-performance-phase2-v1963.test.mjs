@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {LiveVault} from './helpers/coordinated-vault.mjs';
-import {GraphError,OneDriveTestClient} from '../dist/src/cloud/onedrive-api.js';
+import {GraphError,UploadChunkTimeoutError,OneDriveTestClient} from '../dist/src/cloud/onedrive-api.js';
 import {emptyAssets} from '../dist/src/cloud/assets.js';
 import {emptyIndex} from '../dist/src/cloud/layout.js';
 import {deriveCloudKey,encryptIndex,encryptAssets,decryptAssets,freshSalt} from '../dist/src/cloud/cloud-crypto.js';
@@ -79,7 +79,9 @@ test('unchanged asset ETag reuses verified baseline, writes with precondition, a
   // The server-supplied ETag is authoritative. A same-ETag document should not
   // need to be decrypted a second time during the write path.
   state.assetCipher='unreadable-ciphertext-with-unchanged-etag';
+  state.indexReads=0;
   await vault.upsertRecurring(recurring('insurance-0001'));
+  assert.equal(state.indexReads,1,'ordinary assets save checks generation only under the lock');
   assert.equal(state.writes,1);
   const saved=await decryptAssets(state.assetCipher,key,salt);
   assert.equal(saved.recurring.length,1);
@@ -87,6 +89,17 @@ test('unchanged asset ETag reuses verified baseline, writes with precondition, a
   const measurements=financePerformanceReport();
   assert.equal(measurements.phases['vault.asset-commit'].count,1);
   assert.ok(measurements.phases['vault.asset-commit'].totalMs>=0);
+});
+
+test('ordinary rules save uses one generation read; changed generation rejects both writes',async()=>{
+  const {vault,state,driver,key}=await vaultDriver();
+  let ruleWrites=0,ruleFile=null;driver.readMerchantRules=async()=>ruleFile;driver.writeMerchantRules=async text=>{ruleWrites++;ruleFile={text,id:'rule-id',etag:'"1"'};return ruleFile;};
+  const rule={id:'rule-a',pattern:'SHOP',displayName:'SHOP',mode:'exact',priority:100,cardId:null,enabled:true,categoryId:null};
+  state.indexReads=0;await vault.upsertMerchantRule(rule);assert.equal(state.indexReads,1);assert.equal(ruleWrites,1);
+  state.index=await encryptIndex(emptyIndex(),key,freshSalt());
+  await assert.rejects(vault.upsertMerchantRule({...rule,id:'rule-b',pattern:'OTHER'}),/現行世代|パスフレーズ/);
+  await assert.rejects(vault.setBirthMonth('2000-01'),/現行世代|パスフレーズ/);
+  assert.equal(ruleWrites,1);assert.equal(state.writes,0);
 });
 
 test('changed ETag always triggers remote decrypt and conflict-aware merge',async()=>{
@@ -153,4 +166,39 @@ test('phase two never disables generation checks, encryption, write uncertainty 
   assert.match(source,/const encrypted=await encryptDocument\(expected,key,salt\);guard\(\);await this\.client\.writeYearVault\(year,encrypted,null\)/);
   assert.match(api,/uploadSession\(path,bytes,existing\?\.etag,existing\?\.id\)/);
   assert.match(api,/'If-Match':etag/);
+});
+
+test('split uploads abort a stalled intermediate chunk, retry safely, and preserve final-write uncertainty',async()=>{
+  const realSetTimeout=globalThis.setTimeout;
+  globalThis.setTimeout=(fn,ms,...args)=>realSetTimeout(fn,ms===120000?10:ms,...args);
+  try{
+    let stall='middle',parts=[],signal;
+    const bytes=new Uint8Array(3276801);
+    const client=new OneDriveTestClient('test-token',async(url,init)=>{
+      if(url.startsWith('https://graph.microsoft.com/'))return Response.json({uploadUrl:'https://upload.test/session'});
+      const final=init.headers['Content-Range'].startsWith('bytes 3276800-');parts.push(final?'final':'middle');
+      signal=init.signal;assert.ok(signal);assert.equal(init.credentials,'omit');assert.equal(init.headers.Authorization,undefined);
+      if(stall===(final?'final':'middle'))return new Promise(()=>{});
+      return final?Response.json({id:'encrypted-file',eTag:'"2"'}):Response.json({}, {status:202});
+    });
+    const lease={guard(){},uncertain:false,released:false};client.mutationLease=lease;
+    await assert.rejects(client.uploadSession('/synthetic',bytes),UploadChunkTimeoutError);
+    assert.deepEqual(parts,['middle']);assert.equal(signal.aborted,true);assert.equal(lease.uncertain,false);
+    stall=null;parts=[];assert.equal((await client.uploadSession('/synthetic',bytes)).id,'encrypted-file');
+    assert.deepEqual(parts,['middle','final']);assert.equal(lease.uncertain,false);
+    stall='final';parts=[];await assert.rejects(client.uploadSession('/synthetic',bytes),/保存応答/);
+    assert.deepEqual(parts,['middle','final']);assert.equal(signal.aborted,true);assert.equal(lease.uncertain,true);
+  }finally{globalThis.setTimeout=realSetTimeout;}
+});
+
+test('pre-final timeout leaves settings editable and allows the existing safe retry',async()=>{
+  const {vault,driver,state}=await vaultDriver();
+  const write=driver.writeAssetSettings;
+  driver.writeAssetSettings=async()=>{throw new UploadChunkTimeoutError();};
+  await assert.rejects(vault.upsertRecurring(recurring('insurance-retry')),UploadChunkTimeoutError);
+  assert.equal(state.writes,0);
+  driver.writeAssetSettings=write;
+  await vault.upsertRecurring(recurring('insurance-retry'));
+  assert.equal(state.writes,1);
+  assert.equal(vault.assetSettings().recurring[0].id,'insurance-retry');
 });

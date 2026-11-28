@@ -79,7 +79,6 @@ let subscriptionsUi: SubscriptionsUi | null = null;
 let cardSettingsUi: CardSettingsUi | null = null;
 let currentModal: 'create' | 'unlock' | 'migrate' | null = null;
 let cloudStartupRunning = false;
-let initialPayrollVault:LiveVault|null=null;
 let lockSequence=0;
 let cleanupBusy=false;
 let vaultDiscoveryCompleted = false;
@@ -336,7 +335,7 @@ function broadcastVaultLock():void {
 }
 /** Force-close sensitive views on a lock from this tab or another one. */
 function clearUnlockedFinanceViews():void {
-  lockSequence++;revokeOriginalDownloadUrls();initialPayrollVault=null;
+  lockSequence++;revokeOriginalDownloadUrls();
   $<HTMLButtonElement>('manage-clear-changes').disabled=true;
   importAbort?.abort();clearActivity();
   showBatchDetails([], '');
@@ -489,6 +488,12 @@ function createStatementEntry(index: number, withDelete: boolean): HTMLElement {
 /** The same uploader DOM is used inline on first visit and inside the modal later. */
 function updateImportUploadFeedback():void {
   const node=$('import-upload-feedback');
+  $<HTMLInputElement>('file-input').disabled=filesBusy;
+  $<HTMLButtonElement>('parse-paste').disabled=filesBusy;
+  $('dropzone').setAttribute('aria-disabled',String(filesBusy));
+  const parsing=filesBusy&&importAbort!==null;
+  $('import-file-progress').classList.toggle('hidden',!parsing);
+  $('import-file-hint').classList.toggle('hidden',parsing);
   const messages=[...currentUploadFailures, ...(importUploadFeedback?[importUploadFeedback]:[])];
   node.textContent=messages.join('\n');
   node.classList.toggle('hidden',messages.length===0);
@@ -909,7 +914,7 @@ function updateBatchStatus(): void {
   duplicateAction.classList.toggle('hidden',redundant===0);
   duplicateAction.disabled=batchBusy||filesBusy||revisionBusy||recovery||confirmationPending();
   duplicateAction.textContent=`重複${redundant}件を除外`;
-  button.textContent = batchBusy ? '保存中…' : filesBusy ? '解析中…' : eligible.length ? `${eligible.length}件を保存` : '保存';
+  button.textContent = batchBusy ? '保存中…' : eligible.length ? `${eligible.length}件を保存` : '保存';
   const confirmationUpdates=blocked.filter(s=>importCollision(s)==='revision'&&confirmationOnlyImport(s)).length;
   const collisions=blocked.filter(s=>importCollision(s)!==null).length-confirmationUpdates;
   const otherErrors=errors.filter(s=>!importCollision(s)&&!(s.sourceKind==='csv'&&!s.paymentDate&&issues(s).every(e=>e==='支払日が不明または不正です'))).length+failedImports.length;
@@ -920,18 +925,17 @@ function updateBatchStatus(): void {
       : selectionOnly.length ? `${selectionOnly.length}件のカード選択待ち`
         : errorCount ? `${errorCount}件に不備があります`
           : eligible.length ? `${eligible.length}件の明細` : '保存対象はありません';
-  $('batch-status').textContent = filesBusy ? '明細を解析中…' : eligible.length&&errorCount ? `${eligible.length}件を保存可能／${errorCount}件は取込待ち` : status;
+  $('batch-status').textContent = eligible.length&&errorCount ? `${eligible.length}件を保存可能／${errorCount}件は取込待ち` : status;
   $('batch-description').textContent = eligible.length&&errorCount ? status : '';
 }
 
 /** One adapter supplies the state and actions; every gated page uses the same UI. */
 function syncCloudGate():void {
   const notice=cloudConnectionNotice();
-  const loadingPayroll=!!initialPayrollVault&&initialPayrollVault===liveVault;
-  const opening=cloudStartupRunning||currentModal!==null||loadingPayroll;
+  const opening=cloudStartupRunning||currentModal!==null;
   const checking=opening||notice.kind==='checking'||(!liveVault?.unlocked&&cloudConnectionPending());
-  const pending=loadingPayroll||(!liveVault?.unlocked&&checking);
-  const progress=loadingPayroll?'収入・支出データを読み込み中…':$('cloud-live-status').textContent==='自動復号中'?'保管庫を復号中…':'OneDriveに接続中…';
+  const pending=!liveVault?.unlocked&&checking;
+  const progress=$('cloud-live-status').textContent==='自動復号中'?'保管庫を復号中…':'OneDriveに接続中…';
   $('settings-view').classList.toggle('cloud-connection-pending',pending);
   $('cloud-pending-status').textContent=pending?progress:'';
   const refresh=$<HTMLButtonElement>('cloud-live-refresh');
@@ -940,7 +944,7 @@ function syncCloudGate():void {
   $<HTMLButtonElement>('cloud-new-vault').disabled=opening;
   $<HTMLButtonElement>('cloud-live-migrate').disabled=opening;
   syncFinanceCloudGates({
-    blocked:loadingPayroll||!liveVault?.unlocked||!!liveVault?.recoveryOnly,
+    blocked:!liveVault?.unlocked||!!liveVault?.recoveryOnly,
     recovery:!!liveVault?.recoveryOnly,
     locked:!!liveVault?.exists&&!liveVault.recoveryOnly&&vaultDiscoveryCompleted&&notice.kind==='connected',
     checking,progress,
@@ -953,7 +957,6 @@ function syncCloudGate():void {
 }
 
 function render(): void {
-  if(initialPayrollVault&&initialPayrollVault===liveVault)return;
   // While parsing a batch, preserve draft state but defer expensive full
   // rebuilds until it finishes. Revision confirmation remains interactive.
   if(filesBusy&&!revisionBusy){
@@ -1019,29 +1022,22 @@ function appendCloudRecordsKeepingDrafts(records:VaultRecordView[],redraw=true):
   activeIndex=statements.length?0:-1;
   if(redraw)render();
 }
-/** Open Finance and load its linked income before exposing the first snapshot. */
+/** Finance is usable as soon as its own vault is open; income is a background read. */
 async function completeVaultOpening(vault:LiveVault,records:VaultRecordView[],payrollHint?:PayrollCredentialHint):Promise<boolean>{
   const epoch=lockSequence;
-  initialPayrollVault=vault;
-  syncCloudGate();
-  try{
-    appendCloudRecordsKeepingDrafts(records,false);lastCloudCheckAt=Date.now();
-    if(!vault.recoveryOnly){
-      try{await assetsUi?.refreshPayroll(payrollHint);}
-      catch{if(epoch===lockSequence&&liveVault===vault&&vault.unlocked)operationResult('給与データを取得できませんでした。設定から再接続してください。','warn');}
-    }
-  }finally{
-    if(initialPayrollVault===vault&&epoch===lockSequence){
-      initialPayrollVault=null;
-      if(liveVault===vault&&vault.unlocked){
-        if(!$('assets-page').classList.contains('hidden')||!$('settings-view').classList.contains('hidden'))assetsUi?.render();
-        if(!$('settings-view').classList.contains('hidden'))cardSettingsUi?.render();
-        render();
-        if(!$('reports-view').classList.contains('hidden'))reportsUi?.render();
-        updateCloudStatus();
-      }
-    }
+  if(liveVault!==vault||!vault.unlocked)return false;
+  appendCloudRecordsKeepingDrafts(records,false);lastCloudCheckAt=Date.now();
+  if(!vault.recoveryOnly){
+    void assetsUi?.refreshPayroll(payrollHint).catch(()=>{
+      if(epoch===lockSequence&&liveVault===vault&&vault.unlocked)
+        operationResult('給与データを取得できませんでした。設定から再接続してください。','warn');
+    });
   }
+  if(!$('assets-page').classList.contains('hidden')||!$('settings-view').classList.contains('hidden'))assetsUi?.render();
+  if(!$('settings-view').classList.contains('hidden'))cardSettingsUi?.render();
+  render();
+  if(!$('reports-view').classList.contains('hidden'))reportsUi?.render();
+  updateCloudStatus();
   return epoch===lockSequence&&liveVault===vault&&vault.unlocked;
 }
 function updateCloudStatus(message?:string):void {
@@ -1509,19 +1505,17 @@ function showView(view: FinanceView): void {
   if (view === 'import' && !importActive()) {
     activeIndex = statements.findIndex(s => importStaged.has(s));
   }
-  if(!(initialPayrollVault&&initialPayrollVault===liveVault)){
-    if (view === 'manage') renderManager();
-    if (view === 'import') render();
-    if (view === 'rules') {renderRules();}
-    if (view === 'assets') {assetsUi?.render();homeUi?.renderFundingHistory();}
-    if (view === 'settings') {assetsUi?.render();cardSettingsUi?.render();}
-    if (view === 'future') futureUi?.render();
-    if (view === 'summary') summaryUi?.render();
-    if (view === 'analysis') analysisUi?.render();
-    if (view === 'reports') reportsUi?.render();
-    if (view === 'subscriptions') subscriptionsUi?.render();
-    if (view === 'home') homeUi?.render();
-  }
+  if (view === 'manage') renderManager();
+  if (view === 'import') render();
+  if (view === 'rules') {renderRules();}
+  if (view === 'assets') {assetsUi?.render();homeUi?.renderFundingHistory();}
+  if (view === 'settings') {assetsUi?.render();cardSettingsUi?.render();}
+  if (view === 'future') futureUi?.render();
+  if (view === 'summary') summaryUi?.render();
+  if (view === 'analysis') analysisUi?.render();
+  if (view === 'reports') reportsUi?.render();
+  if (view === 'subscriptions') subscriptionsUi?.render();
+  if (view === 'home') homeUi?.render();
   syncCloudGate();
   // Switching menus always starts the destination at its top. Explicit
   // 'back to summary' navigation restores its captured position afterward.
@@ -2212,7 +2206,7 @@ async function downloadManagedOriginal():Promise<void> {
     downloadFile(new Uint8Array(bytes).buffer,'application/pdf',canonicalStatementFilename(s,id));
     toast('暗号化PDF原本を復号し、統一ファイル名でダウンロードしました。');
   }catch(error){if(epoch===lockSequence&&liveVault===vault&&vault.unlocked)toast(`PDF原本の取得に失敗しました：${error instanceof Error?error.message:'不明なエラー'}`);}
-  finally{button.disabled=false;filesBusy=false;}
+  finally{button.disabled=false;filesBusy=false;updateImportUploadFeedback();if(!$('import-view').classList.contains('hidden'))render();}
     });
   }
 
@@ -2623,7 +2617,8 @@ function importBatchIsClean(accepted:number,rejected:number,failed:number):boole
 }
 
 async function handleFiles(files: FileList | File[]): Promise<void> {
-  if(filesBusy||batchBusy||revisionBusy){toast('別の取込処理が完了してから追加してください。');return;}
+  if(filesBusy)return;
+  if(batchBusy||revisionBusy){toast('別の取込処理が完了してから追加してください。');return;}
   const chosen=Array.from(files);if(!chosen.length)return;
   const epoch=lockSequence,controller=new AbortController();importAbort=controller;
   const current=()=>epoch===lockSequence&&!controller.signal.aborted;
@@ -2820,9 +2815,11 @@ function init(): void {
     // showView() always renders the destination on entry. Update only the
     // currently visible view rather than rebuilding four hidden pages.
     render();
-  },()=>{render();},id=>{showView('subscriptions');if(id)subscriptionsUi?.openFixedCost(id);});
+  },payrollOnly=>{
+    if(!payrollOnly||['home-view','assets-page','summary-view','analysis-view'].some(id=>!$(id).classList.contains('hidden')))render();
+    if(payrollOnly&&!$('reports-view').classList.contains('hidden'))reportsUi?.render();
+  },id=>{showView('subscriptions');if(id)subscriptionsUi?.openFixedCost(id);});
   const homeSource=()=>{
-    if(initialPayrollVault&&initialPayrollVault===liveVault)return null;
     if(!liveVault?.unlocked||liveVault.recoveryOnly)return null;
     return {records:liveVault.readonlyRecords(),rules:liveVault.merchantRules(),
       categories:liveVault.merchantCategories(),assets:liveVault.assetSettings(),fixedCostMigrations:liveVault.fixedCostMigrations(),
@@ -2870,6 +2867,7 @@ function init(): void {
   summaryUi=initMonthlySummary({
     source:homeSource,
     openCardSettings,
+    refreshCardData:refreshCloud,
     saveCardNoUseMonth:async(period,confirmed)=>{if(!liveVault?.unlocked)throw new Error('保管庫を解除してください。');await liveVault.setCardNoUseMonth(period,confirmed);homeUi?.render();},
     openReport:(period)=>{reportsUi?.openPeriod(period);showView('reports');},
     openRecurring:openRecurringForReview,
@@ -2965,11 +2963,13 @@ function init(): void {
       const busy=()=>interruptionState().busy;
       if(busy().length)throw new Error('実行中の操作が完了してから復旧してください。');
       const result=await vault.recoverSaveLock(approve,()=>valid()&&!busy().length);
-      if(valid()&&result==='released'){
-        // Preserve the edit baseline and retry plan. Refresh/reconcile is a separate explicit operation.
-        updateCloudStatus();render();
+      if(!valid()||result==='cancelled')return result;
+      const state=interruptionState();
+      if(state.busy.length||state.unsaved.length||currentModal!==null){
+        updateCloudStatus();render();return result;
       }
-      return result;
+      try{await refreshCloud();return valid()?'refreshed':result;}
+      catch{if(valid()){updateCloudStatus();render();}return 'refresh-failed';}
     },
     onChangePassphrase: async (current,next,onProgress) => {
       if(!liveVault?.unlocked)throw new Error('先にOneDrive保管庫をロック解除してください。');
@@ -3149,7 +3149,7 @@ function init(): void {
   });
   const dropzone = $('dropzone');
   dropzone.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); $<HTMLInputElement>('file-input').click(); } });
-  dropzone.addEventListener('dragover', event => { event.preventDefault(); dropzone.classList.add('dragover'); });
+  dropzone.addEventListener('dragover', event => { event.preventDefault(); if(!filesBusy)dropzone.classList.add('dragover'); });
   dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
   dropzone.addEventListener('drop', event => {
     event.preventDefault(); dropzone.classList.remove('dragover');
@@ -3159,6 +3159,7 @@ function init(): void {
   pasteInput.addEventListener('paste', event => { clipboardHtml = event.clipboardData?.getData('text/html') ?? ''; });
   bindImportCardChoices();
   $('parse-paste').addEventListener('click', () => {
+    if(filesBusy||batchBusy||revisionBusy)return;
     if (!pasteInput.value.trim()) {
       importUploadFeedback='明細を貼り付けてください。';
       updateImportUploadFeedback();toast(importUploadFeedback);return;

@@ -1,7 +1,8 @@
 /* Finance 1.8.4: interactive daily Rakuten Bank timeline; no financial data changes. */
 .monthly-chart-plot{min-width:0;overflow:visible}
-.monthly-chart{padding:12px!important}
-.monthly-chart-plot>.monthly-balance-svg{display:block;width:100%!important;height:auto!important;max-height:none!important;min-height:0!important}
+.monthly-chart{margin:9px 0 13px;padding:12px;border:1px solid var(--line);border-radius:10px;background:transparent;min-width:0;overflow:visible}
+.monthly-chart-plot>.monthly-balance-svg{display:block;width:100%;height:auto;max-height:none;min-width:0;min-height:0}
+.monthly-chart-plot>.is-compact-chart .monthly-chart-label{font-size:12px}
 .monthly-chart-plot .monthly-chart-grid{stroke-width:1;opacity:.7}
 .monthly-chart-plot .monthly-chart-path{stroke-width:2.5;vector-effect:non-scaling-stroke}
 .monthly-chart-plot .monthly-chart-label{font-size:13px}
@@ -32,15 +33,10 @@
 .monthly-bank-all{margin:11px 0 0;min-width:0;border-top:1px solid var(--line)}
 .monthly-bank-all>summary{cursor:pointer;padding:11px 2px;font-size:12px;font-weight:700;color:var(--ink)}
 .monthly-bank-all>.monthly-bank-days{margin:0 0 10px}
-/* The inherited mobile overflow rule belongs on the graph, not the entire interactive chart. */
-@media(max-width:800px){
- .monthly-chart{overflow:visible!important}
- .monthly-chart-plot{overflow-x:auto;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
- .monthly-chart-plot>.monthly-balance-svg{width:100%!important;min-width:460px!important;max-height:none!important}
-}
+
 @media(max-width:570px){
  .monthly-chart-detail{padding:11px}
- .monthly-chart-detail-totals{gap:7px}
+ .monthly-chart-detail-totals{gap:7px;grid-template-columns:repeat(auto-fit,minmax(min(100%,140px),1fr))}
  .monthly-chart-detail-total{padding:9px}
  .monthly-chart-detail-event{flex-wrap:wrap}
  .monthly-chart-detail-event>b{margin-left:auto}

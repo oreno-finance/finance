@@ -2,7 +2,7 @@ import {requestConfirmation,confirmationPending,cancelConfirmation} from './moda
 import {monthlyReport,changePeriod} from '../summary/monthly-summary.js';
 import {DATA_STATUS,financialStatusClass,formatYen as sharedYen,formatSignedYen,formatShortDate,formatDateTime,formatMonth,formatDate} from './formatters.js';
 import {showActivity,finishActivity} from './activity-feedback.js';
-import {homeIncomeBreakdown} from '../home/income-breakdown.js';
+import {incomeMetricBreakdown} from './income-breakdown.js';
 import type { MonthlySource } from '../summary/monthly-summary.js';
 import type { MizuhoBillSnapshot } from '../cloud/assets.js';
 import { pointBenefitsFromMonthlyReport } from '../summary/point-benefits.js';
@@ -143,20 +143,12 @@ export function initHome(deps:HomeDeps):HomeUi {
     const metrics=element('div','home-metrics');
     const dataNotice=model.coverage==='missing'?'カード明細未取得':model.coverage==='partial'?(report.cardLines.length?'一部カードのみ確認済み':'一部未取得・銀行支出は反映'):model.coverage==='needs-review'?'明細要確認':
       model.coverage==='provisional'?'暫定明細を含む':'';
-    const incomeMetric=metric('収入',yen(report.income),[report.recurringIncome>0?'入金予定含む':'',report.incomeEstimates.length?'給与見込みを含む':''].filter(Boolean).join(' · '),()=>go('summary'));
-    const incomeParts=element('div','home-income-parts');
-    const breakdown=homeIncomeBreakdown(report);
-    for(const [label,amount] of [['本業',breakdown.main],['副業',breakdown.side],['その他・区分不明',breakdown.other]] as const){
-      if(label==='その他・区分不明'&&(!amount||!report.payrollReady))continue;
-      const line=element('div','home-income-part');
-      line.append(element('span','home-muted',label),element('span','home-income-amount',yen(amount)));
-      incomeParts.append(line);
-    }
-    incomeMetric.append(incomeParts);
+    const incomeMetric=metric('収入',yen(report.income),source.payroll.loading?'給与を読み込み中…':[report.recurringIncome>0?'入金予定含む':'',report.incomeEstimates.length?'給与見込みを含む':''].filter(Boolean).join(' · '),()=>go('summary'));
+    incomeMetric.append(incomeMetricBreakdown(report));
     metrics.append(
       incomeMetric,
       metric('支出',report.cardOutflow===null?DATA_STATUS.unavailable:yen(model.outflow),[dataNotice,report.cardOutflow===null&&model.outflow!==null?`判明分 ${yen(model.outflow)}`:'',report.nisaOutflow>0?`NISA積立 ${yen(report.nisaOutflow)} を含む`:''].filter(Boolean).join(' · '),()=>go('summary')),
-      metric('収支',report.monthlyBalance===null?DATA_STATUS.unavailable:yen(report.monthlyBalance),[`前月比：${model.balanceDelta===null?'比較不可':formatSignedYen(model.balanceDelta)}`,report.cardOutflow===null?'カード明細未取得':report.income===null?'収入未取得':dataNotice].filter(Boolean).join(' · '),()=>go('summary'),
+      metric('収支',report.monthlyBalance===null?DATA_STATUS.unavailable:yen(report.monthlyBalance),[`前月比：${model.balanceDelta===null?'比較不可':formatSignedYen(model.balanceDelta)}`,source.payroll.loading?'給与を読み込み中…':report.cardOutflow===null?'カード明細未取得':report.income===null?'収入未取得':dataNotice].filter(Boolean).join(' · '),()=>go('summary'),
         report.monthlyBalance===null?'':report.monthlyBalance<0?'cashflow-negative':'cashflow-positive')
     );
     root!.append(metrics);

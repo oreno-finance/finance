@@ -68,13 +68,12 @@
   .settings-view .cloud-advanced-content .cloud-grid{
     display:grid;grid-template-columns:minmax(0,1fr)!important;gap:13px!important
   }
-  .metrics,.monthly-metrics{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .metrics{grid-template-columns:repeat(2,minmax(0,1fr))!important}
   .monthly-paired,.monthly-insights{grid-template-columns:minmax(0,1fr)!important}
   .assets-account-layout .assets-savings-grid{grid-template-columns:minmax(0,1fr)!important}
   .future-controls{grid-template-columns:minmax(0,1fr)!important}
   .future-cards{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px}
   .future-chart{overflow:hidden;padding:9px}
-  .future-chart-svg{height:auto;max-width:100%}
   .future-table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
   .settings-view .assets-payroll-layout{grid-template-columns:minmax(0,1fr)!important}
   .settings-view .assets-payroll-history-card{grid-column:auto!important;height:220px}
@@ -121,7 +120,7 @@
   .workspace>.content{padding:13px 9px 25px!important}
   .sidebar{padding:11px 9px!important;gap:5px}
   .sidebar .nav-entry:not(.disabled){font-size:10.5px;padding:7px 8px!important}
-  .metrics,.monthly-metrics{grid-template-columns:minmax(0,1fr)!important}
+  .metrics{grid-template-columns:minmax(0,1fr)!important}
   .future-cards{grid-template-columns:minmax(0,1fr)!important}
   .assets-recurring-grid .recurring-schedule-row{grid-template-columns:minmax(0,1fr)}
   .manage-editor .manage-merchant-input-row{flex-direction:column;align-items:stretch}

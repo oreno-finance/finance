@@ -1,3 +1,4 @@
+import {observeChartWidth} from './chart-layout.js';
 import {DATA_STATUS,financialStatusClass,formatYen as sharedYen,formatMonth,formatRate,formatNumber} from './formatters.js';
 /** Long-term savings planner reads persisted settings; only comparison parameters are editable. */
 import type { AssetsDocument } from '../cloud/assets.js';
@@ -36,9 +37,9 @@ function ageText(month:string,born:string):string {
 }
 export type ProjectionSeriesFilter='all'|'cash'|'nisa'|'combined'|'combinedScenario';
 /** Map SVG viewBox x, not the CSS element width, to a month. */
-export function nearestProjectionIndexSvgX(x:number,count:number):number {
+export function nearestProjectionIndexSvgX(x:number,count:number,left=50,right=824):number {
   if(count<=1||!Number.isFinite(x))return 0;
-  const relative=Math.max(0,Math.min(1,(x-50)/(840-50-16)));
+  const relative=Math.max(0,Math.min(1,(x-left)/(right-left)));
   return Math.max(0,Math.min(count-1,Math.round(relative*(count-1))));
 }
 /** Kept for existing callers and tests that work with a simple 840-unit viewport. */
@@ -60,7 +61,7 @@ function drawChart(
   container:HTMLElement,points:FuturePoint[],born:string,compare:boolean,
   filter:ProjectionSeriesFilter,selectedMonth:string|null,
   onFilter:(key:ProjectionSeriesFilter)=>void,onSelect:(month:string)=>void,
-):void{
+):()=>void{
   container.replaceChildren();
   const names:[keyof FuturePoint,string,string][]=[
     ['cash','現金貯金','cash'],
@@ -88,33 +89,15 @@ function drawChart(
   container.append(buttons);
   const shown=filter==='all'?names:names.filter(([key])=>key===filter);
   const values=points.flatMap(p=>shown.flatMap(([key])=>typeof p[key]==='number'?[p[key] as number]:[]));
-  if(!points.length||values.length<2){container.append(el('p','future-help','残高を登録すると推移グラフを表示します。'));return;}
+  if(!points.length||values.length<2){container.append(el('p','future-help','残高を登録すると推移グラフを表示します。'));return ()=>{};}
   const min=Math.min(0,...values),max=Math.max(1,...values),range=max-min;
-  const w=840,h=270,padX=50,padTop=18,padBottom=38;
-  const x=(i:number)=>padX+(i/(points.length-1||1))*(w-padX-16);
+  let w=840,h=270,padX=50,padTop=18,padBottom=38,right=16;
+  const x=(i:number)=>padX+(i/(points.length-1||1))*(w-padX-right);
   const y=(value:number)=>padTop+(max-value)/range*(h-padTop-padBottom);
   const svg=svgNode('svg',{viewBox:`0 0 ${w} ${h}`,role:'slider',tabindex:'0',
     'aria-label':'予測年月を選択','aria-valuemin':'0','aria-valuemax':String(points.length-1),
     class:'future-chart-svg'}) as SVGSVGElement;
   const description=svgNode('title',{});description.textContent='グラフをタップまたは左右矢印キーで年月を選択';svg.append(description);
-  for(let i=0;i<=4;i++){
-    const value=min+range*i/4;
-    const yy=y(value);
-    svg.append(svgNode('line',{x1:String(padX),x2:String(w-16),y1:String(yy),y2:String(yy),class:'future-gridline'}));
-    const label=svgNode('text',{x:String(padX-8),y:String(yy+4),'text-anchor':'end',class:'future-axis-text'});
-    label.textContent=Math.round(value/10000).toLocaleString('ja-JP')+'万';svg.append(label);
-  }
-  for(const [key,,cls] of shown){
-    const finite=points.map((p,i)=>({i,value:p[key]})).filter((p):p is {i:number;value:number}=>typeof p.value==='number');
-    if(finite.length<2)continue;
-    svg.append(svgNode('polyline',{points:finite.map(p=>`${x(p.i).toFixed(1)},${y(p.value).toFixed(1)}`).join(' '),
-      fill:'none',class:`future-path future-path-${cls}`,'stroke-linecap':'round','stroke-linejoin':'round'}));
-  }
-  const tickIndices=[0,Math.floor((points.length-1)/2),points.length-1];
-  for(const i of [...new Set(tickIndices)]){
-    const label=svgNode('text',{x:String(x(i)),y:String(h-12),'text-anchor':i===0?'start':i===points.length-1?'end':'middle',class:'future-axis-text'});
-    label.textContent=points[i]!.month.slice(0,4)+'年'+ageText(points[i]!.month,born);svg.append(label);
-  }
   const indicator=svgNode('g',{'aria-hidden':'true',class:'future-chart-indicator'});
   svg.append(indicator);container.append(svg);
   const help=el('p','future-chart-help','グラフをタップ・ドラッグして年月を確認できます。左右矢印キーにも対応。');
@@ -123,19 +106,24 @@ function drawChart(
   container.append(detail);
   const remembered=selectedMonth?points.findIndex(p=>p.month===selectedMonth):-1;
   let selectedIndex=remembered>=0?remembered:points.length-1;
-  const select=(index:number)=>{
-    if(index===selectedIndex&&detail.childElementCount)return;
-    selectedIndex=Math.max(0,Math.min(points.length-1,index));
+  const paintIndicator=()=>{
     const selected=points[selectedIndex]!;
-    onSelect(selected.month);
-    svg.setAttribute('aria-valuenow',String(selectedIndex));
-    svg.setAttribute('aria-valuetext',dateTitle(selected.month));
     indicator.replaceChildren();
     indicator.append(svgNode('line',{x1:String(x(selectedIndex)),x2:String(x(selectedIndex)),y1:String(padTop),y2:String(h-padBottom),class:'future-chart-guide'}));
     for(const [key,,cls] of shown){
       const v=selected[key];if(typeof v!=='number')continue;
       indicator.append(svgNode('circle',{cx:String(x(selectedIndex)),cy:String(y(v)),r:'6',class:`future-chart-dot future-chart-dot-${cls}`}));
     }
+  };
+  const select=(index:number)=>{
+    index=Math.max(0,Math.min(points.length-1,index));
+    if(index===selectedIndex&&detail.childElementCount)return;
+    selectedIndex=index;
+    const selected=points[selectedIndex]!;
+    onSelect(selected.month);
+    svg.setAttribute('aria-valuenow',String(selectedIndex));
+    svg.setAttribute('aria-valuetext',dateTitle(selected.month));
+    paintIndicator();
     detail.replaceChildren();
     detail.append(el('strong','future-chart-selection-date',dateTitle(selected.month)+ageText(selected.month,born)));
     const valuesList=el('div','future-chart-selection-values');
@@ -150,7 +138,7 @@ function drawChart(
     const ctm=svg.getScreenCTM();
     const mapped=ctm?chartXFromScreenPoint(event.clientX,event.clientY,ctm):null;
     if(mapped!==null){
-      select(nearestProjectionIndexSvgX(mapped,points.length));
+      select(nearestProjectionIndexSvgX(mapped,points.length,padX,w-right));
       return;
     }
     // CTM may be unavailable for a detached SVG. Mirror the default
@@ -159,7 +147,7 @@ function drawChart(
     const scale=Math.min(rect.width/w,rect.height/h);
     if(!Number.isFinite(scale)||scale<=0)return;
     const paintedLeft=rect.left+(rect.width-w*scale)/2;
-    select(nearestProjectionIndexSvgX((event.clientX-paintedLeft)/scale,points.length));
+    select(nearestProjectionIndexSvgX((event.clientX-paintedLeft)/scale,points.length,padX,w-right));
   };
   let dragId:number|null=null;
   svg.addEventListener('pointerdown',event=>{
@@ -178,10 +166,42 @@ function drawChart(
     else if(event.key==='Home'){event.preventDefault();select(0);}
     else if(event.key==='End'){event.preventDefault();select(points.length-1);}
   });
+  const paint=(width:number)=>{
+    const narrow=width<560;
+    w=narrow?width:840;h=narrow?230:270;right=narrow?10:16;
+    const tickLabels=Array.from({length:5},(_,i)=>Math.round((min+range*i/4)/10000).toLocaleString('ja-JP')+'万');
+    padX=narrow?Math.max(48,...tickLabels.map(label=>label.length*7+9)):50;
+    padX=Math.min(padX,w*.48);padTop=18;padBottom=narrow?30:38;
+    svg.setAttribute('viewBox',`0 0 ${w} ${h}`);
+    svg.classList.toggle('is-compact-chart',narrow);
+    svg.replaceChildren(description);
+    const ticks=4;
+    for(let i=0;i<=ticks;i++){
+      const value=min+range*i/ticks;
+      const yy=y(value);
+      svg.append(svgNode('line',{x1:String(padX),x2:String(w-right),y1:String(yy),y2:String(yy),class:'future-gridline'}));
+      const label=svgNode('text',{x:String(padX-8),y:String(yy+4),'text-anchor':'end',class:'future-axis-text'});
+      label.textContent=Math.round(value/10000).toLocaleString('ja-JP')+'万';svg.append(label);
+    }
+    for(const [key,,cls] of shown){
+      const finite=points.map((p,i)=>({i,value:p[key]})).filter((p):p is {i:number;value:number}=>typeof p.value==='number');
+      if(finite.length<2)continue;
+      svg.append(svgNode('polyline',{points:finite.map(p=>`${x(p.i).toFixed(1)},${y(p.value).toFixed(1)}`).join(' '),
+        fill:'none',class:`future-path future-path-${cls}`,'stroke-linecap':'round','stroke-linejoin':'round'}));
+    }
+    const tickIndices=w-padX-right<245?[0,points.length-1]:[0,Math.floor((points.length-1)/2),points.length-1];
+    for(const i of [...new Set(tickIndices)]){
+      const label=svgNode('text',{x:String(x(i)),y:String(h-12),'text-anchor':i===0?'start':i===points.length-1?'end':'middle',class:'future-axis-text'});
+      label.textContent=w<560?points[i]!.month.replace('-','/'):points[i]!.month.slice(0,4)+'年'+ageText(points[i]!.month,born);svg.append(label);
+    }
+    svg.append(indicator);paintIndicator();
+  };
+  const stopResize=observeChartWidth(svg,paint,840);
   select(selectedIndex);
   const legend=el('div','future-legend');
   for(const [,name,cls] of shown)legend.append(el('span',`future-legend-item future-legend-${cls}`,name));
   container.append(legend);
+  return stopResize;
 }
 
 export function initFutureProjection(getSource:()=>FutureSource|null):FutureProjectionUi {
@@ -205,6 +225,7 @@ export function initFutureProjection(getSource:()=>FutureSource|null):FutureProj
   let yearListOpen=false;
   // Only reuse within the same immutable vault snapshot and NISA-rule version.
   let cachedNisa:{records:readonly CloudRecord[];rules:string;rows:ReturnType<typeof matchingNisaRows>}|null=null;
+  let stopChartResize=()=>{};
   let renderTimer:ReturnType<typeof setTimeout>|null=null;
   const scheduleRender=()=>{if(renderTimer!==null)clearTimeout(renderTimer);renderTimer=setTimeout(()=>{renderTimer=null;render();},90);};
   const updateScenarioControls=()=>{
@@ -262,6 +283,7 @@ export function initFutureProjection(getSource:()=>FutureSource|null):FutureProj
     return card;
   }
   function render():void {
+    stopChartResize();stopChartResize=()=>{};
     if(renderTimer!==null){clearTimeout(renderTimer);renderTimer=null;}
     const source=getSource();
     const previousList=results.querySelector<HTMLDetailsElement>('.future-annual-list');if(previousList)yearListOpen=previousList.open;
@@ -328,10 +350,10 @@ export function initFutureProjection(getSource:()=>FutureSource|null):FutureProj
       if(report.conflictingNisaSources)results.append(el('p','future-warning','NISAの積立設定が重複している可能性があります。開始残高・将来予測は参考値です。'));
       if(report.cashStart===null||report.nisaStart===null)results.append(el('p','future-warning','口座管理で現在の残高を登録してください。'));
       const graph=el('div','future-chart');
-      const repaint=()=>drawChart(graph,report.points,birthMonth,compare,chartFilter,chosenMonth,
-        next=>{chartFilter=next;repaint();},month=>{chosenMonth=month;});
+      const repaint=()=>{stopChartResize();stopChartResize=drawChart(graph,report.points,birthMonth,compare,chartFilter,chosenMonth,
+        next=>{chartFilter=next;repaint();},month=>{chosenMonth=month;});};
       if(!compare&&chartFilter==='combinedScenario')chartFilter='all';
-      repaint();results.append(graph);
+      results.append(graph);repaint();
       const tableWrap=el('div','future-table-scroll');const table=document.createElement('table');table.className='future-table';
       const thead=document.createElement('thead');const tr=document.createElement('tr');
       const columns=compare?['年月','現金貯金','NISA','合計','変更後の合計']:['年月','現金貯金','NISA','合計'];
@@ -348,6 +370,7 @@ export function initFutureProjection(getSource:()=>FutureSource|null):FutureProj
     }catch(error){hint.textContent=error instanceof Error?error.message:'将来予測を計算できませんでした。';}
   }
   const reset=()=>{
+    stopChartResize();stopChartResize=()=>{};
     if(renderTimer!==null){clearTimeout(renderTimer);renderTimer=null;}
     cachedNisa=null;lastBirthMonth=null;age.disabled=true;birthSettings.hidden=false;target.value=incrementYearMonth(localToday().slice(0,7),18);
     from.value=monthAfter(localToday().slice(0,7));saving.value='20000';nisaScenarioInput.value='20000';

@@ -81,7 +81,7 @@ test('touch has no native highlight; keyboard has visible focus and filters rest
   assert.match(ui,/const hadFocus=document\.activeElement===button/);
   assert.match(ui,/next\?\.focus\(\{preventScroll:true\}\)/);
   assert.match(ui,/svg\.getScreenCTM\(\)/);
-  assert.match(ui,/nearestProjectionIndexSvgX\(mapped,points\.length\)/);
+  assert.match(ui,/nearestProjectionIndexSvgX\(mapped,points\.length,padX,w-right\)/);
 });
 
 test('balance comparison explicitly says it is recalculated from current settings',()=>{
@@ -90,4 +90,10 @@ test('balance comparison explicitly says it is recalculated from current setting
   assert.match(bank,/当時保存していた予測値ではありません/);
   assert.match(bank,/使途不明金とは断定できません/);
   assert.doesNotMatch(bank,/前回予測と今回実績/);
+});
+
+test('responsive SVG boundaries select the same first, middle and last month',()=>{
+  assert.equal(nearestProjectionIndexSvgX(68,13,68,250),0);
+  assert.equal(nearestProjectionIndexSvgX(159,13,68,250),6);
+  assert.equal(nearestProjectionIndexSvgX(250,13,68,250),12);
 });

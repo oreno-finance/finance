@@ -7,10 +7,11 @@
 .analysis-switch-button.selected{color:var(--ink);background:var(--accent-bg);box-shadow:inset 0 0 0 1px var(--accent)}
 .analysis-period-picker{min-height:43px;min-width:130px;max-width:180px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;color:var(--ink);background:var(--panel);font:inherit;font-size:13px}
 .analysis-range{display:flex;align-items:center;gap:10px;font-size:15px}.analysis-muted{color:var(--muted)}
-.analysis-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;min-width:0}
-.analysis-metric{display:flex;flex-direction:column;gap:9px;padding:17px 15px;border:1px solid var(--line);border-radius:12px;background:var(--panel);min-width:0}
-.analysis-metric span{font-size:12px}.analysis-metric strong{font-size:clamp(17px,2vw,25px);font-variant-numeric:tabular-nums;letter-spacing:-.5px;overflow-wrap:anywhere}
-.analysis-metric small{font-size:11px;line-height:1.5}
+.analysis-metrics{display:grid;gap:12px;min-width:0}
+@media(min-width:1001px){.analysis-metrics{grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr))}}
+
+
+
 .analysis-panel{padding:17px;min-width:0;overflow:visible}.analysis-heading{font-size:16px;margin:0 0 14px}.analysis-panel-body{min-width:0;display:grid;gap:12px}
 .analysis-note{font-size:11px;line-height:1.6;margin:0}
 .analysis-coverage{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;padding:12px 14px;border:1px solid var(--line);border-radius:10px;color:var(--ink);background:var(--panel);font-size:12px}
@@ -45,9 +46,9 @@
 .analysis-change-item strong{white-space:nowrap;font-variant-numeric:tabular-nums}.analysis-increase{color:#b65a47}
 .analysis-group-switch{justify-self:start}.analysis-primary{border:0;color:#fff;background:#287d71;border-radius:9px;padding:11px 16px;font-weight:700;cursor:pointer}
 .analysis-view button:focus-visible,.analysis-view input:focus-visible,.analysis-view select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-@media(max-width:1000px){.analysis-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:700px){.analysis-header h1{font-size:27px}.analysis-content{gap:13px}.analysis-panel{padding:14px}.analysis-controls{gap:7px}.analysis-switch-button{padding:9px 11px}.analysis-metric{padding:14px 12px}.analysis-metric strong{font-size:19px}.analysis-change-columns{grid-template-columns:1fr}.analysis-period-picker{max-width:100%}}
-@media(max-width:390px){.analysis-duration{order:3}.analysis-metrics{gap:7px}.analysis-metric strong{font-size:17px}.analysis-table :is(td,th){padding:10px 9px}}
+@media(max-width:1000px) and (min-width:531px){.analysis-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.analysis-header h1{font-size:27px}.analysis-content{gap:13px}.analysis-panel{padding:14px}.analysis-controls{gap:7px}.analysis-switch-button{padding:9px 11px}.analysis-change-columns{grid-template-columns:1fr}.analysis-period-picker{max-width:100%}}
+@media(max-width:390px){.analysis-duration{order:3}.analysis-metrics{gap:7px}.analysis-table :is(td,th){padding:10px 9px}}
 
 /* Cumulative cashflow uses the existing theme palette and scrollable chart area. */
 .analysis-cumulative-total{font-size:22px;font-variant-numeric:tabular-nums;color:var(--ink)}

@@ -14,14 +14,14 @@ function dialogHarness() {
     if(!nodes.has(id))nodes.set(id,{
       id,open:false,hidden:false,textContent:'',value:'original-value',
       classList:{values:new Set(),toggle(k,enable){if(enable)this.values.add(k);else this.values.delete(k);},contains(k){return k==='import-compact' || this.values.has(k);}},
-      append(node){node.parentId=id;},focus(){this.focused=true;},
+      setAttribute(k,v){this[k]=v;},append(node){node.parentId=id;},focus(){this.focused=true;},
       showModal(){this.open=true;},close(){this.open=false;},
     });
     return nodes.get(id);
   };
   const env={
     failedImports:['old-error.csv: 解析失敗'],currentUploadFailures:['old-error.csv: 解析失敗'],
-    importUploadFeedback:'前回の操作が失敗しました',filesBusy:false,revisionBusy:false,batchBusy:false,
+    importUploadFeedback:'前回の操作が失敗しました',filesBusy:false,importAbort:null,revisionBusy:false,batchBusy:false,
     document:{getElementById:el,querySelector:()=>null},$:el,
     clipboardHtml:'<div>old clipboard</div>',
   };
@@ -96,4 +96,12 @@ test('clean modal does not become an error merely because the user previously ha
   assert.match(ts,/failedImports\.push\(reason\);currentUploadFailures\.push\(reason\)/);
   assert.match(ts,/accepted>0 && rejected===0 && failed===0 && currentUploadFailures\.length===0/);
   assert.doesNotMatch(ts,/messages=\[\.\.\.failedImports,/);
+});
+
+test('shared uploader exposes busy status and disables file/paste entry until completion',()=>{
+ const {env,el,updateImportUploadFeedback}=dialogHarness();env.filesBusy=true;env.importAbort={};updateImportUploadFeedback();
+ assert.equal(el('file-input').disabled,true);assert.equal(el('parse-paste').disabled,true);
+ assert.equal(el('dropzone')['aria-disabled'],'true');assert.equal(el('import-file-progress').classList.contains('hidden'),false);
+ env.filesBusy=false;env.importAbort=null;updateImportUploadFeedback();assert.equal(el('file-input').disabled,false);
+ assert.equal(el('import-file-progress').classList.contains('hidden'),true);
 });

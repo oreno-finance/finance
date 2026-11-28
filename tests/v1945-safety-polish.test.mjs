@@ -61,7 +61,7 @@ test('CSV is rejected based on File.size before allocating an ArrayBuffer',()=>{
 });
 
 class Node {
-  constructor(tag='div'){this.tag=tag;this.children=[];this.attrs={};this.handlers={};this.value='';this.className='';this.textContent='';}
+  constructor(tag='div'){this.tag=tag;this.children=[];this.attrs={};this.handlers={};this.value='';this.className='';this.textContent='';this.isConnected=true;this.hidden=false;}
   get classList(){return {add:(name)=>{this.className=[...new Set([...this.className.split(/\s+/).filter(Boolean),name])].join(' ');}};}
   append(...items){this.children.push(...items);}
   replaceChildren(...items){this.children=[...items];}
@@ -84,7 +84,7 @@ test('month switch during an in-flight report load supersedes old loading and fi
     const ui=initMonthlyReports({source:()=>null,vault:()=>vault,openMonth:()=>{}});
     ui.openPeriod('2026-11');ui.render();
     assert.equal(ui.isBusy(),true);
-    assert.deepEqual(root.children.map(n=>[n.tag,n.textContent,n.attrs.role]),[['p','読み込み中…','status']]);
+    assert.ok(root.querySelector('.reports-controls'));assert.ok(walk(root).some(n=>n.textContent==='読み込み中…'));assert.equal(root.querySelector('.reports-metrics'),null);
     ui.openPeriod('2026-10');ui.render();
     assert.equal(ui.isBusy(),true);
     pending.get('2026-11').resolve([[],null]);
@@ -115,7 +115,7 @@ test('saving locks its target month and reset discards any late UI response',asy
     assert.ok(action,'report save action must become available');
     action.handlers.click();
     assert.equal(ui.isBusy(),true);
-    assert.deepEqual(root.children.map(n=>[n.tag,n.textContent,n.attrs.role]),[['p','保存中…','status']]);
+    assert.ok(root.querySelector('.reports-metrics'));assert.ok(root.querySelector('.reports-controls'));assert.equal(walk(root).find(n=>n.textContent==='レポートを作成').disabled,true);
     ui.openPeriod('2026-11'); // Cannot change the save's selected period mid-flight.
     assert.equal(writtenPeriod,'2026-10');
     ui.reset(); // Simulate a lock or account change while cloud write is pending.
@@ -134,7 +134,7 @@ test('L303: failed comparison is visible and preserves the saved report',async()
  const src={records:[],assets:emptyAssets(),rules:[],categories:[],currentPeriod:'2026-10',payroll:{ready:false,syncedAt:null,entries:[]}};
  const snapshot=reportSnapshot('2026-10',src),hash=await snapshotHash(snapshot);
  const archive={current:{id:'fixture',snapshot,sourceHash:hash,note:'saved note',savedAt:'2026-10-20T00:00:00Z'},history:[]};
- let writes=0,memoWrites=0;const vault={unlocked:true,loadArchivedReports:async()=>[[],archive],saveArchivedReport:async()=>{writes++;return archive;},saveArchivedReportNote:async(period,note,revision)=>{assert.equal(period,'2026-10');assert.equal(note,'saved note');assert.equal(revision,'fixture');memoWrites++;return archive;}};
+ let writes=0,memoWrites=0;const vault={unlocked:true,loadArchivedReports:async()=>[[],archive],saveArchivedReport:async()=>{writes++;return archive;},saveArchivedReportNote:async(period,note,revision)=>{assert.equal(period,'2026-10');assert.equal(note,'edited note');assert.equal(revision,'fixture');memoWrites++;return archive;}};
  try{
   const ui=initMonthlyReports({source:()=>{throw new Error('synthetic calculation failure');},vault:()=>vault,openMonth:()=>{}});
   ui.openPeriod('2026-10');ui.render();
@@ -146,7 +146,8 @@ test('L303: failed comparison is visible and preserves the saved report',async()
   await Promise.resolve();await Promise.resolve();
   assert.equal(writes,0);assert.equal(ui.isBusy(),false);
   assert.equal(walk(root).find(n=>n.tag==='textarea').value,'saved note');
-  const memoOnly=root.querySelector('.reports-note-only');assert.equal(memoOnly.hidden,false);memoOnly.handlers.click();
+  const memoOnly=root.querySelector('.reports-note-only');assert.equal(memoOnly.hidden,false);assert.equal(memoOnly.disabled,true);memoOnly.handlers.click();assert.equal(memoWrites,0);
+  const memo=walk(root).find(n=>n.tag==='textarea');memo.value='edited note';memo.handlers.input();assert.equal(memoOnly.disabled,false);memoOnly.handlers.click();
   await Promise.resolve();await Promise.resolve();await Promise.resolve();assert.equal(memoWrites,1);assert.equal(writes,0);
   ui.reset();
  }finally{globalThis.document=original;globalThis.Option=originalOption;}

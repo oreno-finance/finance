@@ -125,7 +125,7 @@ export function homeActions(source:MonthlySource,report:MonthlyReport,forecast:A
     const period=statementPeriod(s);
     if(period){registered.add(`${s.cardId}|${period}`);observedPeriods.add(period);}
   }
-  const periods=[today.slice(0,7),changePeriod(today.slice(0,7),1)];
+  const periods=[changePeriod(today.slice(0,7),-1),today.slice(0,7),changePeriod(today.slice(0,7),1)];
   for(const card of CARDS){
     const preference=source.assets.cardPreferences?.[card.id];
     if(preference?.review===null)continue;
@@ -155,6 +155,6 @@ export function homeActions(source:MonthlySource,report:MonthlyReport,forecast:A
     if(days>=30)add({id:`stale:${account.accountId}`,kind:'stale-balance',severity:'medium',
       title:`${account.name}の残高を更新`,detail:`最終確認から${days}日`,target:'assets'});
   }
-  if(!source.payroll.ready)add({id:'payroll:not-ready',kind:'payroll',severity:'medium',title:'Payrollの同期を確認',target:'settings'});
+  if(!source.payroll.ready&&!source.payroll.loading)add({id:'payroll:not-ready',kind:'payroll',severity:'medium',title:'Payrollの同期を確認',target:'settings'});
   return actions.sort((a,b)=>severityRank[a.severity]-severityRank[b.severity]||a.id.localeCompare(b.id));
 }

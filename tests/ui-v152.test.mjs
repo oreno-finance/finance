@@ -15,7 +15,7 @@ test('mobile menu X uses its own static, unclipped path',()=>{
   assert.match(css,/#finance-sidebar\.mobile-open #mobile-nav-toggle \.mobile-nav-close\{opacity:1/);
 });
 test('main merchant input remains one line and multiple options remain',()=>{
-  assert.match(css,/input#rule-pattern\{height:39px!important;min-height:39px!important;max-height:39px!important/);
+  assert.match(css,/input#rule-pattern\{height:var\(--finance-action-height\)!important;min-height:var\(--finance-action-height\)!important/);
   assert.match(html,/id="rule-pattern-alternatives"/);
   assert.match(html,/id="rule-pattern-add"/);
   assert.match(css,/#rule-pattern-help\{padding:0!important/);

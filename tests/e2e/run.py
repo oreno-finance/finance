@@ -231,6 +231,8 @@ window.financeImportTest={
     resetRuleEditor();renderRules();
   },
   stored(id){return liveVault.readonlyRecords().find(r=>r.id===id)},
+  openUploader(){openImportAddDialog();},
+  readFiles(files){return handleFiles(files);},
   add(raw){return acceptStatement(parseStatementText(raw,'pdf','synthetic.pdf'),{bytes:new Uint8Array([1,2,3]),mime:'application/pdf'});},
   state(){return importQueue().map(s=>({card:s.cardId,status:s.confirmation,collision:importCollision(s),source:pendingSources.has(s),id:savedIds.get(s)??null}));}
 };
@@ -308,6 +310,35 @@ window.financeImportTest={
                     page.locator('#statement-list .statement-remove').click()
                     self.assertEqual(state(),[])
                     self.assertEqual(errors,[])
+                finally:context.close()
+
+    def test_local_file_progress_in_shared_uploader(self):
+        html=self.offline_document(import_workspace=True)
+        raw="\n".join(['ご利用代金請求明細書','楽天カード株式会社','2024年04月ご請求金額 ご利用カード','1,000円 楽天カード(Visa) ****-****-****-0000','お支払日 返済方法 引落口座 請求確定日 利用獲得ポイント 調整額 返金額','2024/04/27 口座振替 架空銀行 2024/04/12 10 0円 0円','利用日 利用店名 利用者 支払方法 利用金額 手数料/利息 支払総額 当月請求額 翌月繰越残高','2024/03/03 架空商店 本人 1回払い 1,000 0 1,000 1,000 0'])
+        for width,mobile in ((1100,False),(390,True)):
+            with self.subTest(width=width):
+                context=self.browser.new_context(viewport={'width':width,'height':850},is_mobile=mobile,has_touch=mobile)
+                try:
+                    page=context.new_page();errors=[]
+                    page.on('pageerror',lambda exc:errors.append(str(exc)))
+                    page.route('**/*',lambda route:route.abort());page.set_content(html)
+                    page.evaluate("""async raw=>{
+                      await import('finance-fixture/main.js');financeImportTest.prepare([]);
+                      await financeImportTest.add(raw);
+                      financeImportTest.openUploader();
+                      let release;const file={name:'fixture.csv',size:8,arrayBuffer:()=>new Promise(resolve=>{release=()=>resolve(new TextEncoder().encode('invalid!').buffer);})};
+                      window.pendingImport=financeImportTest.readFiles([file]);window.releaseImport=()=>release();
+                    }""",raw)
+                    self.assertTrue(page.locator('#import-add-dialog').is_visible())
+                    self.assertTrue(page.locator('#import-file-progress').is_visible())
+                    self.assertTrue(page.locator('#file-input').is_disabled())
+                    self.assertTrue(page.locator('#parse-paste').is_disabled())
+                    self.assertFalse(page.locator('#toast').evaluate("e=>e.classList.contains('visible')"))
+                    page.evaluate('releaseImport()');page.evaluate('pendingImport')
+                    self.assertFalse(page.locator('#import-file-progress').is_visible())
+                    self.assertTrue(page.locator('#file-input').is_enabled())
+                    self.assertTrue(page.locator('#import-upload-feedback').is_visible())
+                    self.assertFalse(errors,errors)
                 finally:context.close()
 
     def test_saved_unknown_confirmation_and_shared_funding_buttons(self):
@@ -539,7 +570,7 @@ window.financeImportTest={
                     for view,selector in [('summary-view','#monthly-period-controls'),('manage-view','#manage-period-controls'),('analysis-view','#analysis-content .finance-period-nav'),('reports-view','#reports-content .finance-period-nav')]:
                         page.evaluate('(v)=>window.showOnly(v)',view)
                         result=page.locator(selector).evaluate('''el=>({height:el.querySelector('button').getBoundingClientRect().height, width:el.querySelector('button').getBoundingClientRect().width, fits:[...el.querySelectorAll('button,input')].every(x=>x.getBoundingClientRect().right<=document.documentElement.clientWidth+1)})''')
-                        self.assertEqual(result['height'],39,result);self.assertEqual(result['width'],39,result);self.assertTrue(result['fits'],result)
+                        self.assertEqual(result['height'],44 if mobile else 40,result);self.assertEqual(result['width'],44 if mobile else 40,result);self.assertTrue(result['fits'],result)
                     for theme in ('light','dark'):
                         page.evaluate('(t)=>document.documentElement.dataset.theme=t',theme)
                         result=page.locator('#manage-delete').evaluate('''el=>({danger:el.classList.contains('danger-action'),color:getComputedStyle(el).color,expected:getComputedStyle(el).getPropertyValue('--action-danger-ink').trim()})''')
@@ -604,7 +635,7 @@ window.financeImportTest={
                       const show=id=>{for(const n of document.querySelectorAll('.workspace .content > :is(section,div)[id]'))n.classList.toggle('hidden',n.id!==id);};
                       const source={assets,records,rules:[],categories:[],payroll:{ready:true,syncedAt:1,entries:[{id:'main',employerId:'main',job:'main',kind:'salary',paidOn:period+'-25',netPay:190000},{id:'side',employerId:'side',job:'side',kind:'salary',paidOn:period+'-27',netPay:25000}]}};
                       const home=initHome({source:()=>source,navigate(){}});
-                      window.v222={show,ui,home,records};show('settings-view');ui.render();document.getElementById('settings-nisa-panel').open=true;document.getElementById('settings-payroll-disclosure').open=true;
+                      window.v222={show,ui,home,records,source};show('settings-view');ui.render();document.getElementById('settings-nisa-panel').open=true;document.getElementById('settings-payroll-disclosure').open=true;
                     }""")
                     for theme in ('light','dark'):
                         page.evaluate('(t)=>document.documentElement.dataset.theme=t',theme)
@@ -619,6 +650,7 @@ window.financeImportTest={
                     page.evaluate("v222.show('home-view');v222.home.render()")
                     income=page.locator('.home-metric').first
                     for value in ('215,000円','本業','190,000円','副業','25,000円'):self.assertIn(value,income.inner_text())
+                    home_parts=income.locator('.income-metric-parts').inner_text()
                     page.evaluate("financeImportTest.prepare(v222.records);financeImportTest.manage('synthetic-card')")
                     subtitle=page.locator('#manage-list .statement-main small').first
                     self.assertIn('引落',subtitle.inner_text());self.assertTrue(subtitle.evaluate('e=>e.scrollWidth<=e.clientWidth+1&&getComputedStyle(e).whiteSpace!=="nowrap"'))
@@ -651,17 +683,90 @@ window.financeImportTest={
                       const assets=emptyAssets(),period=new Date().toLocaleDateString('sv-SE').slice(0,7);
                       assets.snapshots=[{id:'synthetic-bank',accountId:'rakuten-bank',balance:100000,observedAt:period+'-01T00:00:00Z'}];
                       const vault={unlocked:true,assetSettings:()=>assets};v222.show('settings-view');document.querySelector('.settings-card-disclosure').open=true;initCardSettings(()=>vault,()=>{});
-                      const source={assets,records:[],rules:[],categories:[],payroll:{ready:true,syncedAt:1,entries:[]},currentPeriod:period};
-                      v222.summary=initMonthlySummary({source:()=>source});v222.period=period;
+                      const source={...v222.source,assets,currentPeriod:period};
+                      v222.summarySource=source;v222.summary=initMonthlySummary({source:()=>source});v222.period=period;
                     }""")
                     rate=page.locator('.card-setting-item:not([hidden]) .card-setting-rate-edit input[type=number]');day=page.locator('.card-setting-item:not([hidden]) .card-setting-rate-edit input[type=date]')
                     self.assertLess(rate.bounding_box()['width'],day.bounding_box()['width']);self.assertLessEqual(abs(rate.bounding_box()['y']-day.bounding_box()['y']),2)
                     page.evaluate("v222.show('summary-view');v222.summary.setPeriod(v222.period)")
-                    svg=page.locator('.monthly-chart-plot .monthly-balance-svg');self.assertEqual(svg.get_attribute('viewBox'),'0 0 630 220')
-                    self.assertGreaterEqual(svg.bounding_box()['height'],150)
+                    income=page.locator('.monthly-metric').first
+                    self.assertIn('215,000円',income.inner_text())
+                    self.assertEqual(income.locator('.income-metric-parts').inner_text(),home_parts)
+                    for theme in ('light','dark'):
+                        page.evaluate('(t)=>document.documentElement.dataset.theme=t',theme)
+                        self.assertTrue(income.locator('.income-metric-part').evaluate_all('rows=>rows.every(r=>r.scrollWidth<=r.clientWidth+1&&getComputedStyle(r.querySelector(".income-metric-amount")).whiteSpace==="nowrap")'))
+                    page.evaluate("v222.summarySource.payroll={ready:false,loading:true,entries:[]};v222.summary.render()")
+                    self.assertEqual(income.locator('.income-metric-amount').all_text_contents(),['未取得','未取得'])
+                    self.assertIn('給与を読み込み中',income.inner_text())
+                    page.evaluate("""async()=>{
+                      const {changePeriod}=await import('finance-fixture/summary/monthly-summary.js');
+                      const prior=changePeriod(v222.period,-1);
+                      v222.summarySource.payroll={...v222.source.payroll,entries:[...v222.source.payroll.entries,{id:'prior-main',employerId:'main',job:'main',kind:'salary',paidOn:prior+'-25',netPay:123456}]};
+                      v222.summary.setPeriod(prior);
+                    }""")
+                    self.assertEqual(income.locator('.income-metric-amount').all_text_contents(),['123,456円','0円'])
+                    page.evaluate("v222.summarySource.payroll=v222.source.payroll;v222.summary.setPeriod(v222.period)")
+                    svg=page.locator('.monthly-chart-plot .monthly-balance-svg')
+                    page.wait_for_function("document.querySelector('.monthly-balance-svg')?.classList.contains('is-compact-chart')")
+                    self.assertGreaterEqual(svg.bounding_box()['height'],200)
+                    self.assertTrue(svg.evaluate("e=>e.clientWidth<=e.parentElement.clientWidth+1&&e.viewBox.baseVal.width===e.clientWidth"))
+                    self.assertGreaterEqual(svg.locator('text').first.evaluate("e=>parseFloat(getComputedStyle(e).fontSize)*e.getScreenCTM().a"),11)
+                    self.assertIn('1日',svg.locator('text').all_text_contents())
+                    self.assertIn(str(__import__('calendar').monthrange(int(page.evaluate('v222.period').split('-')[0]),int(page.evaluate('v222.period').split('-')[1]))[1])+'日',svg.locator('text').all_text_contents())
 
 
                 finally:context.close()
+
+    def test_responsive_kpi_and_projection_axes(self):
+        for width in (320,360,390,412):
+            with self.subTest(width=width):
+                page,context,errors=self.create_page(mobile=True,width=width)
+                try:
+                    self.prepare_graph(page)
+                    svg=page.locator('.future-chart-svg')
+                    page.wait_for_function("document.querySelector('.future-chart-svg')?.classList.contains('is-compact-chart')")
+                    self.assertGreaterEqual(svg.bounding_box()['height'],200)
+                    self.assertGreaterEqual(svg.locator('text').first.evaluate("e=>parseFloat(getComputedStyle(e).fontSize)*e.getScreenCTM().a"),11)
+                    left,right=svg.locator('.future-gridline').first.evaluate("e=>[Number(e.getAttribute('x1')),Number(e.getAttribute('x2'))]")
+                    svg.scroll_into_view_if_needed()
+                    for x,expected in ((left,0),((left+right)/2,round(int(svg.get_attribute('aria-valuemax'))/2)),(right,int(svg.get_attribute('aria-valuemax')))):
+                        pt=self.point(page,x);page.touchscreen.tap(pt['x'],pt['y'])
+                        self.assertAlmostEqual(int(svg.get_attribute('aria-valuenow')),expected,delta=1)
+                    page.evaluate("""()=>{
+                      const host=document.createElement('div');host.className='workspace';document.body.append(host);
+                      for(const name of ['home','monthly','reports','analysis']){
+                        const grid=document.createElement('div');grid.className=name+'-metrics';host.append(grid);
+                        for(const value of ['123,456円','1,234,567円','-1,234,567円','取得不能']){
+                          const card=document.createElement(name==='home'?'button':'div');card.className=name+'-metric';grid.append(card);
+                          const label=document.createElement('span');label.textContent='収支';const amount=document.createElement('strong');amount.textContent=value;
+                          if(value==='取得不能')amount.className='data-status-muted';card.append(label,amount);
+                        }
+                      }
+                    }""")
+                    for theme in ('light','dark'):
+                        page.evaluate('(theme)=>document.documentElement.dataset.theme=theme',theme)
+                        self.assertTrue(page.locator('.workspace :is(.home-metrics,.monthly-metrics,.reports-metrics,.analysis-metrics)').evaluate_all("grids=>grids.every(g=>getComputedStyle(g).gridTemplateColumns.split(' ').length===1&&[...g.querySelectorAll('strong')].every(e=>e.scrollWidth<=e.clientWidth+1&&getComputedStyle(e).whiteSpace==='nowrap'))"))
+                    self.assertFalse(errors,errors)
+                finally:context.close()
+
+    def test_mobile_import_preview_uses_document_scroll(self):
+        html=self.offline_document(import_workspace=True)
+        raw="\n".join(['ご利用代金請求明細書','楽天カード株式会社','2024年04月ご請求金額 ご利用カード','30,000円 楽天カード(Visa) ****-****-****-0000','お支払日 返済方法 引落口座 請求確定日 利用獲得ポイント 調整額 返金額','2024/04/27 口座振替 架空銀行 2024/04/12 10 0円 0円','利用日 利用店名 利用者 支払方法 利用金額 手数料/利息 支払総額 当月請求額 翌月繰越残高']+[f'2024/03/03 架空商店{i:02d} 本人 1回払い 1,000 0 1,000 1,000 0' for i in range(30)])
+        context=self.browser.new_context(viewport={'width':360,'height':850},is_mobile=True,has_touch=True)
+        try:
+            page=context.new_page();page.route('**/*',lambda route:route.abort());page.set_content(html)
+            page.evaluate("""async raw=>{await import('finance-fixture/main.js');financeImportTest.prepare([]);await financeImportTest.add(raw);await financeImportTest.add(raw.replace('2024年04月','2024年05月').replace('2024/04/','2024/05/'));}""",raw)
+            page.locator('#import-rakuten-choice input[value="rakuten-etc"]').check(force=True)
+            self.assertGreaterEqual(page.locator('#statement-list .statement-card').count(),2)
+            self.assertEqual(page.locator('#transaction-rows tr').count(),30)
+            scroller=page.locator('#import-view .transactions-panel-inner>.table-scroll')
+            result=scroller.evaluate("e=>({height:e.clientHeight,scrollHeight:e.scrollHeight,width:e.clientWidth,scrollWidth:e.scrollWidth,viewport:document.documentElement.clientWidth,documentWidth:document.documentElement.scrollWidth})")
+            self.assertGreater(result['height'],380,result)
+            self.assertLessEqual(result['scrollHeight'],result['height']+1,result)
+            self.assertLessEqual(result['documentWidth'],result['viewport']+1,result)
+            page.locator('#batch-import').scroll_into_view_if_needed()
+            self.assertTrue(page.locator('#batch-import').is_visible())
+        finally:context.close()
 
     def test_account_individual_balance_save_and_warning_details(self):
         html=self.offline_document()
@@ -1006,7 +1111,8 @@ window.financeImportTest={
                       const source=()=>vault.unlocked?{assets:vault.assetSettings(),records:vault.readonlyRecords(),rules:[],categories:[],payroll:{ready:false,entries:[],syncedAt:null}}:null;
                       const assets=initAssetsSettings(()=>vault,()=>[],()=>{});
                       const home=initHome({source,navigate(){},async saveMizuhoFunding(m,done,snapshot){if(window.ordinary.failFunding)await new Promise((_,reject)=>{window.ordinary.rejectFunding=()=>reject(new Error('Microsoft認証が時間内に完了しませんでした。設定の「再認証」をお試しください。'));});writes.push(['funding',m,done]);data.mizuhoFundingChecks={...data.mizuhoFundingChecks,[m]:{done,updatedAt:new Date().toISOString(),...snapshot}};}});
-                      const summary=initMonthlySummary({source,openRecord(){},openDrilldown(){},async saveCardNoUseMonth(m,yes){writes.push(['no-use',m,yes]);const months=new Set(data.cardNoUseMonths??[]);if(yes)months.add(m);else months.delete(m);data.cardNoUseMonths=[...months];}});
+                      const {CardNoUseRefreshRequired}=await import('finance-fixture/cloud/live-vault.js');
+                      const summary=initMonthlySummary({source,openRecord(){},openDrilldown(){},async refreshCardData(){window.ordinary.refreshes=(window.ordinary.refreshes??0)+1;window.ordinary.stale=false;},async saveCardNoUseMonth(m,yes){if(window.ordinary.stale)throw new CardNoUseRefreshRequired('明細が別端末で更新されています。');writes.push(['no-use',m,yes]);const months=new Set(data.cardNoUseMonths??[]);if(yes)months.add(m);else months.delete(m);data.cardNoUseMonths=[...months];}});
                       const show=id=>{for(const node of document.querySelectorAll('.workspace .content>section'))node.classList.toggle('hidden',node.id!==id);document.getElementById(id).classList.remove('hidden');};
                       window.ordinary={data,writes,bill,records,current,previous,assets,home,summary,showAssets(){show('assets-page');assets.render();home.renderFundingHistory();},showHome(){show('home-view');home.render();},showSummary(){show('summary-view');summary.setPeriod(current);}};
                       window.ordinary.showAssets();
@@ -1099,6 +1205,10 @@ window.financeImportTest={
                     page.get_by_role('button',name='「カード利用なし」を取り消す').click();confirm.get_by_role('button',name='取り消す').click()
                     page.wait_for_function('window.ordinary.writes.length===6')
                     self.assertEqual(page.evaluate('window.ordinary.writes.slice(-2)'),[['no-use',page.evaluate('window.ordinary.current'),True],['no-use',page.evaluate('window.ordinary.current'),False]])
+                    page.evaluate('ordinary.stale=true');noUse.click();confirm.get_by_role('button',name='確認を記録').click()
+                    latest=page.get_by_role('button',name='最新データを取得',exact=True);latest.wait_for();latest.click();latest.wait_for(state='detached')
+                    self.assertEqual(page.evaluate('ordinary.refreshes'),1);self.assertEqual(page.evaluate('ordinary.writes.length'),6)
+                    noUse.click();confirm.get_by_role('button',name='確認を記録').click();page.wait_for_function('ordinary.writes.length===7')
                     self.assertEqual(errors,[])
                 finally:context.close()
 
@@ -1117,7 +1227,7 @@ window.financeImportTest={
                     page.evaluate('''async()=>{
                       const {emptyAssets}=await import('finance-fixture/cloud/assets.js');
                       const {initHome}=await import('finance-fixture/ui/home.js');
-                      const assets=emptyAssets();assets.mizuhoTransferPlan={enabled:true,leadDays:3,extraForSmallBills:true};assets.cardDebitAccounts={'rakuten-mizuho':'mizuho-bank'};
+                      const assets=emptyAssets();assets.mizuhoTransferPlan={enabled:true,leadDays:3,extraForSmallBills:true};assets.cardDebitAccounts={'rakuten-mizuho':'mizuho-bank'};assets.cardNoUseMonths=['2026-10'];
                       const source={records:[],rules:[],categories:[],assets,payroll:{ready:true,syncedAt:1000,entries:[]}};
                       for(const n of document.querySelectorAll('.workspace .content > :is(section,div)[id]'))n.classList.toggle('hidden',n.id!=='home-view');
                       const home=initHome({source:()=>source,navigate(){}});home.render();
@@ -1163,6 +1273,8 @@ window.financeImportTest={
                     expect(a).to_be_visible();expect(b).to_be_visible();a.click()
                     self.assertEqual(page.evaluate('reminders.destinations'),['import'])
                     page.evaluate('reminders.confirm()');expect(a).to_have_count(0);expect(b).to_be_visible()
+                    page.clock.set_fixed_time(datetime(2026,12,1,3,tzinfo=timezone.utc));page.evaluate('reminders.home.render()')
+                    expect(a).to_have_count(0);expect(b).to_be_visible()
                     self.assertFalse(errors,errors)
                 finally:context.close()
 
@@ -1765,7 +1877,8 @@ window.financeImportTest={
             self.assertEqual(int(svg.get_attribute('aria-valuenow')), max_index)
             page.evaluate("document.body.style.zoom='1.35'")
             svg.scroll_into_view_if_needed()
-            mid = self.point(page, 437)
+            left,right=svg.locator('.future-gridline').first.evaluate("e=>[Number(e.getAttribute('x1')),Number(e.getAttribute('x2'))]")
+            mid = self.point(page, (left+right)/2)
             page.mouse.click(mid['x'],mid['y'])
             self.assertAlmostEqual(int(svg.get_attribute('aria-valuenow')), round(max_index/2),delta=1)
             self.assertFalse(errors,errors)
@@ -1779,7 +1892,8 @@ window.financeImportTest={
             svg = page.locator('.future-chart-svg')
             svg.scroll_into_view_if_needed()
             max_index=int(svg.get_attribute('aria-valuemax'))
-            for x,idx in [(50,0),(824,max_index)]:
+            left,right=svg.locator('.future-gridline').first.evaluate("e=>[Number(e.getAttribute('x1')),Number(e.getAttribute('x2'))]")
+            for x,idx in [(left,0),((left+right)/2,round(max_index/2)),(right,max_index)]:
                 pt=self.point(page,x)
                 page.touchscreen.tap(pt['x'],pt['y'])
                 self.assertAlmostEqual(int(svg.get_attribute('aria-valuenow')),idx,delta=1)
@@ -1865,7 +1979,9 @@ window.financeImportTest={
                       const summary=initMonthlySummary({source:()=>source,openRecord:id=>opened.push(id),openDrilldown(){}});
                       const analysis=initAnalysis({source:()=>source,openMonth:p=>{show('summary-view');summary.setPeriod(p)},openDrilldown(){},openSettings(){}});
                       const home=initHome({source:()=>source,navigate(){}});
-                      const reports=initMonthlyReports({source:()=>source,vault:()=>({unlocked:true,loadArchivedReports:async()=>[[],null]}),openMonth(){}});
+                      // Match the real app: the unlocked vault identity is stable across reads.
+                      const vault={unlocked:true,loadArchivedReports:async()=>[[],null]};
+                      const reports=initMonthlyReports({source:()=>source,vault:()=>vault});
                       window.reviewFixture={source,summary,analysis,home,reports,show,opened,undated(){source.records.push(bill('undated-bill','2026-09','confirmed',null));analysis.render()}};
                       show('analysis-view');analysis.render();
                     }""")
@@ -1905,6 +2021,7 @@ window.financeImportTest={
                 finally:context.close()
 
     def test_polish_dashboard_coverage_and_report_preview(self):
+        from playwright.sync_api import expect
         html=self.offline_document()
         for width,mobile in ((1100,False),(390,True),(320,True)):
             with self.subTest(width=width):
@@ -1924,9 +2041,10 @@ window.financeImportTest={
                       const previousDate=new Date(now.getFullYear(),now.getMonth()-1,1),previous=previousDate.getFullYear()+'-'+pad(previousDate.getMonth()+1);
                       const assets=emptyAssets();assets.snapshots=[{id:'balance-test',accountId:'rakuten-bank',balance:100000,observedAt:previous+'-01T00:00:00Z'}];
                       const source={records:[],rules:[],categories:[],assets,payroll:{ready:true,syncedAt:1000,entries:[{id:'salary-a',employerId:'main',job:'main',paidOn:day,payPeriod:current,netPay:50000,grossPay:null,taxablePay:null,currency:'JPY',kind:'salary',revision:1}]},currentPeriod:current};
-                      let writes=0,archive=null,settings=0;
-                      const vault={unlocked:true,loadArchivedReports:async period=>[archive?[current]:[],period===current?archive:null],
-                        saveArchivedReport:async(snapshot,note)=>{writes++;archive={format:'finance-monthly-report-v1',period:current,current:{id:'saved',savedAt:new Date().toISOString(),note,snapshot,sourceHash:'a'.repeat(64)},history:[]};return archive;}};
+                      let writes=0,archive=null,settings=0,noteWrites=0,readGate=null,noteGate=null;
+                      const vault={unlocked:true,loadArchivedReports:async period=>{if(readGate)await new Promise((resolve,reject)=>{readGate.resolve=resolve;readGate.reject=reject;});return [archive?[current]:[],period===current?archive:null];},
+                        saveArchivedReport:async(snapshot,note)=>{writes++;archive={format:'finance-monthly-report-v1',period:current,current:{id:'saved',savedAt:new Date().toISOString(),note,snapshot,sourceHash:'a'.repeat(64)},history:[]};return archive;},
+                        saveArchivedReportNote:async(period,note,revision)=>{noteWrites++;if(noteGate)await new Promise(resolve=>noteGate.resolve=resolve);archive={...archive,current:{...archive.current,note}};return archive;}};
                       const show=id=>{for(const n of document.querySelectorAll('.workspace .content > :is(section,div)[id]'))n.classList.toggle('hidden',n.id!==id);document.getElementById(id).classList.remove('hidden');};
                       const summary=initMonthlySummary({source:()=>source,openRecord(){},openDrilldown(){},openCardSettings(){settings++;}});
                       const home=initHome({source:()=>source,navigate(){},openCardSettings(){settings++;}});
@@ -1934,6 +2052,7 @@ window.financeImportTest={
                       const reports=initMonthlyReports({source:()=>source,vault:()=>vault,openMonth(){}});
                       const bill={id:'bill-a',statement:{provider:'smbc',cardId:'smbc-nl',sourceKind:'paste',sourceName:'synthetic',billingMonth:previous,paymentDate:day,statedTotal:13000,confirmation:'confirmed',warnings:[],rows:Array.from({length:13},(_,i)=>({id:'row-'+i,usedOn:previous+'-02',merchant:'SHOP '+i,amount:1000}))}};
                       window.polish2={source,assets,summary,home,analysis,reports,current,day,show,writes:()=>writes,settings:()=>settings,
+                        noteWrites:()=>noteWrites,holdNote(){noteGate={};},finishNote(){const gate=noteGate;noteGate=null;gate.resolve();},holdRead(){readGate={};},failRead(){const gate=readGate;readGate=null;gate.reject(new Error('synthetic read failure'));},finishRead(){const gate=readGate;readGate=null;gate.resolve();},
                         noUse(){assets.cardNoUseMonths=[current];summary.render();},
                         registered(){assets.cardNoUseMonths=[];source.records=[bill];assets.oneTime=[{id:'transfer-a',name:'テスト振替',kind:'transfer',amount:2500,date:day,fromAccountId:'rakuten-bank',toAccountId:'mizuho-bank',status:'done',categoryId:null}];summary.render();},
                         historical(){const snap=reportSnapshot(current,source);archive.history=[{id:'old',savedAt:'2026-01-01T00:00:00Z',note:'旧版のメモ',snapshot:snap,sourceHash:'b'.repeat(64)}];reports.render();}};
@@ -2024,6 +2143,26 @@ window.financeImportTest={
                     reports.get_by_role('button',name='最新版へ戻る').click()
                     self.assertEqual(reports.locator('#reports-memo').input_value(),'テストメモ')
                     self.assertEqual(page.evaluate('window.polish2.writes()'),1)
+                    # Existing archive stays on screen while the note-only write is pending.
+                    memo=reports.locator('#reports-memo');note=reports.get_by_role('button',name='メモのみ保存')
+                    self.assertTrue(note.is_visible());self.assertTrue(note.is_disabled())
+                    memo.fill('追記');self.assertTrue(note.is_enabled())
+                    original=reports.locator('.reports-metrics').inner_text()
+                    page.evaluate('polish2.holdNote()');note.click()
+                    self.assertTrue(note.is_disabled());self.assertEqual(reports.locator('.reports-metrics').inner_text(),original)
+                    self.assertEqual(memo.input_value(),'追記');self.assertTrue(memo.is_disabled())
+                    self.assertTrue(reports.get_by_role('button',name='前月').is_disabled())
+                    page.evaluate('polish2.finishNote()');expect(memo).to_be_enabled();self.assertEqual(page.evaluate('polish2.noteWrites()'),1)
+                    self.assertEqual(page.evaluate('polish2.writes()'),1);self.assertEqual(reports.locator('.reports-metrics').inner_text(),original)
+                    # Same-month failure retains the old display and the draft; retry remains available.
+                    memo.fill('未保存の追記');page.evaluate('polish2.holdRead()');reports.get_by_role('button',name='最新を取得').click()
+                    self.assertEqual(reports.locator('.reports-metrics').inner_text(),original);self.assertEqual(memo.input_value(),'未保存の追記')
+                    page.evaluate('polish2.failRead()');expect(reports.locator('.reports-feedback-error')).to_be_visible()
+                    self.assertEqual(memo.input_value(),'未保存の追記');self.assertTrue(note.is_disabled())
+                    reports.get_by_role('button',name='最新を取得').click();expect(note).to_be_enabled()
+                    page.evaluate('polish2.holdRead()');reports.get_by_role('button',name='前月').click()
+                    self.assertEqual(reports.locator('.reports-metrics').count(),0);self.assertTrue(reports.get_by_role('button',name='翌月').is_enabled())
+                    page.evaluate('polish2.finishRead()');expect(memo).to_be_visible()
                     self.assertFalse(errors,errors)
                 finally:context.close()
 
@@ -2365,15 +2504,16 @@ window.financeImportTest={
                     self.assertIn('210,000円',metric.inner_text())
                     self.assertIn('入金予定含む',metric.inner_text())
                     self.assertNotIn('給与見込みを含む',metric.inner_text())
-                    # The compact KPI keeps the status; the detailed planned amount lives in the income breakdown.
+                    # The KPI shares the home role totals; individual planned entries remain in the detailed breakdown.
                     incomes=page.locator('#monthly-content .monthly-panel').filter(has=page.get_by_role('heading',name='収入内訳',exact=True))
                     planned=incomes.locator('.monthly-line').filter(has_text='副業給与')
                     self.assertEqual(planned.count(),1)
                     self.assertIn('入金予定',planned.inner_text())
                     self.assertEqual(planned.locator('strong').inner_text(),'20,000円')
-                    self.assertNotIn('20,000円',metric.inner_text())
+                    self.assertEqual(metric.locator('.income-metric-amount').all_text_contents(),['190,000円','20,000円'])
                     page.evaluate('window.addActualSide()')
                     self.assertIn('213,000円',metric.inner_text())
+                    self.assertEqual(metric.locator('.income-metric-amount').all_text_contents(),['190,000円','23,000円'])
                     self.assertNotIn('入金予定含む',metric.inner_text())
                     self.assertEqual(planned.count(),0)
                     actual=incomes.locator('.monthly-line').filter(has_text='副業 · 給与')
@@ -2670,17 +2810,26 @@ window.financeImportTest={
                         async readPayrollCredential(){return remote;},payrollReadClient(){return {};}};
                       const result={id:'fixture-income',employerId:'fixture',job:'main',paidOn:'2026-11-27',payPeriod:'2026-11',netPay:200000,grossPay:null,taxablePay:null,currency:'JPY',kind:'salary',revision:1};
                       PayrollReadSession.connectAndRefresh=async(_,credential,guard)=>{connects.push(credential);const session={refresh:()=>new Promise(resolve=>pending=()=>{pending=null;resolve([result]);})};const items=await session.refresh();guard();return {session,items};};
-                      const ui=initAssetsSettings(()=>vault,()=>[],()=>{},()=>{changes++;});ui.render();
+                      const {initHome}=await import('finance-fixture/ui/home.js');
+                      let home;const ui=initAssetsSettings(()=>vault,()=>[],()=>{},()=>{changes++;home?.render();});ui.render();
+                      home=initHome({source:()=>({records:[],rules:[],categories:[],assets:data,payroll:ui.payrollSnapshot()}),navigate(){}});home.render();
                       let task;
                       window.payrollRace={start(){task=ui.refreshPayroll();},finish(){pending();},waiting:()=>!!pending,settled:()=>task,
                         remote(value){remote=value;},local(value){data.payrollAutoPassphrase=value;ui.render();},
                         lock(){revision++;vault.unlocked=false;ui.reset();vault.unlocked=true;ui.render();},
-                        snapshot:()=>ui.payrollSnapshot(),connects,changes:()=>changes};
+                        snapshot:()=>ui.payrollSnapshot(),busy:()=>ui.isBusy(),render:()=>home.render(),connects,changes:()=>changes};
                     }''')
                     page.evaluate('payrollRace.start()');page.wait_for_function('payrollRace.waiting()')
+                    self.assertFalse(page.evaluate('payrollRace.busy()'))
+                    self.assertTrue(page.evaluate('payrollRace.snapshot().loading'))
+                    page.evaluate('payrollRace.render()')
+                    self.assertIn('給与を読み込み中',page.locator('#home-content').inner_text())
+                    self.assertFalse(page.locator('#assets-payroll-connect input').is_enabled())
                     page.evaluate('payrollRace.finish()');page.evaluate('payrollRace.settled()')
                     self.assertTrue(page.evaluate('payrollRace.snapshot().ready'))
                     self.assertEqual(page.locator('#assets-payroll-count').text_content(),'1件')
+                    self.assertTrue(page.locator('#assets-payroll-connect input').is_enabled())
+                    self.assertNotIn('給与を読み込み中',page.locator('#home-content').inner_text())
                     # A latest local settings refresh must clear old income and its success message.
                     page.evaluate('payrollRace.local(null);payrollRace.remote(null)')
                     self.assertFalse(page.evaluate('payrollRace.snapshot().ready'))

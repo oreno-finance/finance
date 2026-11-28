@@ -192,6 +192,10 @@ test('復旧UIは入力による確認を要求し、下書きや再開計画を
  assert.match(html,/id="cloud-lock-recover"/);assert.match(ui,/requiredText:'解除'/);assert.match(ui,/他のすべてのFinanceタブを閉じ/);
  const recover=source.slice(source.indexOf('async recoverSaveLock('),source.indexOf('  /** Old releases'));
  assert.match(recover,/this\.readCurrent/);assert.doesNotMatch(recover,/this\.refresh\(|pendingYearBatch\s*=/);
+ const main=readFileSync(new URL('../src/main.ts',import.meta.url),'utf8');
+ const handler=main.slice(main.indexOf('onRecoverSaveLock:async approve=>'),main.indexOf('onChangePassphrase: async'));
+ assert.match(handler,/!valid\(\)\|\|result==='cancelled'/);assert.match(handler,/state\.busy\.length\|\|state\.unsaved\.length/);
+ assert.match(handler,/await refreshCloud\(\)/);assert.match(handler,/refresh-failed/);
 });
 
 // Full batch orchestration and encryption with the real upload/lock client.

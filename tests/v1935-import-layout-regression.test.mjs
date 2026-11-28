@@ -33,7 +33,7 @@ test('mobile imported draft permits document scrolling and visible transaction r
   assert.match(mobile, /body:has\(#import-view\.has-import-drafts:not\(\.hidden\)\)\{height:auto!important;[^}]*overflow-y:auto!important/);
   assert.match(mobile, /#import-view\.has-import-drafts>\.results-grid\{[^}]*grid-template-rows:auto auto/);
   assert.match(mobile, /#import-view\.has-import-drafts \.detail-panel \.detail-summary-block\{[^}]*max-height:none!important/);
-  assert.match(mobile, /#import-view\.has-import-drafts \.transactions-panel-inner>\.table-scroll\{[^}]*min-height:190px!important/);
+  assert.match(mobile, /#import-view\.has-import-drafts \.transactions-panel-inner>\.table-scroll\{[^}]*height:auto!important;min-height:0!important;max-height:none!important;overflow-x:auto!important/);
   assert.doesNotMatch(mobile, /grid-template-rows:minmax\(0,35fr\)|[;{]height:100dvh!important/);
 });
 

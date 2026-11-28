@@ -25,7 +25,6 @@
 .fixed-cost-form h2{font-size:1.4rem;margin-bottom:4px}
 .fixed-cost-field{display:flex;flex-direction:column;gap:7px;min-width:0;font-size:12px;font-weight:650;color:var(--muted)}
 .fixed-cost-field[hidden]{display:none!important}
-.fixed-cost-field input,.fixed-cost-field select,.fixed-cost-field textarea{box-sizing:border-box;max-width:100%;width:100%;min-height:42px;border:1px solid var(--line);border-radius:9px;background-color:var(--panel);color:var(--ink);padding:9px 12px;font:inherit;font-size:13px}
 .fixed-cost-field textarea{min-height:70px;resize:vertical}
 .fixed-cost-field:has([name="name"]),.fixed-cost-field:has([name="note"]){grid-column:1/-1}
 .fixed-cost-form-error{color:var(--danger,#bd3e43);font-size:12px;min-height:0}
@@ -64,7 +63,7 @@
   .fixed-cost-create-mode:not([data-method="card"])>.fixed-cost-field:has([name="category"]){grid-column:span 8}
   .fixed-cost-create-mode[data-frequency="yearly"]>.fixed-cost-field:has(:is([name="frequency"],[name="startOn"],[name="month"],[name="day"])){grid-column:span 3}
 }
-@media(max-width:800px){.fixed-cost-create-mode{grid-template-columns:minmax(0,1fr)}.fixed-cost-create-mode>.fixed-cost-field,.fixed-cost-create-mode>.fixed-cost-price-choices{grid-column:1/-1}.fixed-cost-create-mode .fixed-cost-field :is(input,select){min-height:44px}}
+@media(max-width:800px){.fixed-cost-create-mode{grid-template-columns:minmax(0,1fr)}.fixed-cost-create-mode>.fixed-cost-field,.fixed-cost-create-mode>.fixed-cost-price-choices{grid-column:1/-1}}
 
 .fixed-cost-form .fixed-cost-equivalent{white-space:pre-line}
 .fixed-cost-form .fixed-cost-histories{grid-column:1/-1;min-width:0}

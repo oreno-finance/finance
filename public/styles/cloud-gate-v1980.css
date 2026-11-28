@@ -153,7 +153,6 @@ body dialog .finance-modal-x:focus-visible{outline:2px solid var(--accent);outli
 .settings-view #cloud-auth-state[data-state="connected"]{display:none}
 .settings-view .cloud-primary-actions:has(#cloud-login.hidden):has(#cloud-reauth.hidden){grid-template-columns:repeat(auto-fit,minmax(min(140px,100%),1fr))}
 .settings-view .cloud-auth-diagnostic-output{font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted);margin:0 0 12px}
-#home-view .home-metric small{font-size:10px;line-height:1.45}
 #manage-view .manage-toolbar-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
 #manage-view .manage-row-delete{width:auto;min-width:52px;height:34px;min-height:34px;padding:0 8px;border:1px solid var(--line);background:var(--panel);border-radius:7px;box-shadow:none;font-size:12px;line-height:1.4;color:var(--danger);text-align:center;white-space:nowrap}
 #manage-view .manage-row-delete:hover,#manage-view .manage-row-delete:focus-visible{color:var(--danger,#b74754);background:var(--bg)}
@@ -173,7 +172,7 @@ body dialog .finance-modal-x:focus-visible{outline:2px solid var(--accent);outli
 /* Acceptance 2: compact, consistent form geometry and action alignment. */
 .settings-nisa-panel .assets-nisa-fields{grid-template-columns:minmax(0,1fr) minmax(0,1.35fr) auto;align-items:end;gap:12px}
 .settings-nisa-panel .assets-nisa-fields>.rules-field{margin:0}
-.settings-nisa-panel .assets-nisa-fields>#assets-nisa-save{width:auto;white-space:nowrap;min-width:0;margin:0;height:42px;align-self:end}
+.settings-nisa-panel .assets-nisa-fields>#assets-nisa-save{width:auto;white-space:nowrap;min-width:0;margin:0;height:var(--finance-action-height);align-self:end}
 .settings-nisa-panel .assets-nisa-actions{justify-content:flex-end;margin-top:8px}
 .future-panel .future-planner{align-items:stretch;min-width:0}
 .future-panel #future-scenario-accordion{grid-column:1/-1;width:100%;min-width:0;box-sizing:border-box;margin:0}
@@ -203,15 +202,12 @@ body dialog .finance-modal-x:focus-visible{outline:2px solid var(--accent);outli
 .card-setting-rate-edit{display:grid;gap:8px}
 .card-setting-rate-edit>.card-setting-field{max-width:none}
 .settings-view .cloud-advanced-content>.cloud-cleanup-panel{margin:12px 0;min-width:0}
-@media(max-width:800px){.settings-nisa-panel .assets-nisa-fields :is(input,select),.settings-nisa-panel .assets-nisa-fields>#assets-nisa-save{height:44px}}
 @media(max-width:630px){.settings-nisa-panel .assets-nisa-fields{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.settings-nisa-panel .assets-nisa-fields>#assets-nisa-save{grid-column:1/-1;justify-self:end}.future-panel .future-step[aria-label="予測する年齢"]{min-height:120px}}
 @media(max-width:360px){.settings-nisa-panel .assets-nisa-fields{grid-template-columns:minmax(0,1fr)}}
 
 @media(min-width:1000px){.future-panel .future-planner{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 /* Align settings form actions with the adjacent fields despite global action sizing. */
-body .settings-payroll-fields>button:is(.save-action,.secondary-action){min-height:42px!important}
-@media(max-width:800px){body .settings-payroll-fields>button:is(.save-action,.secondary-action){min-height:44px!important}}
 
 /* Read-only release history, available without a vault. */
 #release-history-open{display:inline-block;padding:2px 0;border:0;background:none;color:inherit;font:inherit;text-align:inherit;cursor:pointer}
@@ -241,12 +237,11 @@ body .settings-payroll-fields>button:is(.save-action,.secondary-action){min-heig
 
 /* Missing data is a quiet status, not a monetary KPI. Keep the value slot
    aligned with genuine amounts without giving missing text their visual weight. */
-.workspace :is(.home-metric,.monthly-metric,.analysis-metric,.reports-metric,.monthly-bank-metric) > strong.data-status-muted,
+.workspace :is(.home-metric,.monthly-metric,.analysis-metric,.reports-metric,.future-metric,.monthly-bank-metric) > strong.data-status-muted,
 .workspace :is(.home-account-balance,.assets-balance,.home-funding-amount).data-status-muted {
   font-size:13px!important;font-weight:500!important;letter-spacing:0;line-height:1.5!important;color:var(--muted);
 }
-.workspace :is(.home-metric,.monthly-metric,.analysis-metric,.reports-metric) > strong {min-height:1.6rem;display:flex;align-items:center}
-#summary-view .monthly-metric small{font-size:11px;line-height:1.45}
+.workspace :is(.home-metric,.monthly-metric,.analysis-metric,.reports-metric,.future-metric) > strong {min-height:1.6rem;display:flex;align-items:center}
 
 /* Inline save forms share the action height and reserve only the intrinsic button width. */
 .assets-account-layout .assets-balance-form{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:8px}

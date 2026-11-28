@@ -74,11 +74,11 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
   function reset():void {++request;cancelConfirmation(confirmationOwner);selected=today();archiveYear=selected.slice(0,4);loadedPeriod='';archive=null;periods=[];busy=false;saving=false;message='';draft='';comparison='unchecked';++comparisonRequest;loadFailed=false;draftConflict=false;chosenRevision=null;drafts.clear();container.replaceChildren();}
   async function fetch():Promise<void>{
     return traceFinanceOperation('report-read',async()=>{
-    const vault=deps.vault();if(!vault?.unlocked)return;
-    const id=++request;busy=true;message='';loadFailed=false;showActivity('月次レポートを読み込み中…','working');render();
+    const vault=deps.vault();if(!vault?.unlocked||busy)return;
+    const period=selected,id=++request;busy=true;message='';loadFailed=false;showActivity('月次レポートを読み込み中…','working');render();
     try{
-      const [list,document]=await vault.loadArchivedReports(selected);
-      if(id!==request)return;
+      const [list,document]=await vault.loadArchivedReports(period);
+      if(id!==request||vault!==deps.vault()||!vault.unlocked)return;
       periods=list;archive=document;loadedPeriod=selected;
       if(drafts.get(selected)?.note===(document?.current.note??''))drafts.delete(selected);
       const held=drafts.get(selected);
@@ -86,13 +86,13 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
       draft=held?.note??document?.current.note??'';comparison='unchecked';++comparisonRequest;loadFailed=false;chosenRevision=null;
       // Only decrypted in the unlocked session. Do not cache report bodies in browser storage.
       message='';
-    }catch(error){if(id!==request)return;loadedPeriod=selected;loadFailed=true;archive=null;periods=[];message=`取得失敗：${error instanceof Error?error.message:'レポートを取得できませんでした。'}`;}
-    finally{if(id===request){busy=false;finishActivity('月次レポート');if(loadFailed)showActivity(message,'bad');render();if(!loadFailed&&archive)void compareSource();}}
+    }catch(error){if(id!==request||vault!==deps.vault()||!vault.unlocked)return;loadFailed=true;message=`取得失敗：${error instanceof Error?error.message:'レポートを取得できませんでした。'}`;}
+    finally{if(id===request){if(vault!==deps.vault()||!vault.unlocked){reset();finishActivity('月次レポート');return;}busy=false;finishActivity('月次レポート');if(loadFailed)showActivity(message,'bad');render();if(!loadFailed&&archive)void compareSource();}}
       });
   }
   async function save(noteOnly=false):Promise<void>{
     return traceFinanceOperation('report-save',async()=>{
-    const vault=deps.vault();if(!vault?.unlocked||busy||loadFailed||draftConflict||loadedPeriod!==selected)return;
+    const vault=deps.vault();if(!vault?.unlocked||busy||loadFailed||draftConflict||chosenRevision||loadedPeriod!==selected||(noteOnly&&(!archive||draft===archive.current.note)))return;
     const id=++request;let saved=false;busy=true;saving=true;message='';showActivity('月次レポートを保存中…','working');render();
     try{
       let result:MonthlyReportDocument;
@@ -104,12 +104,12 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
         const snapshot=reportSnapshot(selected,source);
         result=await vault.saveArchivedReport(snapshot,draft,archive?.current.id??null);
       }
-      if(id!==request)return;
+      if(id!==request||vault!==deps.vault()||!vault.unlocked)return;
       archive=result;loadedPeriod=selected;draft=result.current.note;drafts.delete(selected);comparison='unchecked';++comparisonRequest;draftConflict=false;chosenRevision=null;
       if(!periods.includes(selected))periods=[selected,...periods].sort().reverse();
       saved=true;message='';showActivity(noteOnly?'メモを保存しました。':'月次レポートを保存しました。','good');
-    }catch(error){if(id!==request)return;if(!noteOnly&&archive)comparison='unavailable';message=`${error instanceof CloudWriteUncertainError?'保存結果未確認':'保存失敗'}：${error instanceof Error?error.message:'保存できませんでした。'}`;showActivity(message,'bad');}
-    finally{if(id===request){busy=false;saving=false;render();if(saved&&archive)void compareSource();}}
+    }catch(error){if(id!==request||vault!==deps.vault()||!vault.unlocked)return;if(!noteOnly&&archive)comparison='unavailable';message=`${error instanceof CloudWriteUncertainError?'保存結果未確認':'保存失敗'}：${error instanceof Error?error.message:'保存できませんでした。'}`;showActivity(message,'bad');}
+    finally{if(id===request){if(vault!==deps.vault()||!vault.unlocked){reset();finishActivity('月次レポート');return;}busy=false;saving=false;render();if(saved&&archive)void compareSource();}}
       });
   }
   async function compareSource():Promise<void>{
@@ -134,8 +134,6 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
   }
   function syncSourceNotice():void {
     const notice=container.querySelector<HTMLElement>('.reports-source-changed');
-    const memoOnly=container.querySelector<HTMLButtonElement>('.reports-note-only');
-    if(memoOnly)memoOnly.hidden=comparison!=='unavailable';
     if(!notice)return;
     notice.hidden=comparison!=='changed'&&comparison!=='unavailable'&&comparison!=='checking';
     notice.textContent=comparison==='changed'?'明細や設定に変更があります。レポートを更新できます。':
@@ -151,26 +149,33 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
     message='';loadFailed=false;draftConflict=false;comparison='unchecked';++comparisonRequest;
     return true;
   }
+  let renderedPeriod='';
   function render():void{
-    container.replaceChildren();
+    const openDetails=renderedPeriod===selected?Array.from(container.querySelectorAll<HTMLDetailsElement>('details.reports-detail')).map(node=>node.open):[];
+    renderedPeriod=selected;container.replaceChildren();
     if(!active()) {container.append(el('div','panel reports-locked','OneDrive保管庫を解除してください。'));return;}
-    if(busy){const pending=el('p','reports-muted',saving?'保存中…':'読み込み中…');pending.setAttribute('role','status');container.append(pending);return;}
     const top=el('div','reports-controls');
     const choosePeriod=(period:string)=>{if(selectPeriod(period))void fetch();};
     const nav=monthNavigator(selected,choosePeriod,{label:'レポート対象年月',min:'1900-02',max:'2199-12',today:today()});
-    const refresh=button('最新を取得',()=>{void fetch();});
+    const refresh=button('最新を取得',()=>{if(refresh.isConnected)void fetch();});
+    refresh.disabled=busy;
+    if(saving)for(const control of nav.querySelectorAll<HTMLInputElement|HTMLButtonElement>('button,input'))control.disabled=true;
     top.append(nav,refresh);container.append(top,el('p','reports-purpose','保存時点の収支・メモを記録'));
     // Suggest preserving the previous month's point-in-time view after rollover;
     // never create an archive without a deliberate Save action.
     const current=today(),previous=(()=>{const [y,m]=current.split('-').map(Number);const d=new Date(Date.UTC(y!,m!-2,1));return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}`;})();
-    if(!busy&&!loadFailed&&loadedPeriod===selected&&selected===current&&!periods.includes(previous)){
+    if(!loadFailed&&loadedPeriod===selected&&selected===current&&!periods.includes(previous)){
       const reminder=el('div','reports-previous-reminder');
-      reminder.append(el('span','reports-muted','前月：未保存'),button(`${month(previous)}を開く`,()=>choosePeriod(previous),'monthly-link'));
+      const openPrevious=button(`${month(previous)}を開く`,()=>choosePeriod(previous),'monthly-link');openPrevious.disabled=saving;reminder.append(el('span','reports-muted','前月：未保存'),openPrevious);
       container.append(reminder);
     }
     // Keep failures beside the operation, even after the activity card expires.
-    if(loadFailed){const error=el('p','reports-feedback-error',message);error.setAttribute('role','alert');container.append(error);return;}
-    if(loadedPeriod!==selected){void fetch();return;}
+    if(loadedPeriod!==selected){
+      if(loadFailed){const error=el('p','reports-feedback-error',message);error.setAttribute('role','alert');container.append(error);}
+      else if(busy){const pending=el('p','reports-muted','読み込み中…');pending.setAttribute('role','status');container.append(pending);}
+      else void fetch();
+      return;
+    }
     if(periods.length){
       const years=[...new Set(periods.map(period=>period.slice(0,4)))].sort().reverse();
       if(!years.includes(archiveYear))archiveYear=years.includes(selected.slice(0,4))?selected.slice(0,4):years[0]!;
@@ -182,7 +187,7 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
         const count=periods.filter(period=>period.startsWith(year+'-')).length;
         yearSelect.append(new Option(`${year}年（${count}か月）`,year));
       }
-      yearSelect.value=archiveYear;
+      yearSelect.value=archiveYear;yearSelect.disabled=saving;
       yearSelect.addEventListener('change',()=>{
         archiveYear=yearSelect.value;render();
         container.querySelector<HTMLSelectElement>('.reports-year-select')?.focus();
@@ -191,38 +196,40 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
       const months=el('div','reports-year-months');
       for(const period of periods.filter(period=>period.startsWith(archiveYear+'-'))){
         const item=button(`${Number(period.slice(5))}月`,()=>{if(selectPeriod(period))void fetch();},'reports-period-button'+(period===selected?' selected':''));
-        item.setAttribute('aria-pressed',String(period===selected));months.append(item);
+        item.setAttribute('aria-pressed',String(period===selected));item.disabled=saving;months.append(item);
       }
       list.append(months);container.append(list);
     }
     const control=section('メモ・保存');
-    if(message){const error=el('p','reports-feedback-error',message);error.setAttribute('role','alert');control.body.append(error);}
+    if(message){const error=el('p','reports-feedback-error',message);error.setAttribute('role','alert');container.append(error);}
     const state=archive?.current;
     if(state){const notice=el('p','reports-quality reports-source-changed');notice.setAttribute('role','status');control.body.append(notice);}
     if(draftConflict){
       control.body.append(el('p','reports-quality','別の端末でメモが更新されました。編集中の内容を確認してください。'));
-      control.body.append(button('編集を破棄',async()=>{
+      const discard=button('編集を破棄',async()=>{
         const id=request,period=selected,vault=deps.vault(),note=draft,revision=archive?.current.id;
         if(!await requestConfirmation({owner:confirmationOwner,title:'編集中のメモを破棄しますか？',message:'保存済みの最新レポートを表示します。',acceptLabel:'破棄する',destructive:true}))return;
         if(id!==request||period!==selected||vault!==deps.vault()||!vault?.unlocked||busy||!draftConflict||draft!==note||archive?.current.id!==revision)return;
         drafts.delete(selected);draftConflict=false;draft=archive?.current.note??'';render();
-      }));
+      });discard.disabled=busy;control.body.append(discard);
     }
     const noteLabel=el('label','reports-memo-label','メモ');noteLabel.htmlFor='reports-memo';control.body.append(noteLabel);
-    const memo=el('textarea','reports-memo');memo.id='reports-memo';memo.rows=3;memo.maxLength=2000;memo.value=draft;
+    const memo=el('textarea','reports-memo');memo.id='reports-memo';memo.rows=3;memo.maxLength=2000;memo.value=draft;memo.disabled=busy;
     memo.placeholder='今月の振り返り';memo.addEventListener('input',()=>{
       if(!memo.isConnected||busy||!active()||loadedPeriod!==selected)return;
       draft=memo.value;
       // Keep the original revision during a conflict; typing cannot approve a remote overwrite.
       if(!draftConflict&&draft===(archive?.current.note??''))drafts.delete(selected);
       else {const held=drafts.get(selected);drafts.set(selected,{note:draft,revision:held?held.revision:archive?.current.id??null});}
+      const noteOnly=container.querySelector<HTMLButtonElement>('.reports-note-only');
+      if(noteOnly)noteOnly.disabled=busy||loadFailed||draftConflict||draft===archive?.current.note;
     });
     control.body.append(memo);
     const submit=button(state?'レポートを更新':'レポートを作成',()=>{void save();},'save-action');
-    submit.disabled=draftConflict;control.body.append(submit);
+    submit.disabled=busy||loadFailed||draftConflict;control.body.append(submit);
     if(state){
       const noteOnly=button('メモのみ保存',()=>{void save(true);},'secondary-action reports-note-only');
-      noteOnly.disabled=draftConflict;noteOnly.hidden=comparison!=='unavailable';control.body.append(noteOnly);
+      noteOnly.disabled=busy||loadFailed||draftConflict||draft===state.note;control.body.append(noteOnly);
     }
     const revision=chosenRevision?archive?.history.find(item=>item.id===chosenRevision)??state:state;
     let preview:ReportSnapshot|null=null;
@@ -231,7 +238,7 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
     if(snapshot){
       const heading=el('div','reports-revision-bar');heading.append(el('strong','',`${month(selected)} · ${chosenRevision?'過去の版':revision?'保存済み':'未保存プレビュー'}`));
       if(revision)heading.append(el('span','reports-muted',`保存：${formatDateTime(revision.savedAt,true)}`));
-      if(chosenRevision)heading.append(button('最新版へ戻る',()=>{chosenRevision=null;comparison='unchecked';render();void compareSource();}));
+      if(chosenRevision){const latest=button('最新版へ戻る',()=>{if(busy)return;chosenRevision=null;comparison='unchecked';render();void compareSource();});latest.disabled=busy;heading.append(latest);}
       container.append(heading);
       container.append(reportMetrics(snapshot));
       if(snapshot.quality.length)container.append(el('p','reports-quality',snapshot.quality.join(' · ')));
@@ -245,9 +252,10 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
       const history=el('details','reports-detail reports-history');
       history.append(el('summary','',`保存履歴（${archive.history.length}件）`));
       const inner=el('div','reports-history-body');
-      for(const version of archive.history)inner.append(button(formatDateTime(version.savedAt,true),()=>{chosenRevision=version.id;++comparisonRequest;comparison='unchecked';render();},'reports-history-button'));
+      for(const version of archive.history){const item=button(formatDateTime(version.savedAt,true),()=>{if(busy)return;chosenRevision=version.id;++comparisonRequest;comparison='unchecked';render();},'reports-history-button');item.disabled=busy;inner.append(item);}
       history.append(inner);container.append(history);
     }
+    Array.from(container.querySelectorAll<HTMLDetailsElement>('details.reports-detail')).forEach((node,index)=>{node.open=openDetails[index]??false;});
     syncSourceNotice();
   }
   function openPeriod(period:string):void {

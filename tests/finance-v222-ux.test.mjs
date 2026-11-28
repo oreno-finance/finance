@@ -35,18 +35,24 @@ function harness(){
   return {ctx,vault,events,settle,fail};
 }
 
-test('Initial Finance view waits for Payroll then paints exactly once',async()=>{
-  const {ctx,vault,events,settle}=harness();const opening=ctx.open(vault,[]);
-  assert.equal(ctx.initialPayrollVault,vault);assert.deepEqual(events,['gate','records:false','payroll']);
-  settle();assert.equal(await opening,true);assert.equal(ctx.initialPayrollVault,null);
-  assert.deepEqual(events,['gate','records:false','payroll','render','status']);
+test('Finance opens before delayed Payroll completes, without a global gate',async()=>{
+ const {ctx,vault,events,settle}=harness();assert.equal(await ctx.open(vault,[]),true);
+ assert.deepEqual(events,['records:false','payroll','render','status']);
+ settle();await Promise.resolve();assert.deepEqual(events,['records:false','payroll','render','status']);
 });
-test('Initial Payroll failure does not leave the Finance loading gate stuck',async()=>{
-  const {ctx,vault,events,fail}=harness();const opening=ctx.open(vault,[]);fail(Error('synthetic failure'));
-  assert.equal(await opening,true);assert.equal(ctx.initialPayrollVault,null);assert.deepEqual(events,['gate','records:false','payroll','warning','render','status']);
+test('Initial Payroll failure preserves the usable Finance view',async()=>{
+ const {ctx,vault,events,fail}=harness();assert.equal(await ctx.open(vault,[]),true);
+ fail(Error('synthetic failure'));await Promise.resolve();await Promise.resolve();
+ assert.deepEqual(events,['records:false','payroll','render','status','warning']);
 });
-test('A lock while Payroll is loading must not reveal a late result',async()=>{
-  const {ctx,vault,events,settle}=harness();const opening=ctx.open(vault,[]);
-  ctx.lockSequence++;ctx.initialPayrollVault=null;vault.unlocked=false;settle();
-  assert.equal(await opening,false);assert.deepEqual(events,['gate','records:false','payroll']);
+test('A lock while Payroll is loading suppresses a late error',async()=>{
+ const {ctx,vault,events,fail}=harness();assert.equal(await ctx.open(vault,[]),true);
+ ctx.lockSequence++;vault.unlocked=false;fail(Error('synthetic failure'));await Promise.resolve();await Promise.resolve();
+ assert.deepEqual(events,['records:false','payroll','render','status']);
+ assert.equal(await ctx.open(vault,[]),false);
+});
+test('Income stays unknown while Payroll is loading; card outflow remains available',()=>{
+ const period='2026-11',assets=emptyAssets();assets.cardNoUseMonths=[period];
+ const source={records:[],rules:[],categories:[],assets,payroll:{ready:false,loading:true,syncedAt:null,entries:[]},currentPeriod:period,currentDay:period+'-28'};
+ const report=monthlyReport(period,source);assert.equal(report.income,null);assert.equal(report.monthlyBalance,null);assert.equal(report.cardOutflow,0);
 });

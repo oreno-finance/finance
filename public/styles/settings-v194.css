@@ -103,8 +103,8 @@
 .settings-payroll-section{padding-top:18px;border-top:1px solid var(--line)}
 .settings-payroll-fields{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:12px;min-width:0}
 .settings-payroll-fields>.rules-field{margin:0;min-width:0}
-.settings-payroll-fields :is(input,select){width:100%;min-width:0;height:42px;text-align:left;text-align-last:left}
-.settings-view .settings-payroll-fields>button{width:auto;min-width:0;margin:0;height:42px;align-self:end;white-space:nowrap}
+.settings-payroll-fields :is(input,select){width:100%;min-width:0;height:var(--finance-action-height);text-align:left;text-align-last:left}
+.settings-view .settings-payroll-fields>button{width:auto;min-width:0;margin:0;height:var(--finance-action-height);align-self:end;white-space:nowrap}
 .settings-payroll-actions{display:flex;justify-content:flex-end;margin-top:8px}
 .settings-payroll-section>h3{font-size:13px;margin:0 0 12px}
 .settings-payroll-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0}
@@ -112,6 +112,5 @@
 .settings-payroll-metrics dt{font-size:11px;color:var(--muted)}
 .settings-payroll-metrics dd{margin:5px 0 0;font-size:13px;font-weight:700;overflow-wrap:anywhere}
 .settings-payroll-body .assets-operation-status:empty{display:none}
-@media(max-width:800px){.settings-payroll-fields :is(input,select),.settings-payroll-fields>button{height:44px}}
 @media(max-width:720px){.settings-view .settings-payroll-body{padding:13px}}
 @media(max-width:630px){#assets-payroll-connect .settings-payroll-fields{grid-template-columns:minmax(0,1fr)}.settings-view .settings-payroll-fields>button{justify-self:end}}

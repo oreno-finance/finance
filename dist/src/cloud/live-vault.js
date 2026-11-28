@@ -8,7 +8,7 @@ import { validateFixedCosts } from '../fixed-costs/contracts.js';
 import { isZeroUsage, statementPeriod } from '../models/types.js';
 import { importErrors } from '../importers/batch-policy.js';
 import { isConfirmationRegression } from '../importers/import-policy.js';
-import { GraphError, VaultMutationUncertainError } from './onedrive-api.js';
+import { GraphError, UploadChunkTimeoutError, VaultMutationUncertainError } from './onedrive-api.js';
 import { decryptDocument, decryptIndex, decryptOriginal, originalDigest, verifyOriginalDigest, deriveCloudKey, encryptDocument, encryptIndex, encryptOriginal, encryptRules, decryptRules, freshSalt, parseEnvelope, parseIndexEnvelope } from './cloud-crypto.js';
 import { statementMonthKey } from '../importers/import-policy.js';
 import { emptyDocument, mergeDocuments, detectDocumentEditCollisions, duplicateStatementMonths } from './merge.js';
@@ -47,9 +47,9 @@ function changedFixedRules(base, local) {
     }));
 }
 const isConflict = (error) => error instanceof GraphError && (error.status === 409 || error.status === 412);
-// 409/412 are known rejected writes. Other transport errors can occur *after* Graph committed a write.
-const isDefiniteWriteRejection = (error) => error instanceof GraphError
-    && error.status >= 400 && error.status < 500 && error.status !== 408;
+// A pre-final timeout cannot commit its target. Other transport errors may occur after commit.
+const isDefiniteWriteRejection = (error) => error instanceof UploadChunkTimeoutError || (error instanceof GraphError
+    && error.status >= 400 && error.status < 500 && error.status !== 408);
 /** A remote write may already have committed; never present this as a definite failure. */
 export class CloudWriteUncertainError extends Error {
     reason;
@@ -65,6 +65,8 @@ export class BrowserKeyGenerationChangedError extends Error {
 }
 export class CloudEditCancelledError extends Error {
     constructor(message) { super(message); this.name = 'CloudEditCancelledError'; }
+}
+export class CardNoUseRefreshRequired extends CloudEditCancelledError {
 }
 /** A read-only preflight found conflicts. Leave the operation lock before asking. */
 class BatchApprovalRequired extends CloudEditCancelledError {
@@ -1664,8 +1666,8 @@ export class LiveVault {
                 this.rulesSaving = true;
                 this.settingsRevision++;
                 try {
-                    // Independent read-only preflight; the write still rechecks generation under its lock.
-                    const [, firstRemote] = await Promise.all([this.assertActiveGeneration(), this.client.readMerchantRules()]);
+                    // The mutation lease checks the active generation before any write.
+                    const firstRemote = await this.client.readMerchantRules();
                     guard();
                     for (let attempt = 0; attempt < 5; attempt++) {
                         guard();
@@ -1677,6 +1679,10 @@ export class LiveVault {
                         const remoteDoc = remote ? (unchanged ? clone(base) : await decryptRules(remote.text, key, this.salt)) : emptyRules();
                         const collisions = detectRuleEditCollisions(base, local, remoteDoc);
                         guard();
+                        if (collisions.length) {
+                            await this.assertActiveGeneration();
+                            guard();
+                        }
                         await this.approveCollision(collisions, this.ruleConflictResolver, '利用先ルール・カテゴリー');
                         guard();
                         const merged = mergeRules(base, local, remoteDoc, new Date().toISOString(), undefined, collisions.length > 0);
@@ -2361,8 +2367,10 @@ export class LiveVault {
                 this.assetsSaving = true;
                 this.settingsRevision++;
                 try {
-                    // Independent read-only preflight; the write still rechecks generation under its lock.
-                    const [, firstRemote] = await Promise.all([this.assertActiveGeneration(), this.client.readAssetSettings(!!noUse)]);
+                    // Keep the special confirmation preflight; ordinary settings check under the mutation lease.
+                    const firstRemote = noUse
+                        ? (await Promise.all([this.assertActiveGeneration(), this.client.readAssetSettings(true)]))[1]
+                        : await this.client.readAssetSettings();
                     guard();
                     for (let attempt = 0; attempt < 5; attempt++) {
                         guard();
@@ -2380,6 +2388,10 @@ export class LiveVault {
                             throw new CloudEditCancelledError('支払条件履歴が同時に変更されました。最新情報を取得して変更し直してください。');
                         guard();
                         if (collisions.length) {
+                            if (!noUse) {
+                                await this.assertActiveGeneration();
+                                guard();
+                            }
                             if (!this.assetConflictResolver)
                                 throw new CloudEditCancelledError('別の端末でも同じ資産項目が変更されています。保存を停止しました。最新データを取得して確認してください。');
                             const details = describeAssetsEditCollisions(base, local, current, collisions);
@@ -2411,15 +2423,15 @@ export class LiveVault {
                                     }
                                     catch (error) {
                                         guard();
-                                        throw new CloudEditCancelledError('最新のカード明細を確認できないため「利用なし」の保存を停止しました。');
+                                        throw new CardNoUseRefreshRequired('最新のカード明細を確認できないため「利用なし」の保存を停止しました。');
                                     }
                                     if ([...current.shards.values()].some(shard => shard.document.records.some(record => statementPeriod(record.statement) === noUse.month)))
-                                        throw new CloudEditCancelledError('OneDriveにカード明細がある月は「利用なし」と確認できません。最新データを取得してください。');
+                                        throw new CardNoUseRefreshRequired('OneDriveにカード明細がある月は「利用なし」と確認できません。最新データを取得してください。');
                                     if (current.shards.size !== this.shards.size || [...current.shards].some(([year, shard]) => {
                                         const prior = this.shards.get(year)?.ref;
                                         return prior?.id !== shard.ref.id || prior?.etag !== shard.ref.etag;
                                     }))
-                                        throw new CloudEditCancelledError('明細が別端末で更新されています。最新データを取得してから利用なしを確認してください。');
+                                        throw new CardNoUseRefreshRequired('明細が別端末で更新されています。最新データを取得してから利用なしを確認してください。');
                                 }
                                 rateGuard?.(current);
                                 if (fixedChanges.size) {
@@ -3173,8 +3185,8 @@ export class LiveVault {
                                 guard();
                             }
                             catch (error) {
-                                if (error instanceof CloudEditCancelledError)
-                                    throw new CloudWriteUncertainError('明細保存後に保管庫が変更されました。最新データを確認してください。', error);
+                                if (error instanceof CloudEditCancelledError || error instanceof UploadChunkTimeoutError)
+                                    throw new CloudWriteUncertainError('明細保存後に索引の更新を完了できませんでした。最新データを確認してください。', error);
                                 throw error;
                             }
                         }
@@ -3219,7 +3231,7 @@ export class LiveVault {
     async refresh(lease, inspectPending = false, hint, assetHint) {
         return traceFinanceOperation('refresh', async () => {
             if (lease !== undefined ? this.activeMutation !== lease : this.activeMutation !== null)
-                throw new CloudEditCancelledError('明細を保存中です。完了後に最新データを取得してください。');
+                throw new CloudEditCancelledError(`${this.assetsSaving || this.rulesSaving ? '設定' : '明細'}を保存中です。完了後に最新データを取得してください。`);
             if ((hint || assetHint) && !lease)
                 throw new CloudEditCancelledError('保存の操作権を確認できません。');
             if (inspectPending && !this.pendingYearBatch)

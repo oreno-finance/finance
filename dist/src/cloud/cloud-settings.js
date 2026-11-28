@@ -505,8 +505,10 @@ export function initCloudSettings(handlers) {
                 const result = await handlers.onRecoverSaveLock(createdAt => confirmAction({ title: '中断した保存ロックを復旧しますか？', message: `作成日時：${createdAt ? new Date(createdAt).toLocaleString('ja-JP') : '不明'}。他のすべてのFinanceタブを閉じ、実行中・未完了のアップロードや再暗号化がないことを確認してください。現在の保管庫を読み取り・復号確認し、同じ空の操作ロックだけを解除します。処理が停止したかを自動判定する機能ではありません。`, acceptLabel: '復旧する', destructive: true, requiredText: '解除' }));
                 if (!auth() || !valid())
                     return;
-                target.textContent = result === 'released' ? '保存ロックを解除しました。未確認の明細は保存結果を照合して再開してください。' : result === 'absent' ? '保存ロックは存在しません。' : '復旧を取り消しました。';
-                status(target.textContent, result === 'released' ? 'ok' : 'neutral');
+                target.textContent = result === 'refreshed' ? '保存ロックの復旧と最新データの取得が完了しました。' :
+                    result === 'refresh-failed' ? '保存ロックはありません。最新データの取得に失敗しました。最新を取得から再試行してください。' :
+                        result === 'released' || result === 'absent' ? `${result === 'released' ? '保存ロックを解除しました。' : '保存ロックは存在しません。'} 未保存の編集や未確認の保存がある場合は解決してから最新を取得してください。` : '復旧を取り消しました。';
+                status(target.textContent, result === 'refresh-failed' ? 'error' : result === 'refreshed' || result === 'released' ? 'ok' : 'neutral');
             }
             catch (error) {
                 if (auth() && valid())
