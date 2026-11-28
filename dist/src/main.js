@@ -1190,7 +1190,7 @@ function updateBatchStatus() {
     duplicateAction.classList.toggle('hidden', redundant === 0);
     duplicateAction.disabled = batchBusy || filesBusy || revisionBusy || recovery || confirmationPending();
     duplicateAction.textContent = `重複${redundant}件を除外`;
-    button.textContent = batchBusy ? '保存中…' : eligible.length ? `${eligible.length}件を保存` : '保存';
+    button.textContent = batchBusy ? '保存中…' : filesBusy ? '解析中…' : eligible.length ? `${eligible.length}件を保存` : '保存';
     const confirmationUpdates = blocked.filter(s => importCollision(s) === 'revision' && confirmationOnlyImport(s)).length;
     const collisions = blocked.filter(s => importCollision(s) !== null).length - confirmationUpdates;
     const otherErrors = errors.filter(s => !importCollision(s) && !(s.sourceKind === 'csv' && !s.paymentDate && issues(s).every(e => e === '支払日が不明または不正です'))).length + failedImports.length;
@@ -1201,7 +1201,7 @@ function updateBatchStatus() {
                 : selectionOnly.length ? `${selectionOnly.length}件のカード選択待ち`
                     : errorCount ? `${errorCount}件に不備があります`
                         : eligible.length ? `${eligible.length}件の明細` : '保存対象はありません';
-    $('batch-status').textContent = eligible.length && errorCount ? `${eligible.length}件を保存可能／${errorCount}件は取込待ち` : status;
+    $('batch-status').textContent = filesBusy ? '明細を解析中…' : eligible.length && errorCount ? `${eligible.length}件を保存可能／${errorCount}件は取込待ち` : status;
     $('batch-description').textContent = eligible.length && errorCount ? status : '';
 }
 /** One adapter supplies the state and actions; every gated page uses the same UI. */
@@ -3449,7 +3449,6 @@ async function acceptStatement(s, source, queued) {
             statements.splice(draftIndex, 1);
             activeIndex = statements.indexOf(revised);
             render();
-            toast(`${cardDisplayName(s.cardId) ?? 'カード'}の${s.billingMonth}分を${prepared.diff.confirmationOnly ? '確定更新' : '差し替え'}待ちにしました。まだOneDriveには保存していません。`);
         }
         finally {
             revisionBusy = false;
@@ -3462,7 +3461,6 @@ async function acceptStatement(s, source, queued) {
         return true;
     }
     render();
-    toast(`${cardDisplayName(s.cardId) ?? providerLabel(s.provider)}の明細を解析しました（${s.rows.length}件）。`);
     return true;
 }
 /** Explicit human verification is restricted to a complete, selected PDF
@@ -3564,15 +3562,11 @@ async function handleFiles(files) {
     currentUploadFailures.splice(0);
     updateImportUploadFeedback();
     updateBatchStatus();
-    showActivity('明細を読み込み中…', 'working');
     let accepted = 0, rejected = 0, failed = 0;
     try {
-        let processed = 0;
         for (const file of chosen) {
             if (!current())
                 return;
-            processed++;
-            showActivity(`明細を読み込み中… (${processed}/${chosen.length})`, 'working');
             const name = file.name.toLowerCase();
             if (!name.endsWith('.pdf') && !name.endsWith('.csv')) {
                 const reason = `${file.name}: CSVまたはPDF形式ではありません。`;
@@ -3631,7 +3625,6 @@ async function handleFiles(files) {
         if (importAbort === controller)
             importAbort = null;
         filesBusy = false;
-        finishActivity('明細を読み込み中');
         render();
         if (!current())
             return;

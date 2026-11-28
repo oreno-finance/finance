@@ -11,15 +11,15 @@ const draftCss=readFileSync(new URL('../public/styles/points-workspace-v1914.css
 const handleFilesSource=source.slice(source.indexOf('function importBatchIsClean('),source.indexOf('const THEME_KEY =',source.indexOf('function importBatchIsClean(')));
 
 function createHarness({accept=()=>true,decode=()=>'',parse=()=>({}),pdf=()=>({})}={}){
-  const events={accepted:[],closed:0,rendered:0,feedback:0,notices:[]};
+  const events={accepted:[],closed:0,rendered:0,feedback:0,notices:[],activity:[]};
   const env={
     filesBusy:false,batchBusy:false,revisionBusy:false,lockSequence:0,importAbort:null,AbortController,importUploadFeedback:'',failedImports:[],currentUploadFailures:[],
     updateImportUploadFeedback:()=>events.feedback++,updateBatchStatus:()=>{},
-    showActivity:()=>{},finishActivity:()=>{},render:()=>events.rendered++,
+    showActivity:(...args)=>events.activity.push(args),finishActivity:(...args)=>events.activity.push(args),render:()=>events.rendered++,
     closeImportAddDialog:()=>events.closed++,
     toast:text=>events.notices.push(text),
     decodeCardCsv:decode,identifyCardCsv:()=>({cardId:'smbc-nl',billingMonth:'2026-11'}),
-    csvPaymentDate:()=>null,parseCardCsv:parse,parsePdfFile:pdf,
+    csvPaymentDate:()=>null,parseCardCsv:parse,parsePdfFile:pdf,assertPdfLimits:()=>{},
     acceptStatement:async row=>{events.accepted.push(row);return accept(row);},
     Uint8Array,Error,Array,
   };
@@ -27,7 +27,7 @@ function createHarness({accept=()=>true,decode=()=>'',parse=()=>({}),pdf=()=>({}
   vm.runInContext(handleFilesSource+'\nthis.handleFiles=handleFiles;',context);
   return {context,events,run:files=>context.handleFiles(files)};
 }
-const fakeFile=(name,raw=new Uint8Array([1,2]))=>({name,arrayBuffer:async()=>raw.buffer});
+const fakeFile=(name,raw=new Uint8Array([1,2]))=>({name,size:raw.byteLength,arrayBuffer:async()=>raw.buffer});
 
 test('first upload and later modal use one file input; modal never overlays the result as an absolute accordion',()=>{
   assert.equal((markup.match(/id="file-input"/g)||[]).length,1);
@@ -49,6 +49,16 @@ test('successfully parsing multiple files closes the add dialog only after all h
   assert.equal(events.closed,1);
   assert.equal(context.filesBusy,false);
   assert.equal(context.failedImports.length,0);
+  assert.deepEqual(events.activity,[]);
+  assert.deepEqual(events.notices,[]);
+});
+
+test('PDF and CSV local parsing never issue global progress or success notifications',async()=>{
+  const {run,events,context}=createHarness({pdf:async file=>({name:file.name}),parse:(_raw,name)=>({name})});
+  await run([fakeFile('sample.pdf'),fakeFile('sample.csv')]);
+  assert.deepEqual(events.accepted.map(row=>row.name),['sample.pdf','sample.csv']);
+  assert.deepEqual(events.activity,[]);assert.deepEqual(events.notices,[]);
+  assert.equal(context.filesBusy,false);assert.equal(events.closed,1);
 });
 
 test('one invalid file among valid statements does not close the modal or discard error information',async()=>{
@@ -81,6 +91,8 @@ test('parser failure preserves the error and permits retry without entering a bu
   await run([fakeFile('broken.csv')]);
   assert.equal(events.closed,0);
   assert.match(context.failedImports[0],/broken\.csv: CSVデータを解析できません/);
+  assert.equal(events.notices.length,1,'real parser errors remain visible');
+  assert.deepEqual(events.activity,[]);
   assert.equal(context.filesBusy,false);
 });
 
