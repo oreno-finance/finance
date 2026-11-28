@@ -416,7 +416,6 @@ export function initMonthlyReports(deps) {
             noteOnly.hidden = comparison !== 'unavailable';
             control.body.append(noteOnly);
         }
-        control.body.append(button('月別サマリー', () => deps.openMonth(selected)));
         const revision = chosenRevision ? archive?.history.find(item => item.id === chosenRevision) ?? state : state;
         let preview = null;
         if (!revision) {

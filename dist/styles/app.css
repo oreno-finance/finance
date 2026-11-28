@@ -649,7 +649,6 @@ body{overflow:hidden}
   .cloud-overview-label{font-size:10px}
   .cloud-overview-info{grid-template-columns:1fr;gap:10px}
   .cloud-status-cell{padding:12px 14px}
-  .cloud-account-actions{justify-content:flex-start}
   .cloud-account-actions .cloud-link-action{min-height:40px;padding:9px 0}
   .cloud-advanced>summary{padding:15px 13px}
   .cloud-advanced-content{padding:3px 11px 13px}
@@ -1041,12 +1040,13 @@ body{overflow:hidden}
 .vault-retention-options .vault-tab-option strong{font-size:12px}
 .vault-retention-options .vault-tab-option small{font-size:11px}
 .vault-retention-help{font-size:11px;line-height:1.55;color:var(--muted);margin:7px 0 0}
-.cloud-remember-controls{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:14px 0 0;border-top:1px solid var(--border,rgba(115,133,160,.24));margin-top:14px}
-.cloud-remember-copy{flex:1 1 270px;min-width:0}
+.cloud-remember-controls{display:grid;gap:9px;padding:14px 0 0;border-top:1px solid var(--border,rgba(115,133,160,.24));margin-top:14px}
+.cloud-remember-copy{min-width:0}
 .cloud-remember-controls strong{font-size:13px}
 .cloud-remember-controls p{margin:5px 0 0;font-size:12px;line-height:1.6;color:var(--ink)}
 .cloud-remember-copy small{display:block;margin-top:5px;font-size:11px;line-height:1.5;color:var(--muted)}
-.cloud-remember-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.cloud-remember-actions{display:flex;align-items:center;justify-content:flex-start;flex-wrap:wrap;gap:8px}
+.cloud-remember-actions:not(:has(button:not(.hidden))){display:none}
 /* The shared cloud-link-action rules only apply inside .cloud-primary-actions.
    This settings control must be fully styled in *both* remembered states. */
 .cloud-remember-actions button{
@@ -1064,7 +1064,7 @@ body{overflow:hidden}
 .cloud-remember-actions #cloud-remember-forget:hover{background:var(--bg);border-color:var(--muted)}
 .cloud-remember-actions button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .cloud-remember-actions button:disabled{opacity:.5;cursor:not-allowed}
-@media(max-width:600px){.cloud-remember-actions{width:100%}.cloud-remember-actions button{width:100%}}
+
 @media(prefers-reduced-motion:reduce){.cloud-remember-actions button{transition:none}}
 
 /* Finance MSAL status: kept separate from financial-vault lock state. */
@@ -1154,6 +1154,16 @@ body{overflow:hidden}
 :is(#home-view,#assets-funding-history) .home-funding-prior{border-color:var(--danger,#bf4c51)}
 :is(#home-view,#assets-funding-history) .home-funding-prior .home-funding-state{color:var(--danger,#bf4c51)}
 
+/* Income detail remains part of the existing linked KPI, not another card. */
+.home-income-parts{display:grid;gap:3px;width:100%;min-width:0;margin-top:2px;padding-top:7px;border-top:1px solid var(--line)}
+.home-income-part{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:2px 6px;font-size:11px;line-height:1.4}
+.home-income-part .home-income-amount{font-weight:650;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;margin-left:auto}
+@media(max-width:800px){
+ :is(#home-view,#assets-funding-history) .home-funding-body{flex-direction:column;align-items:stretch;gap:10px}
+ :is(#home-view,#assets-funding-history) .home-funding-controls{width:100%;max-width:none;margin:0;flex:0 0 auto;justify-content:flex-end}
+ :is(#home-view,#assets-funding-history) .home-funding-controls button{flex:0 0 auto;white-space:nowrap;overflow-wrap:normal;padding:7px 10px}
+}
+
 /* SOURCE: import-v192.css */
 /* File-first import with a compact, optional legacy paste workflow. */
 .import-panel{min-height:0}
@@ -1184,7 +1194,7 @@ body{overflow:hidden}
 .import-inline-entry>.import-panel{width:100%;min-height:0!important;margin:0!important}
 #import-view:not(.has-import-drafts)>.results-grid,
 #import-view:not(.has-import-drafts)>.batch-bar{display:none!important}
-#import-view:not(.has-import-drafts) .import-inline-entry .dropzone{min-height:156px!important;height:auto!important;padding:22px 18px}
+@media(min-width:801px){#import-view:not(.has-import-drafts) .import-inline-entry .dropzone{min-height:156px!important;height:auto!important;padding:22px 18px}}
 #import-view:not(.has-import-drafts):not(.hidden){min-height:0!important;height:auto!important;display:block!important}
 .import-page-heading{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:10px}
 .import-page-heading .import-add-open{width:auto;flex:0 0 auto;min-height:33px;margin:0;padding:7px 12px;font-size:12px;font-weight:700;white-space:nowrap;border-radius:9px}
@@ -1201,7 +1211,7 @@ body{overflow:hidden}
 .import-add-body{padding:20px 22px 23px;overflow-y:auto;min-height:0;overscroll-behavior:contain}
 .import-add-body>.import-panel{padding:0!important;min-height:0!important;border:0!important;box-shadow:none!important;margin:0!important;overflow:visible}
 .import-add-body>.import-panel>.panel-heading{display:none}
-.import-add-body .dropzone{min-height:165px!important;height:auto!important;padding:22px 12px}
+@media(min-width:801px){.import-add-body .dropzone{min-height:165px!important;height:auto!important;padding:22px 12px}}
 .import-upload-feedback{border:1px solid color-mix(in srgb,#c45b5b 25%,var(--line));border-radius:9px;padding:10px 12px;
   background:color-mix(in srgb,#c45b5b 8%,var(--panel));color:var(--ink);font-size:12px;line-height:1.6;
   white-space:pre-line;overflow-wrap:anywhere;margin-top:12px}
@@ -1210,7 +1220,6 @@ body{overflow:hidden}
 @media(max-width:630px){
   .import-page-heading{align-items:center}
   .import-page-heading .import-add-open{min-height:32px;padding:6px 10px;font-size:11px}
-  .import-add-body .dropzone{min-height:145px!important}
 }
 
 /* After the first import, an empty queue remains a quiet workspace, not an onboarding wizard. */
@@ -1582,11 +1591,13 @@ body{overflow:hidden}
   .settings-view .cloud-troubleshooting .cloud-tool-check .cloud-button{justify-self:start}
 }
 @media(max-width:520px){
-  .settings-view .cloud-client-id-inline{grid-template-columns:1fr}
-  .settings-view .cloud-client-id-inline .cloud-button{justify-self:start}
   .settings-view .cloud-advanced-content .cloud-grid>.cloud-panel:first-child,
   .settings-view .cloud-advanced-content .cloud-grid>.cloud-troubleshooting{padding:17px!important}
 }
+/* An idle operation result is not a card. The status reappears as soon as there is content. */
+#cloud-lock-check-result:empty{display:none}
+.settings-view .cloud-client-id-inline{gap:8px}
+.settings-view .cloud-client-id-inline .cloud-button{white-space:nowrap;justify-self:end}
 
 /* SOURCE: layout-v147.css */
 /* Finance 1.4.7: compact layouts and clear form controls. */
@@ -1869,7 +1880,6 @@ select:not([multiple]):disabled{
   .manage-editor .manage-merchant-input-row{flex-direction:column;align-items:stretch}
   .manage-editor .manage-merchant-input-row>input{width:100%;flex:auto}
   .manage-editor .manage-rule-action{align-self:flex-start}
-  .settings-view .cloud-client-id-inline{grid-template-columns:minmax(0,1fr)!important}
   .settings-view .cloud-troubleshooting .cloud-tool-check{grid-template-columns:minmax(0,1fr)!important}
 }
 
@@ -2173,15 +2183,15 @@ select:not([multiple]):disabled{
 
   /* The existing file input and its drag/drop handling remain intact. */
   #pdf-pane .dropzone{display:inline-flex!important;align-items:center!important;justify-content:center!important;
-    max-width:360px;height:48px!important;min-height:48px!important;
-    margin:0!important;padding:11px 18px!important;gap:0!important;
+    width:auto!important;max-width:100%;height:44px!important;min-height:44px!important;align-self:flex-start;
+    margin:0!important;padding:8px 14px!important;gap:0!important;
     border:1px solid var(--finance-action-border)!important;border-radius:10px!important;background:var(--finance-action-fill)!important;
     color:#fff!important;box-shadow:none!important;text-align:center!important;
     cursor:pointer;-webkit-tap-highlight-color:transparent}
   #pdf-pane .dropzone:is(:hover,.dragover){background:var(--finance-action-hover)!important;border-color:var(--finance-action-hover)!important}
   #pdf-pane .dropzone .drop-icon,#pdf-pane .dropzone .drop-desktop-label,
   #pdf-pane .dropzone>span,#pdf-pane .dropzone>small{display:none!important}
-  #pdf-pane .dropzone .drop-mobile-label{display:inline!important;font-size:14px!important;
+  #pdf-pane .dropzone .drop-mobile-label{display:inline!important;font-size:13px!important;
     line-height:1.3;font-weight:750;color:#fff}
   #pdf-pane .dropzone:focus-visible{outline:3px solid var(--accent)!important;outline-offset:3px}
 }
@@ -2808,8 +2818,6 @@ html.assets-once-page-locked,html.assets-once-page-locked body{overflow:hidden!i
   html,body{overflow-x:clip!important;overflow-y:visible!important}
   #finance-sidebar.sidebar{position:sticky!important;top:0!important;z-index:80!important;
     box-shadow:0 2px 8px rgba(10,22,40,.12)}
-  #pdf-pane .dropzone{display:flex!important;width:100%!important;max-width:none!important;
-    min-width:0!important;box-sizing:border-box!important;align-self:stretch!important}
   #manage-view .manage-index{min-height:0!important;align-self:stretch!important}
   #manage-view .manage-index .statement-list{height:auto!important;max-height:none!important;min-height:0!important;
     overflow:visible!important;overscroll-behavior:auto!important;padding-right:0!important}
@@ -3714,6 +3722,11 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 /* SOURCE: bank-chart-v184.css */
 /* Finance 1.8.4: interactive daily Rakuten Bank timeline; no financial data changes. */
 .monthly-chart-plot{min-width:0;overflow:visible}
+.monthly-chart{padding:12px!important}
+.monthly-chart-plot>.monthly-balance-svg{display:block;width:100%!important;height:auto!important;max-height:none!important;min-height:0!important}
+.monthly-chart-plot .monthly-chart-grid{stroke-width:1;opacity:.7}
+.monthly-chart-plot .monthly-chart-path{stroke-width:2.5;vector-effect:non-scaling-stroke}
+.monthly-chart-plot .monthly-chart-label{font-size:13px}
 .monthly-chart-marker{cursor:pointer}
 .monthly-chart-hit{fill:transparent;pointer-events:all;stroke:transparent;stroke-width:0}
 .monthly-chart-marker:hover .monthly-chart-point,
@@ -3745,7 +3758,7 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 @media(max-width:800px){
  .monthly-chart{overflow:visible!important}
  .monthly-chart-plot{overflow-x:auto;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
- .monthly-chart-plot>.monthly-balance-svg{width:520px!important;min-width:520px!important;max-height:150px!important}
+ .monthly-chart-plot>.monthly-balance-svg{width:100%!important;min-width:460px!important;max-height:none!important}
 }
 @media(max-width:570px){
  .monthly-chart-detail{padding:11px}
@@ -3872,7 +3885,7 @@ input::placeholder,textarea::placeholder{color:var(--finance-placeholder)!import
 .settings-payroll-body .assets-operation-status:empty{display:none}
 @media(max-width:800px){.settings-payroll-fields :is(input,select),.settings-payroll-fields>button{height:44px}}
 @media(max-width:720px){.settings-view .settings-payroll-body{padding:13px}}
-@media(max-width:630px){.settings-payroll-fields{grid-template-columns:minmax(0,1fr)}.settings-view .settings-payroll-fields>button{justify-self:end}}
+@media(max-width:630px){#assets-payroll-connect .settings-payroll-fields{grid-template-columns:minmax(0,1fr)}.settings-view .settings-payroll-fields>button{justify-self:end}}
 
 /* SOURCE: layout-v195.css */
 /* Finance v1.9.5: consistent compact navigation and card settings layout. */
@@ -4763,7 +4776,7 @@ body dialog .finance-modal-x:focus-visible{outline:2px solid var(--accent);outli
 .settings-view .cloud-auth-diagnostic-output{font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted);margin:0 0 12px}
 #home-view .home-metric small{font-size:10px;line-height:1.45}
 #manage-view .manage-toolbar-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
-#manage-view .manage-row-delete{width:30px;min-width:30px;height:30px;min-height:30px;padding:0;border:0;background:transparent;border-radius:7px;box-shadow:none;font-size:21px;line-height:1;color:var(--muted);text-align:center}
+#manage-view .manage-row-delete{width:auto;min-width:52px;height:34px;min-height:34px;padding:0 8px;border:1px solid var(--line);background:var(--panel);border-radius:7px;box-shadow:none;font-size:12px;line-height:1.4;color:var(--danger);text-align:center;white-space:nowrap}
 #manage-view .manage-row-delete:hover,#manage-view .manage-row-delete:focus-visible{color:var(--danger,#b74754);background:var(--bg)}
 #manage-view .manage-editor .transaction-table .col-operation{width:44px}
 :is(#import-view .statement-index-panel,#manage-view .manage-index){padding-inline:12px!important}
@@ -4775,7 +4788,7 @@ body dialog .finance-modal-x:focus-visible{outline:2px solid var(--accent);outli
 .fixed-cost-registered-item .fixed-cost-item-actions{grid-column:2;grid-row:1;justify-self:end}
 .fixed-cost-edit-icon{width:34px;height:34px;min-height:34px!important;min-width:34px;display:grid;place-items:center;border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:8px;padding:0;font-size:21px;line-height:1}
 .fixed-cost-edit-icon:hover,.fixed-cost-edit-icon:focus-visible{color:var(--accent);border-color:var(--accent)}
-@media(max-width:800px){#manage-view .manage-row-delete{width:36px;min-width:36px;height:36px;min-height:36px}.fixed-cost-edit-icon{width:40px;height:40px;min-height:40px!important}}
+@media(max-width:800px){#manage-view .manage-row-delete{height:40px;min-height:40px}.fixed-cost-edit-icon{width:40px;height:40px;min-height:40px!important}}
 @media(max-width:480px){.fixed-cost-registered-item{padding:12px;gap:6px 8px}.fixed-cost-registered-item .fixed-cost-item-price>strong{font-size:14px}}
 
 /* Acceptance 2: compact, consistent form geometry and action alignment. */
@@ -4856,6 +4869,45 @@ body .settings-payroll-fields>button:is(.save-action,.secondary-action){min-heig
 .workspace :is(.home-metric,.monthly-metric,.analysis-metric,.reports-metric) > strong {min-height:1.6rem;display:flex;align-items:center}
 #summary-view .monthly-metric small{font-size:11px;line-height:1.45}
 
-/* Save each account alongside its own amount, at all viewport widths. */
+/* Inline save forms share the action height and reserve only the intrinsic button width. */
 .assets-account-layout .assets-balance-form{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:8px}
-.assets-account-layout .assets-balance-form .save-action{height:39px;min-height:39px;width:auto;margin:0;padding:0 12px;white-space:nowrap}
+body :is(.assets-account-layout .assets-balance-form,.settings-nisa-birth-form,#assets-payroll-deposit-form .settings-payroll-fields)>button.save-action{
+  width:auto!important;min-width:0!important;max-width:100%;flex:0 0 auto;justify-self:end;align-self:end;margin:0!important;padding:0 12px!important;white-space:nowrap;
+  height:var(--finance-action-height)!important;min-height:var(--finance-action-height)!important;
+}
+body :is(.assets-account-layout .assets-balance-form,.settings-nisa-birth-form,#assets-payroll-deposit-form) :is(input,select){
+  height:var(--finance-action-height)!important;min-height:var(--finance-action-height)!important;max-width:100%;min-width:0;box-sizing:border-box;
+}
+@media(max-width:800px){
+  .settings-nisa-birth-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+  .settings-nisa-birth-form input{width:100%}
+  #assets-payroll-deposit-form .settings-payroll-fields{grid-template-columns:minmax(0,1fr) auto;gap:8px}
+  #import-upload-panel .parse-action{width:auto!important;min-width:0!important;align-self:start;justify-self:start;margin:0;padding:0 14px}
+  #manage-view .manage-index .statement-card{gap:6px;padding-inline:9px}
+  #manage-view .manage-index .statement-main small{white-space:normal;overflow:visible;overflow-wrap:normal;line-height:1.4}
+  #manage-view .manage-index .statement-end{max-width:44%;flex:0 0 auto}
+  #manage-view .manage-index .statement-flag{white-space:normal;text-align:right;overflow-wrap:anywhere}
+}
+/* Intrinsic action widths; avoid the generic full-width buttons in compact rows. */
+body #assets-once-add{width:auto!important;min-width:0!important;max-width:100%;padding:0 12px!important;flex:0 0 auto;white-space:nowrap}
+body .cloud-client-id-inline #cloud-save-id{width:auto!important;min-width:0!important;white-space:nowrap;padding:0 12px!important}
+body .cloud-client-id-inline #cloud-client-id{height:var(--finance-action-height);min-width:0;width:100%;box-sizing:border-box}
+@media(max-width:800px){
+ #recent-merchants-dialog :is(.recent-merchants-note,.recent-merchants-count){display:none}
+ .settings-view .card-setting-rate-edit{grid-template-columns:minmax(0,0.85fr) minmax(0,1.15fr);align-items:end;gap:8px}
+ .settings-view .card-setting-rate-edit>.card-setting-field{min-width:0;margin:0}
+ .settings-view .card-setting-rate-edit>.card-setting-field:nth-child(n+3){grid-column:1/-1}
+ .settings-view .card-setting-rate-edit input{width:100%;min-width:0;box-sizing:border-box;padding-inline:7px}
+ .settings-view .cloud-client-id-inline{grid-template-columns:minmax(0,1fr) auto!important;align-items:center}
+}
+@media(max-width:800px){
+ #manage-view .manage-editor #manage-rows tr:has(td[data-label="利用日"]){grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);column-gap:6px!important}
+ #manage-view .manage-editor #manage-rows td[data-label="利用日"] input{width:100%;max-width:none;min-width:0;padding-inline:5px!important;font-size:13px;box-sizing:border-box}
+ #manage-view .manage-editor #manage-rows td[data-label="金額"] input{width:100%;max-width:none;min-width:0;padding-inline:6px!important;box-sizing:border-box}
+ /* Infrequent row and toolbar actions stay visually secondary on mobile. */
+ #manage-view .manage-toolbar-actions{gap:4px;margin-left:auto}
+ #manage-view .manage-toolbar-actions>button,
+ #manage-view .manage-editor #manage-rows .manage-row-delete{width:auto!important;min-width:0!important;min-height:32px!important;height:32px!important;padding:0 8px!important;font-size:11px!important;font-weight:500;line-height:1.4;white-space:nowrap;background:transparent;border:1px solid var(--line);color:var(--muted);box-shadow:none;flex:0 0 auto}
+ #manage-view .manage-toolbar-actions>button:not(:disabled):hover{background:var(--bg);color:var(--ink)}
+ #manage-view .manage-editor #manage-rows .manage-row-delete:not(:disabled):hover{color:var(--action-danger-ink);background:var(--action-danger-hover);border-color:var(--action-danger-border)}
+}

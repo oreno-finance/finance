@@ -32,7 +32,7 @@ test('Payroll連携はカードに保存されたパスフレーズで常時自�
   assert.equal(payrollPassphraseUpdate('NEW PASSWORD 2027','EXISTING PASSWORD 2026'),'NEW PASSWORD 2027');
   assert.equal(payrollPassphraseUpdate('EXISTING PASSWORD 2026','EXISTING PASSWORD 2026'),undefined);
   assert.match(payroll,/if\(action!==undefined\)\{await vault\.setPayrollAutoPassphrase\(action,saved\);guard\(\)/);
-  assert.match(payroll,/const saved=await vault\.readPayrollCredential\(\);guard\(\)/);
+  assert.match(payroll,/const saved=await vault\.readPayrollCredential\(automatic\?hint:undefined\);guard\(\)/);
   assert.match(payroll,/window\.setInterval\(\(\)=>\{if\(!document\.hidden\)void refreshPayroll\(\);\},10\*60\*1000\)/);
   assert.match(html,/id="assets-payroll-forget"[^>]*>連携を解除<\/button>/);
 });

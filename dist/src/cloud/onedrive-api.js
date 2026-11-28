@@ -965,7 +965,9 @@ export class OneDriveTestClient {
                     this.encryptedReadCache.delete(key);
                 return null;
             }
-            const useCache = !parts.includes('originals') && name.endsWith('.enc') && maxBytes <= 25_000_000;
+            // The download ceiling is not the resident size; enforce the actual
+            // UTF-16 byte budget below, while always excluding original PDFs.
+            const useCache = !parts.includes('originals') && name.endsWith('.enc');
             const cached = (!fresh || reuseVerified) && useCache && ownsRead() ? this.encryptedReadCache.get(key) : undefined;
             if (cached && cached.id === item.id && cached.etag === item.eTag) {
                 // Simple LRU: ETag-verified hits move to the end of the bounded map.
@@ -1208,7 +1210,7 @@ export class OneDriveTestClient {
     async readPayrollPublishedFile(folder, name, maxBytes) {
         if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 30_000_000)
             throw new Error('Payroll参照パスが不正です。');
-        return this.readNamedFile(this.payrollPublishedPath(folder, name), name, maxBytes);
+        return this.readNamedFile(this.payrollPublishedPath(folder, name), name, maxBytes, true, true);
     }
     /** Revalidate identity/version without downloading encrypted income again. */
     async readPayrollPublishedMetadata(folder, name) {

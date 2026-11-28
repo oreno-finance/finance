@@ -350,7 +350,7 @@ window.financeImportTest={
                         page.evaluate('(t)=>document.documentElement.dataset.theme=t',theme)
                         colors=button.evaluate("""b=>{const reference=document.getElementById('manage-save');reference.disabled=false;const s=getComputedStyle(b),r=getComputedStyle(reference);return [s.backgroundColor,s.color,s.borderColor,r.backgroundColor,r.color,r.borderColor]}""")
                         self.assertEqual(colors[:3],colors[3:])
-                        self.assertGreaterEqual(button.bounding_box()['x'],copy.bounding_box()['x']+copy.bounding_box()['width']-1)
+                        self.assertGreaterEqual(button.bounding_box()['y'],copy.bounding_box()['y']+copy.bounding_box()['height']-1) if mobile else self.assertGreaterEqual(button.bounding_box()['x'],copy.bounding_box()['x']+copy.bounding_box()['width']-1)
                         self.assertLessEqual(button.bounding_box()['x']+button.bounding_box()['width'],width+1)
                         if mobile:
                             # Compute the actual picker fill even while its import page is not selected.
@@ -358,7 +358,7 @@ window.financeImportTest={
                     page.evaluate("fundingFixture.statement.confirmation='provisional';fundingFixture.home.render()")
                     review=page.locator('.home-funding-prior .home-funding-review');self.assertTrue(review.is_visible())
                     self.assertTrue(review.evaluate("b=>b.classList.contains('secondary-action')"))
-                    self.assertGreaterEqual(review.bounding_box()['x'],copy.bounding_box()['x']+copy.bounding_box()['width']-1)
+                    self.assertGreaterEqual(review.bounding_box()['y'],copy.bounding_box()['y']+copy.bounding_box()['height']-1) if mobile else self.assertGreaterEqual(review.bounding_box()['x'],copy.bounding_box()['x']+copy.bounding_box()['width']-1)
                     self.assertEqual(errors,[])
                 finally:context.close()
 
@@ -581,6 +581,84 @@ window.financeImportTest={
                     self.assertFalse(errors,errors)
                 finally:
                     context.close()
+
+    def test_v222_compact_mobile_controls_and_income_breakdown(self):
+        html=self.offline_document(import_workspace=True)
+        for width in (320,360,390,412):
+            with self.subTest(width=width):
+                context=self.browser.new_context(viewport={'width':width,'height':850},is_mobile=True,has_touch=True)
+                try:
+                    page=context.new_page();page.route('**/*',lambda route:route.abort());page.set_content(html)
+                    page.evaluate("""async()=>{
+                      const {emptyAssets}=await import('finance-fixture/cloud/assets.js');
+                      const {initAssetsSettings}=await import('finance-fixture/ui/assets-settings.js');
+                      const {initHome}=await import('finance-fixture/ui/home.js');
+                      await import('finance-fixture/main.js');
+                      const assets=emptyAssets(),vault={unlocked:true,assetSettings:()=>assets,merchantRules:()=>[],readonlyRecords:()=>[],fixedCostMigrations:()=>[]};
+                      const ui=initAssetsSettings(()=>vault,()=>[],()=>{});
+                      const now=new Date(),period=now.toLocaleDateString('sv-SE').slice(0,7);
+                      const records=[{id:'synthetic-card',statement:{provider:'smbc',cardId:'smbc-nl',sourceKind:'paste',sourceName:'synthetic',billingMonth:period,paymentDate:period+'-27',statedTotal:12000,confirmation:'confirmed',warnings:[],rows:[{id:'row',usedOn:period+'-01',merchant:'SAMPLE',amount:12000}]}}];
+                      const show=id=>{for(const n of document.querySelectorAll('.workspace .content > :is(section,div)[id]'))n.classList.toggle('hidden',n.id!==id);};
+                      const source={assets,records,rules:[],categories:[],payroll:{ready:true,syncedAt:1,entries:[{id:'main',employerId:'main',job:'main',kind:'salary',paidOn:period+'-25',netPay:190000},{id:'side',employerId:'side',job:'side',kind:'salary',paidOn:period+'-27',netPay:25000}]}};
+                      const home=initHome({source:()=>source,navigate(){}});
+                      window.v222={show,ui,home,records};show('settings-view');ui.render();document.getElementById('settings-nisa-panel').open=true;document.getElementById('settings-payroll-disclosure').open=true;
+                    }""")
+                    for theme in ('light','dark'):
+                        page.evaluate('(t)=>document.documentElement.dataset.theme=t',theme)
+                        for field,button in (('#assets-birth-month','#assets-birth-save'),('#assets-payroll-deposit','#assets-payroll-deposit-save')):
+                            a=page.locator(field).bounding_box();b=page.locator(button).bounding_box()
+                            self.assertIsNotNone(a);self.assertIsNotNone(b);self.assertLessEqual(abs(a['height']-b['height']),1);self.assertLessEqual(abs(a['y']-b['y']),1);self.assertLess(b['width'],95);self.assertGreaterEqual(b['x'],a['x']+a['width']-1)
+                    page.evaluate("v222.show('assets-page');v222.ui.render()")
+                    self.assertTrue(page.locator('.assets-balance-form').evaluate_all('forms=>forms.every(f=>{const a=f.querySelector("input").getBoundingClientRect(),b=f.querySelector("button").getBoundingClientRect();return Math.abs(a.height-b.height)<=1&&Math.abs(a.top-b.top)<=1&&b.width<95})'))
+                    page.evaluate("v222.show('import-view');document.getElementById('paste-pane').open=true")
+                    picker=page.locator('#dropzone').bounding_box();parse=page.locator('#parse-paste').bounding_box()
+                    self.assertLessEqual(picker['height'],45);self.assertLess(picker['width'],width-90);self.assertLess(parse['width'],width-90)
+                    page.evaluate("v222.show('home-view');v222.home.render()")
+                    income=page.locator('.home-metric').first
+                    for value in ('215,000円','本業','190,000円','副業','25,000円'):self.assertIn(value,income.inner_text())
+                    page.evaluate("financeImportTest.prepare(v222.records);financeImportTest.manage('synthetic-card')")
+                    subtitle=page.locator('#manage-list .statement-main small').first
+                    self.assertIn('引落',subtitle.inner_text());self.assertTrue(subtitle.evaluate('e=>e.scrollWidth<=e.clientWidth+1&&getComputedStyle(e).whiteSpace!=="nowrap"'))
+                    date=page.locator('#manage-rows td[data-label="利用日"] input');amount=page.locator('#manage-rows td[data-label="金額"] input')
+                    self.assertGreater(date.bounding_box()['width'],amount.bounding_box()['width'])
+                    self.assertLessEqual(amount.bounding_box()['x']-(date.bounding_box()['x']+date.bounding_box()['width']),8)
+                    self.assertEqual(page.locator('#manage-rows .manage-row-delete').inner_text(),'削除')
+                    for selector in ('#manage-rows .manage-row-delete','#manage-clear-changes','#manage-add-row'):
+                        button=page.locator(selector);box=button.bounding_box()
+                        self.assertIsNotNone(box);self.assertGreaterEqual(box['height'],30);self.assertLessEqual(box['height'],34)
+                        self.assertLessEqual(box['width'],100)
+                        self.assertEqual(button.evaluate('e=>getComputedStyle(e).fontSize'),'11px')
+                        self.assertEqual(button.evaluate('e=>getComputedStyle(e).backgroundColor'),'rgba(0, 0, 0, 0)')
+                    page.evaluate("v222.show('settings-view');document.getElementById('cloud-advanced').open=true;document.getElementById('cloud-remember-register').classList.remove('hidden')")
+                    self.assertFalse(page.locator('#cloud-lock-check-result').is_visible())
+                    page.locator('#cloud-lock-check-result').evaluate("e=>e.textContent='テスト結果'")
+                    self.assertTrue(page.locator('#cloud-lock-check-result').is_visible())
+                    a=page.locator('#cloud-client-id').bounding_box();b=page.locator('#cloud-save-id').bounding_box()
+                    self.assertLessEqual(abs(a['y']-b['y']),3);self.assertLess(b['width'],90)
+                    self.assertEqual(page.locator('#cloud-save-id').inner_text(),'保存')
+                    self.assertEqual(page.locator('.cloud-account-actions').evaluate('e=>getComputedStyle(e).justifyContent'),'flex-end')
+                    page.evaluate("document.getElementById('recent-merchants-dialog').showModal()")
+                    self.assertFalse(page.locator('.recent-merchants-note').is_visible());self.assertFalse(page.locator('#recent-merchants-count').is_visible())
+                    page.evaluate("document.getElementById('recent-merchants-dialog').close();v222.show('assets-page');v222.ui.render()")
+                    self.assertLess(page.locator('#assets-once-add').bounding_box()['width'],100)
+                    page.evaluate("""async()=>{
+                      const {initCardSettings}=await import('finance-fixture/ui/card-settings.js');
+                      const {emptyAssets}=await import('finance-fixture/cloud/assets.js');
+                      const {initMonthlySummary}=await import('finance-fixture/ui/monthly-summary.js');
+                      const assets=emptyAssets(),period=new Date().toLocaleDateString('sv-SE').slice(0,7);
+                      assets.snapshots=[{id:'synthetic-bank',accountId:'rakuten-bank',balance:100000,observedAt:period+'-01T00:00:00Z'}];
+                      const vault={unlocked:true,assetSettings:()=>assets};v222.show('settings-view');document.querySelector('.settings-card-disclosure').open=true;initCardSettings(()=>vault,()=>{});
+                      const source={assets,records:[],rules:[],categories:[],payroll:{ready:true,syncedAt:1,entries:[]},currentPeriod:period};
+                      v222.summary=initMonthlySummary({source:()=>source});v222.period=period;
+                    }""")
+                    rate=page.locator('.card-setting-item:not([hidden]) .card-setting-rate-edit input[type=number]');day=page.locator('.card-setting-item:not([hidden]) .card-setting-rate-edit input[type=date]')
+                    self.assertLess(rate.bounding_box()['width'],day.bounding_box()['width']);self.assertLessEqual(abs(rate.bounding_box()['y']-day.bounding_box()['y']),2)
+                    page.evaluate("v222.show('summary-view');v222.summary.setPeriod(v222.period)")
+                    svg=page.locator('.monthly-chart-plot .monthly-balance-svg');self.assertEqual(svg.get_attribute('viewBox'),'0 0 630 220')
+                    self.assertGreaterEqual(svg.bounding_box()['height'],150)
+
+
+                finally:context.close()
 
     def test_account_individual_balance_save_and_warning_details(self):
         html=self.offline_document()
@@ -2117,6 +2195,7 @@ window.financeImportTest={
                     restore.click();page.evaluate('candidateFeedback.ok()');page.wait_for_function('document.querySelector("#toast").dataset.kind==="good"');self.assertEqual(restore.count(),0)
                     self.assertEqual(errors,[])
                     self.assertEqual(page.locator('.fixed-cost-registration-actions button').count(),2)
+                    self.assertEqual(page.locator('.fixed-cost-registration-actions button').all_inner_texts(),['＋ カード払いを登録','＋ 銀行・現金を登録'])
                 finally:context.close()
 
     def test_rule_fixed_cost_actual_price_and_candidate_navigation(self):

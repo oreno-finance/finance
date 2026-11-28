@@ -115,6 +115,9 @@ test('directory cache removes repeated app-root and ancestor lookups',async()=>{
   assert.equal(calls.filter(c=>c.url.endsWith('/me/drive/special/approot')).length,0);
   assert.equal(calls.filter(c=>c.url.endsWith(':/finance')||c.url.endsWith(':/statements')).length,0);
   assert.equal(calls.filter(c=>c.url.includes(':/2026.enc')).length,2);
+  const existing=await client.readYearVault('2026');calls.length=0;
+  await client.writeYearVault('2026','cipher-2',{id:existing.id,etag:existing.etag});
+  assert.equal(calls.filter(c=>c.url.startsWith(root)&&(!c.init.method||c.init.method==='GET')).length,0,'warm existing-file write needs no ancestor GET');
 });
 
 test('concurrent PDF saves share ancestor creation and preserve immutable originals',async()=>{

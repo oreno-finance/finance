@@ -12,7 +12,7 @@ import { pointBenefitsSection,archivedPointCoverage } from './point-benefits.js'
 
 type ReportComparisonState='unchecked'|'checking'|'unchanged'|'changed'|'unavailable';
 export interface MonthlyReportsUi { render():void; openPeriod(period:string):void; reset():void; isBusy():boolean; isDirty():boolean }
-export interface MonthlyReportsDeps { source():MonthlySource|null; vault():LiveVault|null; openMonth(period:string):void }
+export interface MonthlyReportsDeps { source():MonthlySource|null; vault():LiveVault|null }
 const today=localMonth;
 const yen=(value:number|null)=>sharedYen(value,0,DATA_STATUS.missing);
 const month=formatMonth;
@@ -224,7 +224,6 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
       const noteOnly=button('メモのみ保存',()=>{void save(true);},'secondary-action reports-note-only');
       noteOnly.disabled=draftConflict;noteOnly.hidden=comparison!=='unavailable';control.body.append(noteOnly);
     }
-    control.body.append(button('月別サマリー',()=>deps.openMonth(selected)));
     const revision=chosenRevision?archive?.history.find(item=>item.id===chosenRevision)??state:state;
     let preview:ReportSnapshot|null=null;
     if(!revision){const source=deps.source();if(source)try{preview=reportSnapshot(selected,source);}catch{control.body.append(el('p','reports-feedback-error','プレビューを算出できません。集計データを確認してください。'));submit.disabled=true;}}

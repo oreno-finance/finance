@@ -95,8 +95,10 @@
   .settings-view .cloud-troubleshooting .cloud-tool-check .cloud-button{justify-self:start}
 }
 @media(max-width:520px){
-  .settings-view .cloud-client-id-inline{grid-template-columns:1fr}
-  .settings-view .cloud-client-id-inline .cloud-button{justify-self:start}
   .settings-view .cloud-advanced-content .cloud-grid>.cloud-panel:first-child,
   .settings-view .cloud-advanced-content .cloud-grid>.cloud-troubleshooting{padding:17px!important}
 }
+/* An idle operation result is not a card. The status reappears as soon as there is content. */
+#cloud-lock-check-result:empty{display:none}
+.settings-view .cloud-client-id-inline{gap:8px}
+.settings-view .cloud-client-id-inline .cloud-button{white-space:nowrap;justify-self:end}

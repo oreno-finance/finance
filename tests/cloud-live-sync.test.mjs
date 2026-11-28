@@ -452,7 +452,7 @@ test('PDF batch checks generation under its lock and both boundaries of final sy
   const reads=[];const read=mock.readFinanceIndex.bind(mock);
   mock.readFinanceIndex=async(fresh)=>{reads.push(fresh);return read();};
   await vault.saveBatch([{id:'pdf-new',statement:{...statement(),sourceKind:'pdf'},source:{bytes:new Uint8Array([37,80,68,70,1]),mime:'application/pdf'}}]);
-  assert.deepEqual(reads,[true,true,true,true,true,true]); // Lock, cross-year scope, one-time writer upgrade and both sync boundaries.
+  assert.deepEqual(reads,[true,true,true,true,true]); // Locked index feeds cross-year scope; writer upgrade and closing reads remain.
   assert.equal(vault.records().length,2);
 });
 
@@ -832,4 +832,21 @@ test('v2.2.1: changed unrelated shard during closing fence is not published as a
  await a.saveBatch([{id:'edit',statement:statement('2026-11','changed')}]);
  assert.match(a.takeMutationWarning(),/保存は確認できましたが/);
  assert.deepEqual(a.records().find(x=>x.id==='old'),original);assert.equal(a.records().find(x=>x.id==='edit').statement.rows[0].merchant,'changed');
+});
+
+test('existing-year batch reuses locked index and scope but keeps closing fence',async()=>{
+ const [a,,mock,store]=drivers();await a.create(secret);
+ await a.saveBatch([{id:'a',statement:statement('2025-10')},{id:'b',statement:statement('2026-11')}]);
+ const calls={index:0,list:0,fence:0},index=mock.readFinanceIndex.bind(mock),list=mock.listYearFiles.bind(mock);
+ mock.readFinanceIndex=async()=>{calls.index++;return index();};
+ mock.listYearFiles=async()=>{calls.list++;return list();};
+ mock.readFinanceMetadata=async kind=>{if(kind==='index'){calls.fence++;return index();}return null;};
+ mock.writeYearVault=async function(year,text,ref){this.write('year',year,text,ref);return {id:`year-${year}`,etag:`"${this.file('year',year).revision}"`};};
+ await a.saveBatch([{id:'a',statement:statement('2025-10','edit-a')},{id:'b',statement:statement('2026-11','edit-b')}]);
+ assert.deepEqual(calls,{index:1,list:2,fence:1});
+ assert.deepEqual(a.records().map(x=>x.statement.rows[0].merchant).sort(),['edit-a','edit-b']);
+ calls.index=calls.list=calls.fence=0;
+ mock.listYearFiles=async()=>{if(++calls.list===2){const old=store.files.get('year:2025');store.files.set('year:2025',{...old,revision:old.revision+1});}return list();};
+ await a.saveBatch([{id:'a',statement:statement('2025-10','edit-a2')},{id:'b',statement:statement('2026-11','edit-b2')}]);
+ assert.match(a.takeMutationWarning(),/保存は確認できましたが/);assert.equal(calls.fence,1);
 });

@@ -94,7 +94,9 @@ test('Payroll controls live in app settings and auto refresh is initiated after 
   assert.ok(!html.includes('id="assets-payroll-remember"'));
   assert.ok(!html.includes('id="assets-payroll-auto-status"'));
   assert.ok(!html.includes('id="assets-payroll-months"'));
-  assert.match(main,/await liveVault\.unlock\(pass\)[\s\S]*?void assetsUi\?\.refreshPayroll\(\)/);
+  assert.match(main,/await liveVault\.unlock\(pass\)[\s\S]*?completeVaultOpening\(liveVault,unlockedRecords\)/);
+  assert.match(main,/await completeVaultOpening\(vault,restoredRecords,vault\.payrollCredentialHint\(\)\)/);
+  assert.match(main,/async function completeVaultOpening[\s\S]*?await assetsUi\?\.refreshPayroll\(payrollHint\)/);
   assert.match(code,/window\.setInterval\(\(\)=>\{if\(!document\.hidden\)void refreshPayroll\(\);\},10\*60\*1000\)/);
   assert.match(code,/if\(action!==undefined\)\{await vault\.setPayrollAutoPassphrase\(action,saved\);guard\(\)/);
 });
@@ -112,4 +114,25 @@ test('H302: live credential checks see remote revocation and stale writes cannot
   assert.equal(await b.readPayrollCredential(),null);
   await a.setPayrollAutoPassphrase(changedSecret);
   assert.equal(await b.readPayrollCredential(),changedSecret);
+});
+
+test('immediate Payroll sync consumes verified settings once; closing check sees remote revocation',async()=>{
+  const store=new Map(),a=new LiveVault(new FakeGraph(store)),client=new FakeGraph(store),b=new LiveVault(client);
+  await a.create(financeSecret);await a.setPayrollAutoPassphrase(payrollSecret);await b.unlock(financeSecret);
+  let indexReads=0,assetReads=0;
+  const index=client.readFinanceIndex.bind(client),assets=client.readAssetSettings.bind(client);
+  client.readFinanceIndex=async(...args)=>{indexReads++;return index(...args);};
+  client.readAssetSettings=async(...args)=>{assetReads++;return assets(...args);};
+  const hint=b.payrollCredentialHint();assert.ok(hint);
+  assert.equal(await b.readPayrollCredential(hint),payrollSecret);
+  assert.deepEqual([indexReads,assetReads],[0,0]);
+  await a.setPayrollAutoPassphrase(null);
+  assert.equal(await b.readPayrollCredential(),null);
+  assert.deepEqual([indexReads,assetReads],[2,1]);
+  assert.equal(await b.readPayrollCredential(hint),null,'consumed hint must fall back to current verification');
+  await b.refresh();const beforeLock=b.payrollCredentialHint();
+  b.lock();await b.unlock(financeSecret);
+  await assert.rejects(b.readPayrollCredential(beforeLock),/保管庫が変更/);
+  const beforeEdit=b.payrollCredentialHint();await b.setPayrollAutoPassphrase(changedSecret);
+  assert.equal(await b.readPayrollCredential(beforeEdit),changedSecret,'local settings change invalidates snapshot');
 });

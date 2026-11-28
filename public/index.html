@@ -57,7 +57,7 @@
             </svg>
           </button>
         </div>
-        <div class="sidebar-meta"><span><button type="button" id="release-history-open" aria-haspopup="dialog" aria-controls="release-history-dialog" title="アップデート履歴">Finance v2.2.1</button></span><time id="app-updated-at" datetime="2026-11-28">ビルド 2026/11/28 JST</time></div>
+        <div class="sidebar-meta"><span><button type="button" id="release-history-open" aria-haspopup="dialog" aria-controls="release-history-dialog" title="アップデート履歴">Finance v2.2.2</button></span><time id="app-updated-at" datetime="2026-11-28">ビルド 2026/11/28 JST</time></div>
       </div>
       </div>
     </aside>
@@ -324,7 +324,7 @@
 
         <dialog id="recent-merchants-dialog" class="recent-merchants-dialog finance-modal" aria-labelledby="recent-merchants-title">
           <div class="finance-modal-head"><h2 id="recent-merchants-title">最近の利用先から選択</h2><button type="button" id="recent-merchants-close" class="finance-modal-x" aria-label="閉じる">×</button></div>
-          <p class="finance-modal-note">未登録の利用先を表示します。</p>
+          <p class="finance-modal-note recent-merchants-note">未登録の利用先を表示します。</p>
           <div class="recent-merchants-tools"><label>対象カード<select id="recent-merchants-card"><option value="">すべてのカード</option></select></label><label>利用先を検索<input id="recent-merchants-search" type="search" placeholder="店名などで検索"></label></div>
           <div id="recent-merchants-count" class="recent-merchants-count"></div>
           <div id="recent-merchants-list" class="recent-merchants-list"></div>
@@ -561,7 +561,7 @@
             </div>
             <div class="cloud-remember-controls">
               <div class="cloud-remember-copy">
-                <strong>パスフレーズ入力</strong>
+                <strong>このブラウザの記憶</strong>
                 <p id="cloud-remember-status" role="status" aria-live="polite">状態を確認しています…</p>
                 <small>自分専用のブラウザだけで利用してください。金融データはOneDriveに保存されます。</small>
               </div>
@@ -651,7 +651,7 @@
                       <label class="rules-field" for="assets-payroll-deposit">給与の振込先口座
                         <select id="assets-payroll-deposit"><option value="">残高には加算しない（収入集計のみ）</option><option value="rakuten-bank">楽天銀行へ入金</option><option value="cash-savings">現金貯金専用口座へ入金</option></select>
                       </label>
-                      <button type="submit" id="assets-payroll-deposit-save" class="save-action">入金先設定を保存</button>
+                      <button type="submit" id="assets-payroll-deposit-save" class="save-action">保存</button>
                     </div>
                   </form>
                   <section id="assets-payroll-summary" class="settings-payroll-section" aria-labelledby="assets-payroll-summary-heading">
@@ -691,7 +691,7 @@
                   <label class="field-label" for="cloud-client-id">アプリID（Client ID）</label>
                   <div class="cloud-client-id-inline">
                     <input type="text" id="cloud-client-id" class="cloud-field" spellcheck="false" autocomplete="off" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
-                    <button type="button" id="cloud-save-id" class="secondary-action cloud-button">IDを保存</button>
+                    <button type="button" id="cloud-save-id" class="secondary-action cloud-button">保存</button>
                   </div>
                   <label class="field-label cloud-label" for="cloud-redirect-uri">リダイレクトURI（SPA）</label>
                   <input type="text" id="cloud-redirect-uri" class="cloud-field cloud-readonly" readonly>

@@ -4,7 +4,7 @@ import {bindModalDismiss,requestConfirmation,confirmationPending,cancelConfirmat
 import {DATA_STATUS,formatYen as sharedYen,formatDate,formatDateTime} from './formatters.js';
 import { ASSET_ACCOUNTS, validateRecurring, validateSnapshot, validateNisaCardRule, validateOneTime,
   type AssetAccountId, type BalanceSnapshot, type RecurringEntry, type RecurringKind, type RecurringFrequency, type OneTimeEntry, type OneTimeKind, type OneTimeStatus } from '../cloud/assets.js';
-import { CloudWriteUncertainError, type LiveVault } from '../cloud/live-vault.js';
+import { CloudWriteUncertainError, type LiveVault, type PayrollCredentialHint } from '../cloud/live-vault.js';
 import type { CategoryDefinition } from '../cloud/merchant-rules.js';
 import { CARDS } from '../models/types.js';
 import { localDay } from '../cloud/asset-projection.js';
@@ -78,7 +78,7 @@ export interface AssetsUi {
   reset():void;
   isBusy():boolean;
   isDirty():boolean;
-  refreshPayroll():Promise<void>;
+  refreshPayroll(hint?:PayrollCredentialHint):Promise<void>;
   payrollSnapshot():{ready:boolean;syncedAt:number|null;entries:readonly PayrollIncomeEntry[]}; /* finance-monthly-v140 */
 }
 /** Credential updates persist for automatic refresh; empty input preserves saved credentials. */
@@ -730,7 +730,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
       [!deposit?'給与の入金先が未設定です。':'',unknown?'勤務区分不明の給与があります。Payrollの勤務先設定を確認してください。':'',mismatch?'給与の定期入金と入金先設定が一致していません。重複計上にご注意ください。':''].filter(Boolean).join(' '):'';
   }
   /** Manual registration is explicit; automatic reads use only the encrypted settings document. */
-  async function syncPayroll(automatic=false):Promise<void> {
+  async function syncPayroll(automatic=false,hint?:PayrollCredentialHint):Promise<void> {
     return traceFinanceOperation('payroll-sync',async()=>{
     if(busy||payrollBusy)return;
     const vault=getVault();
@@ -746,7 +746,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
     $<HTMLButtonElement>('assets-payroll-sync').disabled=true;
     $<HTMLButtonElement>('assets-payroll-forget').disabled=true;
     try {
-      const saved=await vault.readPayrollCredential();guard();
+      const saved=await vault.readPayrollCredential(automatic?hint:undefined);guard();
       const changed=payrollCredential!==undefined&&payrollCredential!==saved;
       observeVerifiedPayroll(saved);
       if(changed){renderAccounts();renderPayroll();onPayrollChange();}
@@ -796,13 +796,13 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
     }
       });
   }
-  async function refreshPayroll():Promise<void> {
+  async function refreshPayroll(hint?:PayrollCredentialHint):Promise<void> {
     const vault=getVault();
     if(!vault?.unlocked||vault.recoveryOnly)return;
     observeLocalPayroll(vault);
     if(payrollBusy||busy)return;
     if(Date.now()-lastPayrollAttemptAt<60*1000)return;
-    await syncPayroll(true);
+    await syncPayroll(true,hint);
   }
   async function forgetPayroll():Promise<void> {
     if(busy||payrollBusy)return;

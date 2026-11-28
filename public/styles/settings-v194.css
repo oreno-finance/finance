@@ -114,4 +114,4 @@
 .settings-payroll-body .assets-operation-status:empty{display:none}
 @media(max-width:800px){.settings-payroll-fields :is(input,select),.settings-payroll-fields>button{height:44px}}
 @media(max-width:720px){.settings-view .settings-payroll-body{padding:13px}}
-@media(max-width:630px){.settings-payroll-fields{grid-template-columns:minmax(0,1fr)}.settings-view .settings-payroll-fields>button{justify-self:end}}
+@media(max-width:630px){#assets-payroll-connect .settings-payroll-fields{grid-template-columns:minmax(0,1fr)}.settings-view .settings-payroll-fields>button{justify-self:end}}

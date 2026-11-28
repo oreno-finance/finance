@@ -6,8 +6,9 @@ const html=source('public/index.html');
 const css=source('public/styles/ui-v160.css');
 const main=source('src/main.ts');
 
-test('mobile PDF chooser spans the card width instead of capping at 360px',()=>{
-  assert.match(css,/#pdf-pane \.dropzone\{display:flex!important;width:100%!important;max-width:none!important/);
+test('mobile PDF chooser uses an intrinsic compact width without stretching',()=>{
+  assert.doesNotMatch(css,/#pdf-pane \.dropzone[^}]*width:100%!important/);
+  assert.match(source('public/styles/mobile-v151.css'),/#pdf-pane \.dropzone[^}]*width:auto!important;max-width:100%;height:44px!important/);
 });
 test('mobile manager statement list uses document scroll rather than nested scrolling',()=>{
   assert.match(css,/#manage-view \.manage-index \.statement-list\{height:auto!important;max-height:none!important;min-height:0!important/);
