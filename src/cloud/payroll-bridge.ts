@@ -72,13 +72,21 @@ export function adaptPayrollSource(doc:unknown):PayrollIncomeDocument{
 /** Key is non-extractable and lives in memory until Finance is locked/closed. */
 export class PayrollReadSession {
  private constructor(private readonly client:OneDriveTestClient,private readonly key:CryptoKey,private readonly salt:string){}
- static async connect(client:OneDriveTestClient,passphrase:string):Promise<PayrollReadSession>{
+ private static async open(client:OneDriveTestClient,passphrase:string){
   const file=await client.readPayrollPublishedFile([],'index.enc',1_000_000);
   if(!file)throw Error('Payrollの暗号保管庫がOneDriveにありません。Payrollで同期してください。');
   const head=envelope(file.text,'index');if(!head.salt||head.iterations!==310000)throw Error('Payrollの暗号索引のソルトが不正です。');
   const key=await keyFrom(passphrase,head.salt);
-  indexCheck(await decoded<PayrollIndex>(head,key,indexAAD));
-  return new PayrollReadSession(client,key,head.salt);
+  const ix=indexCheck(await decoded<PayrollIndex>(head,key,indexAAD));
+  return {session:new PayrollReadSession(client,key,head.salt),file,ix};
+ }
+ static async connect(client:OneDriveTestClient,passphrase:string):Promise<PayrollReadSession>{
+  return (await this.open(client,passphrase)).session;
+ }
+ static async connectAndRefresh(client:OneDriveTestClient,passphrase:string,guard:()=>void):Promise<{session:PayrollReadSession;items:PayrollIncomeEntry[]}>{
+  const {session,file,ix}=await this.open(client,passphrase);guard();
+  const items=await session.readIncome(file,ix);guard();
+  return {session,items};
  }
  async refresh():Promise<PayrollIncomeEntry[]>{
   const file=await this.client.readPayrollPublishedFile([],'index.enc',1_000_000);
@@ -86,27 +94,36 @@ export class PayrollReadSession {
   const head=envelope(file.text,'index');
   if(head.salt!==this.salt)throw Error('Payroll側でパスフレーズが変更されました。再接続してください。');
   const ix=indexCheck(await decoded<PayrollIndex>(head,this.key,indexAAD));
+  return this.readIncome(file,ix);
+ }
+ private async readIncome(file:{id:string;etag:string},ix:PayrollIndex):Promise<PayrollIncomeEntry[]>{
   const paths=ix.generation?['versions',ix.generation,'income']:['income'];
   const docs:PayrollIncomeDocument[]=[];
   const versions:Array<{name:string;id:string;etag:string}>=[];
   // Index is authoritative. Never silently skip missing years.
-  for(const y of [...new Set(ix.incomeYears)].sort()){
-   const encrypted=await this.client.readPayrollPublishedFile(paths,`${y}.enc`,30_000_000);
-   if(!encrypted)throw Error(`Payrollの${y}年の収入ファイルが見つかりません。`);
-   const env=envelope(encrypted.text,'income');
-   if(env.salt!==this.salt||env.iterations!==310000)throw Error(`Payrollの${y}年の収入ファイルの鍵情報が一致しません。`);
-   const doc=adaptPayrollSource(await decoded<SourceIncome>(env,this.key,incomeAAD));
-   if(doc.year!==Number(y))throw Error('Payrollの収入ファイルの年度が一致しません。');
-   docs.push(doc);
-   versions.push({name:`${y}.enc`,id:encrypted.id,etag:encrypted.etag});
+  const years=[...new Set(ix.incomeYears)].sort();
+  // Income files can be large. Limit independent reads/decryption to four,
+  // like Finance annual shards, and retain deterministic publication order.
+  for(let start=0;start<years.length;start+=4){
+   const group=await Promise.all(years.slice(start,start+4).map(async y=>{
+    const encrypted=await this.client.readPayrollPublishedFile(paths,`${y}.enc`,30_000_000);
+    if(!encrypted)throw Error(`Payrollの${y}年の収入ファイルが見つかりません。`);
+    const env=envelope(encrypted.text,'income');
+    if(env.salt!==this.salt||env.iterations!==310000)throw Error(`Payrollの${y}年の収入ファイルの鍵情報が一致しません。`);
+    const doc=adaptPayrollSource(await decoded<SourceIncome>(env,this.key,incomeAAD));
+    if(doc.year!==Number(y))throw Error('Payrollの収入ファイルの年度が一致しません。');
+    return {doc,version:{name:`${y}.enc`,id:encrypted.id,etag:encrypted.etag}};
+   }));
+   for(const {doc,version} of group){docs.push(doc);versions.push(version);}
   }
   // Existing years may change without changing the index. Recheck each file
   // and the root index last; this detects observed changes, not an atomic snapshot.
   const unchanged=(before:{id:string;etag:string},after:{id:string;etag:string}|null)=>
     !!before.id&&!!before.etag&&!!after&&before.id===after.id&&before.etag===after.etag;
-  for(const before of versions){
-   if(!unchanged(before,await this.client.readPayrollPublishedMetadata(paths,before.name)))
-    throw Error('Payrollの収入ファイルが同期中に更新されました。再同期してください。');
+  for(let start=0;start<versions.length;start+=4){
+   const checks=await Promise.all(versions.slice(start,start+4).map(async before=>
+    unchanged(before,await this.client.readPayrollPublishedMetadata(paths,before.name))));
+   if(checks.some(valid=>!valid))throw Error('Payrollの収入ファイルが同期中に更新されました。再同期してください。');
   }
   if(!unchanged(file,await this.client.readPayrollPublishedMetadata([],'index.enc')))
    throw Error('Payrollの索引が同期中に更新されました。再同期してください。');

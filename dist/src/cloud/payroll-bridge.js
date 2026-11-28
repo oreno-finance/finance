@@ -90,7 +90,7 @@ export class PayrollReadSession {
         this.key = key;
         this.salt = salt;
     }
-    static async connect(client, passphrase) {
+    static async open(client, passphrase) {
         const file = await client.readPayrollPublishedFile([], 'index.enc', 1_000_000);
         if (!file)
             throw Error('Payrollの暗号保管庫がOneDriveにありません。Payrollで同期してください。');
@@ -98,8 +98,18 @@ export class PayrollReadSession {
         if (!head.salt || head.iterations !== 310000)
             throw Error('Payrollの暗号索引のソルトが不正です。');
         const key = await keyFrom(passphrase, head.salt);
-        indexCheck(await decoded(head, key, indexAAD));
-        return new PayrollReadSession(client, key, head.salt);
+        const ix = indexCheck(await decoded(head, key, indexAAD));
+        return { session: new PayrollReadSession(client, key, head.salt), file, ix };
+    }
+    static async connect(client, passphrase) {
+        return (await this.open(client, passphrase)).session;
+    }
+    static async connectAndRefresh(client, passphrase, guard) {
+        const { session, file, ix } = await this.open(client, passphrase);
+        guard();
+        const items = await session.readIncome(file, ix);
+        guard();
+        return { session, items };
     }
     async refresh() {
         const file = await this.client.readPayrollPublishedFile([], 'index.enc', 1_000_000);
@@ -109,28 +119,40 @@ export class PayrollReadSession {
         if (head.salt !== this.salt)
             throw Error('Payroll側でパスフレーズが変更されました。再接続してください。');
         const ix = indexCheck(await decoded(head, this.key, indexAAD));
+        return this.readIncome(file, ix);
+    }
+    async readIncome(file, ix) {
         const paths = ix.generation ? ['versions', ix.generation, 'income'] : ['income'];
         const docs = [];
         const versions = [];
         // Index is authoritative. Never silently skip missing years.
-        for (const y of [...new Set(ix.incomeYears)].sort()) {
-            const encrypted = await this.client.readPayrollPublishedFile(paths, `${y}.enc`, 30_000_000);
-            if (!encrypted)
-                throw Error(`Payrollの${y}年の収入ファイルが見つかりません。`);
-            const env = envelope(encrypted.text, 'income');
-            if (env.salt !== this.salt || env.iterations !== 310000)
-                throw Error(`Payrollの${y}年の収入ファイルの鍵情報が一致しません。`);
-            const doc = adaptPayrollSource(await decoded(env, this.key, incomeAAD));
-            if (doc.year !== Number(y))
-                throw Error('Payrollの収入ファイルの年度が一致しません。');
-            docs.push(doc);
-            versions.push({ name: `${y}.enc`, id: encrypted.id, etag: encrypted.etag });
+        const years = [...new Set(ix.incomeYears)].sort();
+        // Income files can be large. Limit independent reads/decryption to four,
+        // like Finance annual shards, and retain deterministic publication order.
+        for (let start = 0; start < years.length; start += 4) {
+            const group = await Promise.all(years.slice(start, start + 4).map(async (y) => {
+                const encrypted = await this.client.readPayrollPublishedFile(paths, `${y}.enc`, 30_000_000);
+                if (!encrypted)
+                    throw Error(`Payrollの${y}年の収入ファイルが見つかりません。`);
+                const env = envelope(encrypted.text, 'income');
+                if (env.salt !== this.salt || env.iterations !== 310000)
+                    throw Error(`Payrollの${y}年の収入ファイルの鍵情報が一致しません。`);
+                const doc = adaptPayrollSource(await decoded(env, this.key, incomeAAD));
+                if (doc.year !== Number(y))
+                    throw Error('Payrollの収入ファイルの年度が一致しません。');
+                return { doc, version: { name: `${y}.enc`, id: encrypted.id, etag: encrypted.etag } };
+            }));
+            for (const { doc, version } of group) {
+                docs.push(doc);
+                versions.push(version);
+            }
         }
         // Existing years may change without changing the index. Recheck each file
         // and the root index last; this detects observed changes, not an atomic snapshot.
         const unchanged = (before, after) => !!before.id && !!before.etag && !!after && before.id === after.id && before.etag === after.etag;
-        for (const before of versions) {
-            if (!unchanged(before, await this.client.readPayrollPublishedMetadata(paths, before.name)))
+        for (let start = 0; start < versions.length; start += 4) {
+            const checks = await Promise.all(versions.slice(start, start + 4).map(async (before) => unchanged(before, await this.client.readPayrollPublishedMetadata(paths, before.name))));
+            if (checks.some(valid => !valid))
                 throw Error('Payrollの収入ファイルが同期中に更新されました。再同期してください。');
         }
         if (!unchanged(file, await this.client.readPayrollPublishedMetadata([], 'index.enc')))

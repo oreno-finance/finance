@@ -1,6 +1,5 @@
 /** Microsoft Graph API client for the encrypted Finance vault and connectivity checks. */
-import { PROBE_FILE_NAME } from './test-envelope.js';
-import { countFinanceRequest, measureFinancePhase } from './performance-diagnostics.js';
+import { traceFinanceOperation, countFinanceRequest, countFinanceStatus, countFinanceRetry, measureFinancePhase } from './performance-diagnostics.js';
 import { FINANCE_DIR, PAYROLL_DIR, checkBucket, checkOriginalMonth, originalParts } from './layout.js';
 import { asSnapshots, isSnapshotName, MAX_SNAPSHOT_BYTES, snapshotName, validateBackupText, type VaultSnapshot } from './vault-snapshots.js';
 const GRAPH = 'https://graph.microsoft.com/v1.0';
@@ -43,9 +42,13 @@ export class VaultMutationUncertainError extends Error {
 export class OneDriveTestClient {
   private mutationLease:{uncertain:boolean;guard:()=>void;released:boolean}|null=null;
   private mutationAcquiring=false;
+  // This connection has observed a server-side marker ETag change. Reuse the
+  // existing ownership revalidation before DELETE only in that case.
+  private preferFreshMutationMarker=false;
   // Only a marker created by this client, after a known-ended write.
   private completedMarker:{parent:string;id:string}|null=null;
   async acquireVaultMutation(guard:()=>void):Promise<()=>Promise<void>> {
+    return measureFinancePhase('vault.lock-acquire',async()=>{
     if(this.mutationLease||this.mutationAcquiring)throw new VaultOperationBusyError();
     this.mutationAcquiring=true;
     try{
@@ -80,14 +83,21 @@ export class OneDriveTestClient {
     if(typeof item.id!=='string'||!item.id||typeof item.eTag!=='string'||!item.eTag||item.name!==MUTATION_LOCK_NAME||!item.folder||typeof item.folder!=='object'||Array.isArray(item.folder)||(item.folder.childCount!==undefined&&item.folder.childCount!==0))
       throw new Error('OneDriveの操作ロック作成結果が不明です。保存は開始しません。');
     const lease={uncertain:false,guard,released:false};this.mutationLease=lease;
-    return async()=>{
+    return async()=>measureFinancePhase('vault.lock-release',async()=>{
       if(this.mutationLease!==lease)throw new Error('保管庫の操作権が変化しました。');
       try{
         // A lost final response might mean the server is still committing.
         // Do not make a destructive operation possible by releasing its fence.
         if(lease.uncertain)throw new VaultMutationUncertainError();
-        const marker={id:item.id,etag:item.eTag!,createdAt:null};
+        let marker:MutationMarker={id:item.id,etag:item.eTag!,createdAt:null};
         this.completedMarker={parent,id:marker.id};
+        if(this.preferFreshMutationMarker){
+          const current=await measureFinancePhase('vault.lock-revalidate',()=>this.readRecoveryMarker(parent,marker.id));
+          if(!current){this.completedMarker=null;return;}
+          // A stable ETag restores the usual one-request path for the next save.
+          this.preferFreshMutationMarker=current.etag!==marker.etag;
+          marker=current;
+        }
         try{
           await this.releaseMutationMarker(marker,()=>{});
         }catch(error){
@@ -96,19 +106,23 @@ export class OneDriveTestClient {
           // its ETag, and only after a definite conditional DELETE rejection.
           // Never transfer ownership to a successor or bypass If-Match.
           if(!(error instanceof GraphError&&error.status===412&&error.code.toLowerCase()==='resourcemodified'))throw error;
-          const current=await this.readRecoveryMarker(parent,marker.id);
+          const current=await measureFinancePhase('vault.lock-revalidate',()=>this.readRecoveryMarker(parent,marker.id));
           if(!current){this.completedMarker=null;return;}
           if(current.id!==marker.id||current.etag===marker.etag)throw error;
           // This is a single revalidation, not an unbounded 412 retry loop.
+          countFinanceRetry();
           await this.releaseMutationMarker(current,()=>{});
+          this.preferFreshMutationMarker=true;
         }
         this.completedMarker=null;
       }finally{lease.released=true;this.mutationLease=null;}
-    };
+    });
     }finally{this.mutationAcquiring=false;}
+    });
   }
   /** Read-only inspection. Never infer ownership or expiry from the marker age. */
   async inspectVaultMutationLock():Promise<{state:'absent'|'present';createdAt:string|null}>{
+    return measureFinancePhase('vault.lock-inspect',async()=>{
     const parent=await this.folderPath([FINANCE_DIR],false);
     if(!parent)return {state:'absent',createdAt:null};
     try{
@@ -118,6 +132,7 @@ export class OneDriveTestClient {
       const created=typeof item.createdDateTime==='string'?new Date(item.createdDateTime):null;
       return {state:'present',createdAt:created&&Number.isFinite(created.valueOf())?created.toISOString():null};
     }catch(error){if(error instanceof GraphError&&error.status===404)return {state:'absent',createdAt:null};throw error;}
+    });
   }
   /** Delete only this exact marker. Replaying a conditional DELETE cannot
    * delete a successor (which has a different ID). A 412 is not retried by this helper. */
@@ -131,7 +146,7 @@ export class OneDriveTestClient {
       }catch(error){
         if(error instanceof GraphError&&error.status===404)return; // this exact ID is already gone
         if(attempt||error instanceof GraphError&&error.status<500&&error.status!==408)throw error;
-        await wait(500);
+        await wait(500);countFinanceRetry();
       }
     }
   }
@@ -269,6 +284,7 @@ export class OneDriveTestClient {
     });
   }
   private async graph(path: string, init: RequestInit = {}, allowNotModified = false,lockRequest=false,nonCommitting=false,requestGuard:()=>void=()=>{}): Promise<Response> {
+    return traceFinanceOperation('onedrive',async()=>{
     const method=(init.method??'GET').toUpperCase();
     let sent=false;
     const request=async(forceRefresh=false):Promise<Response>=>{
@@ -281,11 +297,12 @@ export class OneDriveTestClient {
       requestGuard();if(method!=='GET'&&!lockRequest)this.checkMutationGuard();
       sent=true;
       countFinanceRequest(method==='GET'?'graph.get':'graph.write');
-      return measureFinancePhase('graph.request',()=>this.httpWithReadTimeout(GRAPH + path, {
+      const result=await measureFinancePhase('graph.request',()=>this.httpWithReadTimeout(GRAPH + path, {
         ...init,
         headers: {...init.headers, Authorization: `Bearer ${token}`},
         redirect: 'error',
       }));
+      countFinanceStatus(result.status);return result;
     };
     let response:Response;
     const send=async()=>{
@@ -297,13 +314,13 @@ export class OneDriveTestClient {
     for(let attempt=0;attempt<3&&(response.status===429||(method==='GET'&&response.status===503));attempt++){
       const delay=response.status===429?throttlingDelay(response,attempt):200*(attempt+1);
       if(delay===null)break;
-      await wait(delay);response=await send();
+      await wait(delay);countFinanceRetry();response=await send();
     }
     if(!lockRequest&&!nonCommitting&&method!=='GET'&&(response.status===408||response.status>=500))this.markMutationUncertain();
     // One read-only 401 recovery is safe. Never replay writes, upload-session
     // creation, chunk uploads, or any uncertain operation after a 401.
     if(response.status===401&&method==='GET'&&typeof this.tokenSource!=='string'){
-      response=await request(true);
+      countFinanceRetry();response=await request(true);
     }
     if(response.status===401)this.onUnauthorized?.();
     if (!response.ok && !(allowNotModified && response.status === 304)) {
@@ -315,8 +332,10 @@ export class OneDriveTestClient {
       throw new GraphError(response.status, code);
     }
     return response;
+      });
   }
   private async downloadItemInfo(id: string, maxBytes: number, supplied?: DriveItem,fresh=false): Promise<{text:string;item:DriveItem}> {
+    return traceFinanceOperation('onedrive',async()=>{
     let item = supplied;
     // Named-path lookups often already include the temporary download URL.
     // Otherwise fetch by ID exactly once (also gets the freshest ETag).
@@ -333,10 +352,11 @@ export class OneDriveTestClient {
     const timeoutMs=maxBytes>=100*1024*1024
       ?Math.min(180000,Math.max(90000,Math.ceil((item.size??maxBytes)/(1024*1024))*1000))
       :30000;
-    countFinanceRequest('graph.download');
     const bytes=await measureFinancePhase('graph.encrypted-download',async()=>{
       for(let attempt=0;;attempt++){
+        countFinanceRequest('graph.download');if(attempt>0)countFinanceRetry();
         const result=await this.withReadDeadline(url,{method:'GET',credentials:'omit',...(fresh?{cache:'no-store' as const}:{})},async response=>{
+          countFinanceStatus(response.status);
           if(response.status===429&&attempt<3){
             const delay=throttlingDelay(response,attempt);
             if(delay!==null){try{await response.body?.cancel();}catch{/* no retry body is needed */}return {delay};}
@@ -349,6 +369,7 @@ export class OneDriveTestClient {
       }
     });
     return {text:new TextDecoder('utf-8',{fatal:true}).decode(bytes),item};
+      });
   }
   private async downloadItem(id: string, maxBytes: number): Promise<string> {
     return (await this.downloadItemInfo(id,maxBytes)).text;
@@ -411,6 +432,7 @@ export class OneDriveTestClient {
   }
 
   private async uploadSession(path:string, bytes:Uint8Array, etag?:string, expectedId?:string):Promise<DriveItem> {
+    return traceFinanceOperation('onedrive',async()=>{
     if(bytes.byteLength>200*1024*1024)throw new Error('アップロードサイズが200MBを超えています。');
     const response=await this.graph(path,{
       method:'POST',
@@ -419,11 +441,11 @@ export class OneDriveTestClient {
     },false,false,true);
     const session=await response.json() as {uploadUrl?:string};
     if(!session.uploadUrl||new URL(session.uploadUrl).protocol!=='https:')throw new Error('安全なアップロードセッションを取得できません。');
+    const uploadUrl=session.uploadUrl;
     // 3,276,800 is a multiple of 320KiB; upload sequentially without the Graph bearer token.
     const size=3276800;
     for(let start=0;start<bytes.byteLength;start+=size) {
       const end=Math.min(start+size,bytes.byteLength);
-      countFinanceRequest('graph.upload-chunk');
       let part:Response;
       const final=end===bytes.byteLength;
       for(let attempt=0;;attempt++){
@@ -431,14 +453,18 @@ export class OneDriveTestClient {
         let deadline:ReturnType<typeof setTimeout>|undefined;
         const controller=final?new AbortController():undefined;
         try{
-          const sending=this.http(session.uploadUrl,{
+          countFinanceRequest('graph.upload-chunk');if(attempt>0)countFinanceRetry();
+          part=await measureFinancePhase('graph.upload-chunk',async()=>{
+          const sending=this.http(uploadUrl,{
             method:'PUT',credentials:'omit',
             headers:{'Content-Range':`bytes ${start}-${end-1}/${bytes.byteLength}`},
             body:bytes.slice(start,end),...(controller?{signal:controller.signal}:{}),
           });
-          part=final?await Promise.race([sending,new Promise<never>((_,reject)=>{
+          return final?await Promise.race([sending,new Promise<never>((_,reject)=>{
             deadline=setTimeout(()=>{controller?.abort();reject(new Error('OneDriveの保存応答を確認できませんでした。'));},120000);
           })]):await sending;
+          });
+          countFinanceStatus(part.status);
         }catch(error){if(final)this.markMutationUncertain();throw error;}
         finally{if(deadline!==undefined)clearTimeout(deadline);}
         if(part.status!==429||attempt>=3)break;
@@ -457,6 +483,7 @@ export class OneDriveTestClient {
       }
     }
     throw new Error('空のアップロードは許可されません。');
+      });
   }
 
   /** A successful HTTP status alone is not proof of a committed write. */
@@ -614,18 +641,57 @@ export class OneDriveTestClient {
       if(cached){parent=cached;continue;}
       const key=`${prefix}:${create?'create':'read'}`;
       // A concurrent creation is useful to both readers and writers.
-      let pending=this.resolvingDirectories.get(create?key:`${prefix}:create`) ?? this.resolvingDirectories.get(key);
+      const createKey=`${prefix}:create`;
+      const pendingKey=this.resolvingDirectories.has(createKey)?createKey:key;
+      let pending=this.resolvingDirectories.get(pendingKey);
       if(!pending){
         pending=this.childFolder(parent,name,create);
-        this.resolvingDirectories.set(key,pending);
+        this.resolvingDirectories.set(pendingKey,pending);
       }
       let result:string|null;
-      try{result=await pending;}finally{
-        if(this.resolvingDirectories.get(key)===pending)this.resolvingDirectories.delete(key);
+      try{
+        result=await pending;
+        if(result&&this.resolvingDirectories.get(pendingKey)===pending)this.directoryIds.set(prefix,result);
+      }finally{
+        if(this.resolvingDirectories.get(pendingKey)===pending)this.resolvingDirectories.delete(pendingKey);
       }
       if(!result)return null;
-      this.directoryIds.set(prefix,result);
-      parent=result;
+      // A concurrent path recheck may have replaced this ID. Never restore it.
+      const verified=this.directoryIds.get(prefix);
+      if(!verified)throw new Error('取得中にOneDriveのフォルダー情報が変更されました。再試行してください。');
+      parent=verified;
+    }
+    return parent;
+  }
+  /** A named miss may be a normal absent file or a moved ancestor. Resolve
+   * the complete path again, but retain verified siblings when IDs agree. */
+  private async recheckDirectoryPath(parts:string[]):Promise<string|null> {
+    const pendingRoot=this.appFolderId(),observedRoot=this.appRoot;
+    const previous=await pendingRoot;
+    const response=await this.graph('/me/drive/special/approot',{cache:'no-store'});
+    const root=await response.json() as DriveItem;
+    if(!root.id)throw new Error('OneDriveのアプリ専用領域を取得できませんでした。');
+    const changed=()=>new Error('取得中にOneDriveのフォルダー情報が変更されました。再試行してください。');
+    if(this.appRoot!==observedRoot)throw changed();
+    if(root.id!==previous){this.clearDirectoryCache();this.appRoot=Promise.resolve(root.id);}
+    const rootJob=this.appRoot;
+    let parent=root.id,prefix='';
+    for(const name of parts){
+      if(!/^[a-z0-9-]{1,64}$/i.test(name))throw new Error('不正なクラウドフォルダ名です。');
+      const parentPrefix=prefix;
+      prefix+=`/${name}`;
+      const before=this.directoryIds.get(prefix);
+      const id=await this.childFolder(parent,name,false);
+      if(this.appRoot!==rootJob||(parentPrefix&&this.directoryIds.get(parentPrefix)!==parent))throw changed();
+      const cached=this.directoryIds.get(prefix);
+      if(cached!==before&&cached!==id)throw changed();
+      if(cached!==id){
+        const affected=(path:string)=>path===prefix||path.startsWith(`${prefix}/`);
+        for(const path of this.directoryIds.keys())if(affected(path))this.directoryIds.delete(path);
+        for(const key of this.resolvingDirectories.keys())if(affected(key.slice(0,key.lastIndexOf(':'))))this.resolvingDirectories.delete(key);
+      }
+      if(!id)return null;
+      this.directoryIds.set(prefix,id);parent=id;
     }
     return parent;
   }
@@ -635,9 +701,9 @@ export class OneDriveTestClient {
     let item:DriveItem|null=null;
     for(let attempt=0;attempt<2;attempt++){
       const hadCachedPath=parts.some((_,i)=>this.directoryIds.has(`/${parts.slice(0,i+1).join('/')}`));
-      const parent=await this.folderPath(parts,false);
+      const parent=attempt===0?await this.folderPath(parts,false):await this.recheckDirectoryPath(parts);
       if(!parent){
-        if(attempt===0&&hadCachedPath){this.clearDirectoryCache();continue;}
+        if(attempt===0&&hadCachedPath)continue;
         return null;
       }
       try {
@@ -646,7 +712,7 @@ export class OneDriveTestClient {
         break;
       }catch(error){
         if(!(error instanceof GraphError&&error.status===404))throw error;
-        if(attempt===0&&hadCachedPath){this.clearDirectoryCache();continue;}
+        if(attempt===0&&hadCachedPath)continue;
         return null;
       }
     }
@@ -955,32 +1021,5 @@ export class OneDriveTestClient {
       })();
     }
     try{return await this.appRoot;}catch(error){this.appRoot=null;throw error;}
-  }
-  async uploadEncryptedProbe(encrypted: string): Promise<void> {
-    if (encrypted.length > 24000) throw new Error('テストファイルのサイズが不正です。');
-    const folderId = await this.appFolderId();
-    const path = `/me/drive/items/${encodeURIComponent(folderId)}:/${PROBE_FILE_NAME}:/content`;
-    await this.graph(path, { method:'PUT', headers: { 'Content-Type':'application/octet-stream' }, body: encrypted });
-  }
-  async downloadEncryptedProbe(): Promise<string> {
-    const folderId = await this.appFolderId();
-    const path = `/me/drive/items/${encodeURIComponent(folderId)}:/${PROBE_FILE_NAME}`;
-    const response = await this.graph(path);
-    const item = await response.json() as DriveItem;
-    let downloadUrl = item['@microsoft.graph.downloadUrl'];
-    if (!downloadUrl && item.id) {
-      const metadataResponse = await this.graph(`/me/drive/items/${encodeURIComponent(item.id)}`);
-      const metadata = await metadataResponse.json() as DriveItem;
-      downloadUrl = metadata['@microsoft.graph.downloadUrl'];
-    }
-    if (!downloadUrl || new URL(downloadUrl).protocol !== 'https:') throw new Error('安全なダウンロードURLを取得できませんでした。');
-    // The preauthenticated URL MUST NOT receive a Bearer token. Avoid /content's CORS-hostile 302.
-    return this.withReadDeadline(downloadUrl, { method:'GET', credentials:'omit' }, async response=>{
-      if(!response.ok)throw new Error(`暗号化テストファイルの取得に失敗しました (HTTP ${response.status})。`);
-      // Enforce the limit while streaming; a missing or dishonest Content-Length is not trusted.
-      if(!response.body)throw new Error('安全なストリーム受信ができません。');
-      const bytes=await this.readResponseBytes(response,24000);
-      return new TextDecoder('utf-8',{fatal:true}).decode(bytes);
-    });
   }
 }

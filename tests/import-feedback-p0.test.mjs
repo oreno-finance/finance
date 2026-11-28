@@ -1,3 +1,4 @@
+import {traceFinanceOperation} from '../dist/src/cloud/performance-diagnostics.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {showActivity,clearActivity,activityHistory} from '../dist/src/ui/activity-feedback.js';
@@ -38,7 +39,7 @@ test('一括保存は書込みと画面反映の完了前に成功を通知せ�
  const draft={sourceKind:'csv'};let completeWrite,completeRefresh;
  const write=new Promise(resolve=>{completeWrite=resolve;});const refresh=new Promise(resolve=>{completeRefresh=resolve;});
  const notices=[],details=[];const vault={unlocked:true,hasPendingYearBatch:false,saveBatch:async(_items,progress)=>{progress('年度データ保存・原本検証',0,1);return write;},takeMutationWarning:()=>null,records:()=>[]};
- const ctx=vm.createContext({batchBusy:false,filesBusy:false,revisionBusy:false,cloudRefreshing:false,liveVault:vault,lockSequence:0,importBatchPlan:()=>({eligible:[draft],blocked:[]}),importQueue:()=>ctx.importStaged.has(draft)?[draft]:[],hasUnsavedChanges:()=>true,issues:()=>[],failedImports:[],updateBatchStatus(){},showBatchDetails:(items)=>details.push(items.length),operationResult:(message,kind)=>notices.push({message,kind}),showActivity:(message,kind)=>notices.push({message,kind}),finishActivity(){},ensureUnlocked:async()=>true,statementWorkingFingerprint:()=>'',savedIds:new Map(),pendingCloudIds:new Map(),pendingSources:new Map(),savedFingerprints:new Map(),dirty:new Set(),importStaged:new Set([draft]),originalSaved:new Set(),crypto:{randomUUID:()=> 'synthetic-id'},structuredClone,pending:()=>[],replaceCloudRecords(){},refreshVaultControls:()=>refresh,render(){}});
+ const ctx=vm.createContext({traceFinanceOperation,batchBusy:false,filesBusy:false,revisionBusy:false,cloudRefreshing:false,liveVault:vault,lockSequence:0,importBatchPlan:()=>({eligible:[draft],blocked:[]}),importQueue:()=>ctx.importStaged.has(draft)?[draft]:[],hasUnsavedChanges:()=>true,issues:()=>[],failedImports:[],updateBatchStatus(){},showBatchDetails:(items)=>details.push(items.length),operationResult:(message,kind)=>notices.push({message,kind}),showActivity:(message,kind)=>notices.push({message,kind}),finishActivity(){},ensureUnlocked:async()=>true,statementWorkingFingerprint:()=>'',savedIds:new Map(),pendingCloudIds:new Map(),pendingSources:new Map(),savedFingerprints:new Map(),dirty:new Set(),importStaged:new Set([draft]),originalSaved:new Set(),crypto:{randomUUID:()=> 'synthetic-id'},structuredClone,pending:()=>[],replaceCloudRecords(){},refreshVaultControls:()=>refresh,render(){}});
  vm.runInContext(fn+'\nthis.save=saveAllPending;',ctx);
  const task=ctx.save();await new Promise(resolve=>setImmediate(resolve));
  assert.ok(notices.length>0);assert.ok(notices.every(n=>n.kind==='working'));assert.deepEqual(details,[0]);

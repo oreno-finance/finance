@@ -69,7 +69,7 @@ test('UI uses radio selection, aligned metric colors and no old select',()=>{
 });
 test('settings fields fill cards and copy button aligns',()=>{
   const css=readFileSync(new URL('../public/styles/ui-v155.css',import.meta.url),'utf8');
-  assert.match(css,/cloud-dev-test \.cloud-password-control input/);
+  assert.doesNotMatch(css,/cloud-dev-test/);
   assert.match(css,/cloud-troubleshooting #cloud-diagnostic-secret/);
   assert.match(css,/#cloud-diagnostic-copy\{margin-top:0!important/);
   assert.match(readFileSync(new URL('../public/styles/settings-v194.css',import.meta.url),'utf8'),/settings-payroll-fields>\.rules-field\{margin:0;min-width:0/);

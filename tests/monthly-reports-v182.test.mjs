@@ -230,3 +230,16 @@ test('L303: note-only cannot create a report or blindly repeat an uncertain writ
   await assert.rejects(vault.saveArchivedReportNote('2026-11','repeat',first.current.id),CloudWriteUncertainError);assert.equal(graph.store.writes,writes);
   const loaded=await vault.loadArchivedReport('2026-11');assert.equal(loaded.current.note,'second');assert.deepEqual(loaded.current.snapshot,snapshot);
 });
+
+test('v2.2.1: monthly report list and detail share one generation check; both reads start independently',async()=>{
+ const {graph,vault}=await make();await vault.saveArchivedReport(reportSnapshot('2026-11',base()),'memo',null);
+ const calls=[];const index=graph.readFinanceIndex.bind(graph),list=graph.listMonthlyReports.bind(graph),read=graph.readMonthlyReport.bind(graph);
+ let release;const wait=new Promise(resolve=>release=resolve);
+ graph.readFinanceIndex=async(...args)=>{calls.push('index');return index(...args);};
+ graph.listMonthlyReports=async()=>{calls.push('list');await wait;return list();};
+ graph.readMonthlyReport=async period=>{calls.push('detail');release();return read(period);};
+ const [months,doc]=await vault.loadArchivedReports('2026-11');assert.deepEqual(months,['2026-11']);assert.equal(doc.current.note,'memo');
+ assert.deepEqual(calls,['index','list','detail']);
+ graph.readMonthlyReport=async()=>{vault.lock();return read('2026-11');};
+ await assert.rejects(vault.loadArchivedReports('2026-11'),/ロック|変更/);
+});

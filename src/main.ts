@@ -18,14 +18,14 @@ import { syncFinanceCloudGates } from './ui/cloud-gate.js';
 import { LiveVault, CloudWriteUncertainError, CloudEditCancelledError, BrowserKeyGenerationChangedError, type PendingBatchResult, type VaultRecordView } from './cloud/live-vault.js';
 import { GraphError } from './cloud/onedrive-api.js';
 import { readBrowserKey, rememberBrowserKey, forgetBrowserKey, applyBrowserRetentionChoice, isBrowserRemembered, InvalidRememberedBrowserKeyError, isManuallyLocked, setManualLock, notifyOtherFinanceTabs, beginBrowserRetention, browserLockEpoch, CROSS_TAB_LOCK_KEY, type BrowserKeyContext } from './cloud/remembered-browser.js';
-import { displayMerchant, matchingRule, sortedRules, normalizeMerchant, fixedRuleEligible, fixedRuleKey, PALETTE, type RuleFixedCost, type CategoryDefinition, type MerchantRule, type MatchMode, type CategoryId, type PaletteId } from './cloud/merchant-rules.js';
+import { displayMerchant, matchingSortedRule, sortedRules, normalizeMerchant, fixedRuleEligible, fixedRuleKey, PALETTE, type RuleFixedCost, type CategoryDefinition, type MerchantRule, type MatchMode, type CategoryId, type PaletteId } from './cloud/merchant-rules.js';
 import { importErrors, importDisplayErrors, cardSelectionPending, duplicateMonths, redundantImportDrafts } from './importers/batch-policy.js';
 import { prioritizedIndices, orderedPreviewRows, type PreviewSort } from './ui/preview-order.js';
 import { calendarBillingPeriod, filteredStatementIndices } from './ui/manage-filter.js';
 import { recentMerchants, type RecentMerchant } from './ui/recent-merchants.js';
 import { planCategoryBatch, categoryBatchChanged } from './ui/category-draft.js';
 import { initAssetsSettings, type AssetsUi } from './ui/assets-settings.js';
-import { measureFinancePhase } from './cloud/performance-diagnostics.js';
+import { traceFinanceOperation, measureFinancePhase } from './cloud/performance-diagnostics.js';
 import { initFutureProjection, type FutureProjectionUi } from './ui/future-projection.js'; /* finance-v143 */
 import { canonicalStatementFilename } from './ui/statement-filename.js';
 import { initMonthlySummary, type MonthlySummaryUi } from './ui/monthly-summary.js'; /* finance-monthly-v140 */
@@ -176,13 +176,13 @@ async function confirmInterruption(label:string):Promise<boolean> {
 const ruleModes:Record<MatchMode,string>={exact:'完全一致',prefix:'前方一致',contains:'部分一致'};
 function rules():MerchantRule[]{return liveVault?.unlocked ? liveVault.merchantRules():[];}
 function categories():CategoryDefinition[]{return liveVault?.unlocked?liveVault.merchantCategories():[];}
-function categoryById(id:CategoryId|null|undefined){
-  const item=categories().find(category=>category.id===id);
+function categoryById(id:CategoryId|null|undefined,definitions=categories()){
+  const item=definitions.find(category=>category.id===id);
   if(!item)return null;
   return {...item,hex:PALETTE.find(color=>color.id===item.color)?.hex??'#718096'};
 }
 function cardDisplayName(cardId:string|null):string|undefined {
-  return (cardId&&liveVault?.unlocked?liveVault.assetSettings().cardPreferences?.[cardId]?.name:undefined)??getCard(cardId)?.name;
+  return (cardId&&liveVault?.unlocked?liveVault.cardPreferenceName(cardId):undefined)??getCard(cardId)?.name;
 }
 function refreshCardOptionLabels():void {
   for(const id of ['rule-card','recent-merchants-card','assets-nisa-card']){
@@ -191,20 +191,21 @@ function refreshCardOptionLabels():void {
     for(const option of select.options)if(getCard(option.value))option.textContent=cardDisplayName(option.value)!;
   }
 }
-function categoryFor(row:ImportRow,s:ParsedStatement) {
-  const matched=matchingRule(row.merchant,s.cardId,rules());
-  return categoryById(matched?.categoryId);
-}
 function categoryChip(meta:NonNullable<ReturnType<typeof categoryById>>):HTMLSpanElement {
   const chip=document.createElement('span');chip.className='category-chip';
   chip.style.setProperty('--category-color',meta.hex);
   const dot=div('category-dot');dot.setAttribute('aria-hidden','true');
   chip.append(dot,document.createTextNode(meta.name));return chip;
 }
-function merchantFor(row:ImportRow,s:ParsedStatement):string {
-  return displayMerchant(row.merchant,s.cardId,rules(),row.merchantOverride);
-}
 
+/** One snapshot and one match per row, shared by all labels in this draw. */
+function merchantPresentation(ordered=sortedRules(rules()),definitions=categories()) {
+  return (row:ImportRow,s:ParsedStatement)=>{
+    const matched=matchingSortedRule(row.merchant,s.cardId,ordered);
+    return {name:row.merchantOverride?.trim()||matched?.displayName||row.merchant,
+      category:categoryById(matched?.categoryId,definitions)};
+  };
+}
 
 const list = $('statement-list');
 const previewEmpty = $('preview-empty');
@@ -349,7 +350,7 @@ function clearUnlockedFinanceViews():void {
   if(currentModal!==null)modalClose(false);
   closeImportAddDialog();
   $<HTMLTextAreaElement>('paste-input').value='';clipboardHtml='';lockVault();
-  for(const id of ['cloud-passphrase','cloud-current-secret','cloud-next-secret','cloud-next-confirm','legacy-cleanup-secret'])clearPasswordField(id);
+  for(const id of ['cloud-current-secret','cloud-next-secret','cloud-next-confirm','legacy-cleanup-secret'])clearPasswordField(id);
   resetRuleEditor();categoryDraft=null;categoryBaseline=[];
   const recentDialog=$<HTMLDialogElement>('recent-merchants-dialog');
   if(recentDialog.open)recentDialog.close();
@@ -613,6 +614,7 @@ async function deleteStatement(index: number): Promise<void> {
   if(!statements.includes(statement)||JSON.stringify(statement)!==baseline||savedIds.get(statement)!==storedId||storedId&&!vault?.unlocked){
     toast('明細が更新されました。最新情報から確認してください。');return;
   }
+  return traceFinanceOperation('statement-delete',async()=>{
   batchBusy = true;
   operationResult(storedId ? `${name}の明細をOneDriveから削除中…` : `${name}の下書きを破棄しています…`, 'working');
   render();
@@ -630,7 +632,7 @@ async function deleteStatement(index: number): Promise<void> {
     else if (activeIndex === current) activeIndex = Math.min(current, statements.length - 1);
     else if (current < activeIndex) activeIndex--;
     if (!$('manage-view').classList.contains('hidden')) selectVisibleManagerStatement();
-    if (storedId && !pending().length) replaceCloudRecords(liveVault!.records());
+    if (storedId && !pending().length) replaceCloudRecords(liveVault!.records(),false);
     updateCloudStatus();
     const result = storedId ? `${name}の明細をOneDriveから削除しました。` : `${name}の未保存下書きを破棄しました。`;
     operationResult(mutationWarning??result,mutationWarning?'warn':'good');
@@ -642,6 +644,7 @@ async function deleteStatement(index: number): Promise<void> {
     batchBusy = false;
     render();
   }
+  });
 }
 
 function providerLabel(provider: ParsedStatement['provider']): string {
@@ -818,7 +821,8 @@ function initCloudActionControls(): void {
         statements.push(s);
       }
       activeIndex=statements.length?0:-1;
-      renderRules();assetsUi?.render();futureUi?.render();cardSettingsUi?.render();
+      if(!$('assets-page').classList.contains('hidden')||!$('settings-view').classList.contains('hidden'))assetsUi?.render();
+      if(!$('settings-view').classList.contains('hidden'))cardSettingsUi?.render();
       showBatchDetails([], '');
       const warning=vault.takeMutationWarning();
       operationResult(`${completedIds.size}件の保存を確認しました。${excluded?` 競合${excluded}件はOneDrive側を採用しました。`:''}${warning?` ${warning}`:''}`,warning||excluded?'warn':'good');
@@ -852,21 +856,22 @@ function renderRows(): void {
     td.colSpan = 4; td.textContent = isZeroUsage(s)?'請求0円・取引なし（PDF確認済み）':'取引がありません。明細の管理から修正するか、読み直してください。';
     tr.append(td); rowBody.append(tr); return;
   }
+  const present=merchantPresentation();
   for (const row of orderedPreviewRows(s.rows, previewSort)) {
+    const meta=present(row,s);
     const tr = document.createElement('tr');
-    for (const value of [dateDisplay(row.usedOn), merchantFor(row,s), formatNumber(row.amount), row.description || '—']) {
+    for (const value of [dateDisplay(row.usedOn), meta.name, formatNumber(row.amount), row.description || '—']) {
       const td = document.createElement('td'); td.textContent = value; td.title = value; tr.append(td);
     }
     // Keep the category badge beside the merchant instead of adding a second line.
     // Each import-preview row must have one consistent height, regardless of category.
     const merchantCell=tr.children[1] as HTMLTableCellElement;
-    merchantCell.title = row.merchant !== merchantFor(row,s) ? `元の利用先：${row.merchant}` : row.merchant;
+    merchantCell.title = row.merchant !== meta.name ? `元の利用先：${row.merchant}` : row.merchant;
     const merchantContent=div('preview-merchant-content');
     const merchantName=div('preview-merchant-name');
-    merchantName.textContent=merchantFor(row,s);
+    merchantName.textContent=meta.name;
     merchantContent.append(merchantName);
-    const meta=categoryFor(row,s);
-    if(meta){merchantCell.classList.add('preview-merchant-cell');merchantContent.append(categoryChip(meta));}
+    if(meta.category){merchantCell.classList.add('preview-merchant-cell');merchantContent.append(categoryChip(meta.category));}
     merchantCell.replaceChildren(merchantContent);
     tr.children[2]!.classList.add('amount-cell');
     tr.children[3]!.classList.add('note');
@@ -974,7 +979,7 @@ function attachSource(statement: ParsedStatement, source?: LocalSource): void {
   if (source) pendingSources.set(statement, source);
 }
 
-function replaceCloudRecords(records: VaultRecordView[]): void {
+function replaceCloudRecords(records: VaultRecordView[],redraw=true): void {
   // Never discard an unsaved local draft while reloading remote data.
   if (pending().length && statements.length) throw new Error('未保存の編集があるため再読み込みできません。');
   statements.splice(0);
@@ -989,7 +994,7 @@ function replaceCloudRecords(records: VaultRecordView[]): void {
     statements.push(statement);
   }
   if(statements.length)activeIndex=0;
-  render();
+  if(redraw)render();
 }
 function appendCloudRecordsKeepingDrafts(records:VaultRecordView[]):void {
   const drafts=statements.filter(hasUnsavedChanges);
@@ -1082,6 +1087,7 @@ function showCloudConnectDialog(mode:CloudConnectPrompt):void {
 }
 
 async function startCloud():Promise<void> {
+    return traceFinanceOperation('startup',async()=>{
   if(cloudStartupRunning||liveVault?.unlocked)return;
   cloudStartupRunning=true;
   $('cloud-live-status').textContent='接続中';
@@ -1136,7 +1142,8 @@ async function startCloud():Promise<void> {
             if(lockSequence!==startedWithLockSequence||isManuallyLocked(local!)){liveVault.lock();return;}
             const restoredRecords=liveVault.records();
             appendCloudRecordsKeepingDrafts(restoredRecords);lastCloudCheckAt=Date.now();
-            renderRules();assetsUi?.render();futureUi?.render();cardSettingsUi?.render();
+            if(!$('assets-page').classList.contains('hidden')||!$('settings-view').classList.contains('hidden'))assetsUi?.render();
+            if(!$('settings-view').classList.contains('hidden'))cardSettingsUi?.render();
             void assetsUi?.refreshPayroll();updateCloudStatus();
             if(liveVault.recoveryOnly)operationResult('保存ロックの復旧と最新データ取得が必要です。','warn');
             else operationResult(`このブラウザの保存鍵で自動復号しました（${restoredRecords.length}件）。`);
@@ -1168,8 +1175,10 @@ async function startCloud():Promise<void> {
     updateCloudStatus(`OneDriveに接続してください：${issue}`);
     showCloudConnectDialog(cloudConnectPrompt());
   } finally {clearTimeout(slowNotice);finishActivity('OneDriveの保管庫を自動復号中');cloudStartupRunning=false;if($('cloud-live-status').textContent==='自動復号中')updateCloudStatus();else syncCloudGate();}
-}
+    });
+  }
 async function refreshCloud():Promise<void> {
+    return traceFinanceOperation('refresh',async()=>{
   if(cloudStartupRunning||currentModal!==null)throw new Error('保管庫を確認中です。完了後に操作してください。');
   assertRefreshSafe();
   if(!liveVault||!vaultDiscoveryCompleted)await startCloud();
@@ -1187,14 +1196,17 @@ async function refreshCloud():Promise<void> {
     // Never overwrite local state if a different vault has been connected.
     if(current!==liveVault||!current.unlocked)throw new Error('更新中に保管庫が変更されました。');
     replaceCloudRecords(fresh);
-    // render() already updates visible rules and future screens; assets owns its draw.
-    if(!$('assets-page').classList.contains('hidden'))assetsUi?.render();
+    // Assets also owns the NISA/Payroll controls on the settings page.
+    if(!$('assets-page').classList.contains('hidden')||!$('settings-view').classList.contains('hidden'))assetsUi?.render();
+    if(!$('settings-view').classList.contains('hidden'))cardSettingsUi?.render();
     lastCloudCheckAt=Date.now();
     void assetsUi?.refreshPayroll();
     updateCloudStatus('OneDriveから最新の明細を取得しました。');
   } finally { cloudRefreshing=false; }
-}
+    });
+  }
 async function migrateLegacy():Promise<void> {
+    return traceFinanceOperation('migration',async()=>{
   if(cloudStartupRunning||currentModal!==null)return;
   if(!liveVault)await startCloud();
   if(!liveVault)throw new Error('OneDriveへの接続が必要です。');
@@ -1207,7 +1219,8 @@ async function migrateLegacy():Promise<void> {
   if(!await requestConfirmation({owner:securityConfirmationOwner,title:'旧データを移行しますか？',message:'旧IndexedDBの明細とPDFを暗号化してOneDriveへ移行します。旧データは削除しません。すでに移行済みの明細IDは上書きしません。',acceptLabel:'移行する'})||!valid())return;
   assertRefreshSafe();
   await askVault('migrate');
-}
+    });
+  }
 
 /** This flow never removes legacy IndexedDB automatically or during migration. */
 function initLegacyCleanup():void {
@@ -1471,7 +1484,7 @@ function showView(view: FinanceView): void {
   if (view === 'import') render();
   if (view === 'rules') {renderRules();}
   if (view === 'assets') {assetsUi?.render();homeUi?.renderFundingHistory();}
-  if (view === 'settings') cardSettingsUi?.render();
+  if (view === 'settings') {assetsUi?.render();cardSettingsUi?.render();}
   if (view === 'future') futureUi?.render();
   if (view === 'summary') summaryUi?.render();
   if (view === 'analysis') analysisUi?.render();
@@ -1579,12 +1592,12 @@ function updateManagerEditState(s:ParsedStatement):void {
   }
 }
 
-function updateManagerMerchantMetadata(control:HTMLElement,row:ImportRow,s:ParsedStatement):void {
+function updateManagerMerchantMetadata(control:HTMLElement,row:ImportRow,meta:ReturnType<ReturnType<typeof merchantPresentation>>):void {
   const secondary=div('manage-merchant-secondary');
-  const category=categoryFor(row,s);
+  const category=meta.category;
   if(category)secondary.append(categoryChip(category));
   else secondary.append(div('category-chip manage-uncategorized','未分類'));
-  const currentDisplay=merchantFor(row,s).trim();
+  const currentDisplay=meta.name.trim();
   const originalMerchant=row.merchant.trim();
   if(originalMerchant&&currentDisplay!==originalMerchant){
     const original=div('manage-source-text',`原文：${row.merchant}`);
@@ -1650,7 +1663,9 @@ function renderManager(): void {
   const matchingRows=activeAnalysisDrilldown?drilldownRows.get(savedIds.get(s)??''):null;
   const visibleRows=s.rows.map((row,index)=>({row,index,usedOn:row.usedOn,amount:row.amount}))
     .filter(item=>!activeAnalysisDrilldown||matchingRows?.has(item.row.id));
+  const present=merchantPresentation();
   for (const {row} of orderedPreviewRows(visibleRows,manageSort)) {
+    const meta=present(row,s);
     const tr = document.createElement('tr');
     const fields: Array<[string,string,(v:string,input:HTMLInputElement)=>void]> = [
       [row.usedOn, '利用日', (value,input) => {
@@ -1659,7 +1674,7 @@ function renderManager(): void {
         if(next===row.usedOn)return;
         row.usedOn = next; markManagerInlineDirty(s);
       }],
-      [merchantFor(row,s), '利用先', (value,input) => {
+      [meta.name, '利用先', (value,input) => {
         const requested=value.trim();
         const defaultDisplay=displayMerchant(row.merchant,s.cardId,rules());
         const previous=row.merchantOverride;
@@ -1667,7 +1682,7 @@ function renderManager(): void {
         else row.merchantOverride=requested;
         if(previous===row.merchantOverride)return;
         const control=input.closest<HTMLElement>('.manage-merchant-control');
-        if(control)updateManagerMerchantMetadata(control,row,s);
+        if(control)updateManagerMerchantMetadata(control,row,merchantPresentation()(row,s));
         markManagerInlineDirty(s);
       }],
       [row.amount.toLocaleString('ja-JP'), '金額', (value,input) => {
@@ -1690,7 +1705,7 @@ function renderManager(): void {
       if(aria==='利用先') {
         const cell=div('manage-merchant-control manage-merchant-quiet');
         const main=div('manage-merchant-main');main.append(field);cell.append(main);
-        updateManagerMerchantMetadata(cell,row,s);
+        updateManagerMerchantMetadata(cell,row,meta);
         td.append(cell);
       }else td.append(field);
       tr.append(td);
@@ -1881,7 +1896,7 @@ function renderRules():void {
   $('rules-workspace').classList.toggle('hidden',!unlocked);
   if(!unlocked)return;
   fillRuleCategoryOptions();
-  const current=sortedRules(rules());
+  const current=sortedRules(rules()),definitions=categories();
   $('rules-list-count').textContent=`${current.length}件`;
   const list=$('rules-list');list.replaceChildren();
   if(!current.length)list.append(div('empty-list','利用先ルールはまだありません。'));
@@ -1895,7 +1910,7 @@ function renderRules():void {
     const card=rule.cardId?cardDisplayName(rule.cardId)??rule.cardId:'全カード';
     const metaLine=div('rules-item-meta-line');
     metaLine.append(div('rules-item-meta',rule.priority===100?card:`${card} · 優先 ${rule.priority}`));
-    const category=categoryById(rule.categoryId);
+    const category=categoryById(rule.categoryId,definitions);
     if(category)metaLine.append(categoryChip(category));
     if(rule.fixedCost&&ruleFixedState(rule.fixedCost,ruleToday())!=='ended')metaLine.append(div('rules-item-meta',ruleFixedState(rule.fixedCost,ruleToday())==='paused'?'固定費・停止中':'固定費'));
     main.append(metaLine);
@@ -2152,6 +2167,7 @@ async function ensureUnlocked():Promise<boolean> {
   return askVault(liveVault.exists?'unlock':'create');
 }
 async function downloadManagedOriginal():Promise<void> {
+    return traceFinanceOperation('original-read',async()=>{
   const s=active();const id=s?savedIds.get(s):undefined;
   if(!s||!id||!liveVault?.unlocked){toast('保存済みのPDF原本を選択してください。');return;}
   const button=$<HTMLButtonElement>('manage-original-download');
@@ -2166,7 +2182,8 @@ async function downloadManagedOriginal():Promise<void> {
     toast('暗号化PDF原本を復号し、統一ファイル名でダウンロードしました。');
   }catch(error){if(epoch===lockSequence&&liveVault===vault&&vault.unlocked)toast(`PDF原本の取得に失敗しました：${error instanceof Error?error.message:'不明なエラー'}`);}
   finally{button.disabled=false;filesBusy=false;}
-}
+    });
+  }
 
 /** Restore only the selected saved statement, without writing to OneDrive. */
 async function clearManagerChanges():Promise<void>{
@@ -2228,12 +2245,13 @@ async function resolveManagedYearConflict():Promise<void>{
   }).join('\n\n');
   if(!await requestConfirmation({owner:ordinaryConfirmationOwner,title:'選択した年度の明細を保持しますか？',message:`${details}\n\n選択した明細の保存を確認してから他の年度の複製を論理削除します。PDF原本は削除しません。`,acceptLabel:'この明細を保持',cancelLabel:'キャンセル',destructive:true})||!valid()||active()!==s||pending().length)return;
   batchBusy=true;render();
-  try{const records=await vault.resolveYearConflict(id,year,reviewed);if(!valid())return;replaceCloudRecords(records);updateCloudStatus();operationResult('年度間の明細競合を解消しました。','good');}
+  try{const records=await vault.resolveYearConflict(id,year,reviewed);if(!valid())return;replaceCloudRecords(records,false);updateCloudStatus();operationResult('年度間の明細競合を解消しました。','good');}
   catch(error){if(valid())operationResult(error instanceof Error?error.message:'競合を解消できませんでした。','warn');}
   finally{batchBusy=false;render();}
 }
 
 async function saveEditedStatement(s:ParsedStatement, manual=false):Promise<void> {
+    return traceFinanceOperation('statement-save',async()=>{
   if(!savedIds.has(s))return;
   if(!hasUnsavedChanges(s)) {
     if(manual)operationResult('変更はありません。OneDriveに保存済みです。');
@@ -2255,7 +2273,7 @@ async function saveEditedStatement(s:ParsedStatement, manual=false):Promise<void
     if(statementWorkingFingerprint(s)===fingerprint){
       savedFingerprints.set(s,fingerprint);dirty.delete(s);pendingSources.delete(s);importStaged.delete(s);
       if(s.sourceKind==='pdf')originalSaved.add(s);
-      if(!pending().length)replaceCloudRecords(liveVault.records());
+      if(!pending().length)replaceCloudRecords(liveVault.records(),false);
     } else {
       // Further edits during an in-flight Save remain in memory until the next click.
     }
@@ -2268,7 +2286,8 @@ async function saveEditedStatement(s:ParsedStatement, manual=false):Promise<void
     const result=`${uncertain?'保存結果を確認できません':'保存失敗（未保存の変更を保持中）'}：${error instanceof Error?error.message:'不明なエラー'}`;
     updateCloudStatus();operationResult(result,uncertain?'warn':'bad');
   } finally{batchBusy=false;render();}
-}
+    });
+  }
 function showBatchDetails(items:readonly ParsedStatement[],status:string|readonly string[]):void{
   const details=$<HTMLDetailsElement>('batch-outcome-details');
   const list=$('batch-outcome-list');list.replaceChildren();details.hidden=!items.length;if(!items.length)details.open=false;
@@ -2286,6 +2305,7 @@ function showPendingBatchResults(results:readonly PendingBatchResult[]):string{
   return '照合時点：'+Object.entries(labels).map(([status,label])=>`${label} ${counts[status as keyof typeof counts]}件`).join('／');
 }
 async function saveAllPending():Promise<void> {
+    return traceFinanceOperation('statement-save',async()=>{
   if(batchBusy||filesBusy||revisionBusy||liveVault?.hasPendingYearBatch||cloudRefreshing)return;
   const epoch=lockSequence;
   let candidates=importBatchPlan().eligible;if(!candidates.length)return;
@@ -2317,7 +2337,7 @@ async function saveAllPending():Promise<void> {
         if(s.sourceKind==='pdf')originalSaved.add(s);
       }
     }
-    if(!pending().length)replaceCloudRecords(vault.records());
+    if(!pending().length)replaceCloudRecords(vault.records(),false);
     let mutationWarning=vault.takeMutationWarning();
     showActivity('保存結果を反映中…','working');
     try{await refreshVaultControls();}
@@ -2345,7 +2365,8 @@ async function saveAllPending():Promise<void> {
     }
     updateCloudStatus();operationResult(resultMessage,uncertain?'warn':'bad');
   }finally{batchBusy=false;finishActivity('明細を保存中');finishActivity('保存結果を反映中');finishActivity(`${initialCount}件の明細をOneDriveへ暗号化保存中`);render();}
-}
+    });
+  }
 
 /** Display actual old/new rows before a month is replaced, regardless of import source. */
 function confirmStatementRevision(old:ParsedStatement,newStatement:ParsedStatement,diff:RevisionDiff):Promise<boolean> {
@@ -2945,7 +2966,8 @@ function init(): void {
       if(vault!==liveVault||started!==lockSequence||!vault.unlocked)throw new Error('保管庫が変更されました。最新の状態を確認してください。');
       void updateBrowserRememberStatus();
       replaceCloudRecords(vault.records());lastCloudCheckAt=Date.now();
-      renderRules();assetsUi?.render();futureUi?.render();cardSettingsUi?.render();
+      if(!$('assets-page').classList.contains('hidden')||!$('settings-view').classList.contains('hidden'))assetsUi?.render();
+      if(!$('settings-view').classList.contains('hidden'))cardSettingsUi?.render();
       updateCloudStatus('OneDrive：新しい暗号化パスフレーズに更新しました。');
       operationResult('暗号化パスフレーズを変更しました。すべての有効データを新しい鍵で再暗号化しました。');
     },
@@ -3263,8 +3285,8 @@ function init(): void {
         modalClose(true);
         const unlockedRecords=liveVault.records();
         appendCloudRecordsKeepingDrafts(unlockedRecords);lastCloudCheckAt=Date.now();
-        renderRules();
-        assetsUi?.render();futureUi?.render();cardSettingsUi?.render();
+        if(!$('assets-page').classList.contains('hidden')||!$('settings-view').classList.contains('hidden'))assetsUi?.render();
+        if(!$('settings-view').classList.contains('hidden'))cardSettingsUi?.render();
         void assetsUi?.refreshPayroll();
         updateCloudStatus();
         await refreshVaultControls();

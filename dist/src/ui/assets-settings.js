@@ -1,3 +1,4 @@
+import { traceFinanceOperation } from '../cloud/performance-diagnostics.js';
 import { fixedCostCalculationAssets } from '../fixed-costs/rule-fixed-costs.js';
 import { bindModalDismiss, requestConfirmation, confirmationPending, cancelConfirmation } from './modal.js';
 import { DATA_STATUS, formatYen as sharedYen, formatDate, formatDateTime } from './formatters.js';
@@ -995,141 +996,142 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
     }
     /** Manual registration is explicit; automatic reads use only the encrypted settings document. */
     async function syncPayroll(automatic = false) {
-        if (busy || payrollBusy)
-            return;
-        const vault = getVault();
-        if (!vault?.unlocked || vault.recoveryOnly) {
-            if (!automatic)
-                status($('assets-payroll-status'), 'Financeの保管庫を解除してから連携してください。', true);
-            return;
-        }
-        observeLocalPayroll(vault);
-        const pass = $('assets-payroll-secret');
-        const entered = automatic ? '' : pass.value;
-        if (!automatic)
-            pass.value = '';
-        const epoch = ++payrollEpoch, vaultGuard = vault.payrollOperationGuard();
-        const current = () => { try {
-            vaultGuard();
-            return getVault() === vault && epoch === payrollEpoch;
-        }
-        catch {
-            return false;
-        } };
-        const guard = () => { if (!current())
-            throw new Error('Payroll連携の操作が変更されました。'); };
-        payrollBusy = true;
-        lastPayrollAttemptAt = Date.now();
-        $('assets-payroll-sync').disabled = true;
-        $('assets-payroll-forget').disabled = true;
-        try {
-            const saved = await vault.readPayrollCredential();
-            guard();
-            const changed = payrollCredential !== undefined && payrollCredential !== saved;
-            observeVerifiedPayroll(saved);
-            if (changed) {
-                renderAccounts();
-                renderPayroll();
-                onPayrollChange();
-            }
-            if (!entered && !saved) {
+        return traceFinanceOperation('payroll-sync', async () => {
+            if (busy || payrollBusy)
+                return;
+            const vault = getVault();
+            if (!vault?.unlocked || vault.recoveryOnly) {
                 if (!automatic)
-                    status($('assets-payroll-status'), '初回連携にはPayrollのパスフレーズを入力してください。', true);
+                    status($('assets-payroll-status'), 'Financeの保管庫を解除してから連携してください。', true);
+                return;
+            }
+            observeLocalPayroll(vault);
+            const pass = $('assets-payroll-secret');
+            const entered = automatic ? '' : pass.value;
+            if (!automatic)
+                pass.value = '';
+            const epoch = ++payrollEpoch, vaultGuard = vault.payrollOperationGuard();
+            const current = () => { try {
+                vaultGuard();
+                return getVault() === vault && epoch === payrollEpoch;
+            }
+            catch {
+                return false;
+            } };
+            const guard = () => { if (!current())
+                throw new Error('Payroll連携の操作が変更されました。'); };
+            payrollBusy = true;
+            lastPayrollAttemptAt = Date.now();
+            $('assets-payroll-sync').disabled = true;
+            $('assets-payroll-forget').disabled = true;
+            try {
+                const saved = await vault.readPayrollCredential();
+                guard();
+                const changed = payrollCredential !== undefined && payrollCredential !== saved;
+                observeVerifiedPayroll(saved);
+                if (changed) {
+                    renderAccounts();
+                    renderPayroll();
+                    onPayrollChange();
+                }
+                if (!entered && !saved) {
+                    if (!automatic)
+                        status($('assets-payroll-status'), '初回連携にはPayrollのパスフレーズを入力してください。', true);
+                    renderAccounts();
+                    renderPayroll();
+                    onPayrollChange();
+                    return;
+                }
+                // Even before the usual synchronization interval, observe credential revocation.
+                if (automatic && payrollOwner === vault && payrollSession && payrollSynced && Date.now() - payrollSyncedAt < 10 * 60 * 1000)
+                    return;
+                if (!payrollOwner || payrollOwner !== vault || entered && entered !== saved)
+                    clearPayroll();
+                const secret = entered || saved;
+                status($('assets-payroll-status'), automatic ? 'Payrollの収入を自動同期しています…' : 'Payrollの暗号化収入を取得・検証しています…');
+                const existing = !entered && payrollOwner === vault ? payrollSession : null;
+                const { session, items } = existing ? { session: existing, items: await existing.refresh() } : await PayrollReadSession.connectAndRefresh(vault.payrollReadClient(), secret, guard);
+                guard();
+                const verified = await vault.readPayrollCredential();
+                guard();
+                if (verified !== saved) {
+                    observeVerifiedPayroll(verified);
+                    throw new Error('Payroll連携設定が変更されました。最新の設定で再同期してください。');
+                }
+                let credentialError;
+                if (!automatic) {
+                    try {
+                        const action = payrollPassphraseUpdate(entered, saved);
+                        if (action !== undefined) {
+                            await vault.setPayrollAutoPassphrase(action, saved);
+                            guard();
+                            observedLocalCredential = vault.assetSettings().payrollAutoPassphrase;
+                            payrollCredential = action;
+                        }
+                    }
+                    catch (error) {
+                        guard();
+                        credentialError = error;
+                        let latest;
+                        try {
+                            latest = await vault.readPayrollCredential();
+                        }
+                        catch (readError) {
+                            guard();
+                            if (saved !== null)
+                                throw readError;
+                            latest = null;
+                        }
+                        guard();
+                        if (latest !== saved) {
+                            observeVerifiedPayroll(latest);
+                            throw error;
+                        }
+                    }
+                }
+                guard();
+                // A manually entered but not persisted credential may be used in this tab only.
+                // Never keep it as a reusable automatic session.
+                payrollSession = credentialError === undefined ? session : null;
+                payrollOwner = vault;
+                payrollIncome = items;
+                payrollSynced = true;
+                payrollSyncedAt = Date.now();
+                payrollSessionGuard = vaultGuard;
+                payrollStale = false;
+                payrollUseStale = false;
+                const message = `Payrollから${items.length}件の給与実績を${automatic ? '自動取得' : '取得'}しました。`;
+                status($('assets-payroll-status'), credentialError === undefined ? message :
+                    `${message} ただし自動連携設定の${mutationError(credentialError)}。取得済みの給与情報は維持しています。`, credentialError !== undefined);
                 renderAccounts();
                 renderPayroll();
                 onPayrollChange();
-                return;
             }
-            // Even before the usual synchronization interval, observe credential revocation.
-            if (automatic && payrollOwner === vault && payrollSession && payrollSynced && Date.now() - payrollSyncedAt < 10 * 60 * 1000)
-                return;
-            if (!payrollOwner || payrollOwner !== vault || entered && entered !== saved)
-                clearPayroll();
-            const secret = entered || saved;
-            const session = !entered && payrollOwner === vault && payrollSession ? payrollSession : await PayrollReadSession.connect(vault.payrollReadClient(), secret);
-            guard();
-            status($('assets-payroll-status'), automatic ? 'Payrollの収入を自動同期しています…' : 'Payrollの暗号化収入を取得・検証しています…');
-            const items = await session.refresh();
-            guard();
-            const verified = await vault.readPayrollCredential();
-            guard();
-            if (verified !== saved) {
-                observeVerifiedPayroll(verified);
-                throw new Error('Payroll連携設定が変更されました。最新の設定で再同期してください。');
-            }
-            let credentialError;
-            if (!automatic) {
-                try {
-                    const action = payrollPassphraseUpdate(entered, saved);
-                    if (action !== undefined) {
-                        await vault.setPayrollAutoPassphrase(action, saved);
-                        guard();
-                        observedLocalCredential = vault.assetSettings().payrollAutoPassphrase;
-                        payrollCredential = action;
-                    }
+            catch (error) {
+                if (!current())
+                    return;
+                const lastVerified = payrollOwner === vault && payrollSyncedAt > 0;
+                payrollSession = null;
+                payrollSynced = false;
+                payrollStale = lastVerified;
+                if (!lastVerified) {
+                    clearPayroll();
                 }
-                catch (error) {
-                    guard();
-                    credentialError = error;
-                    let latest;
-                    try {
-                        latest = await vault.readPayrollCredential();
-                    }
-                    catch (readError) {
-                        guard();
-                        if (saved !== null)
-                            throw readError;
-                        latest = null;
-                    }
-                    guard();
-                    if (latest !== saved) {
-                        observeVerifiedPayroll(latest);
-                        throw error;
-                    }
+                else
+                    payrollUseStale = false;
+                status($('assets-payroll-status'), `給与を取得できませんでした：${error instanceof Error ? error.message : '通信エラー'}。${lastVerified ? '最終成功時の給与はこのタブに保持しましたが、予測から除外しています。' : '設定から再接続できます。'}`, true);
+                renderAccounts();
+                renderPayroll();
+                onPayrollChange();
+            }
+            finally {
+                if (epoch === payrollEpoch) {
+                    payrollBusy = false;
+                    $('assets-payroll-sync').disabled = !getVault()?.unlocked;
+                    $('assets-payroll-forget').disabled = !getVault()?.unlocked;
                 }
             }
-            guard();
-            // A manually entered but not persisted credential may be used in this tab only.
-            // Never keep it as a reusable automatic session.
-            payrollSession = credentialError === undefined ? session : null;
-            payrollOwner = vault;
-            payrollIncome = items;
-            payrollSynced = true;
-            payrollSyncedAt = Date.now();
-            payrollSessionGuard = vaultGuard;
-            payrollStale = false;
-            payrollUseStale = false;
-            const message = `Payrollから${items.length}件の給与実績を${automatic ? '自動取得' : '取得'}しました。`;
-            status($('assets-payroll-status'), credentialError === undefined ? message :
-                `${message} ただし自動連携設定の${mutationError(credentialError)}。取得済みの給与情報は維持しています。`, credentialError !== undefined);
-            renderAccounts();
-            renderPayroll();
-            onPayrollChange();
-        }
-        catch (error) {
-            if (!current())
-                return;
-            const lastVerified = payrollOwner === vault && payrollSyncedAt > 0;
-            payrollSession = null;
-            payrollSynced = false;
-            payrollStale = lastVerified;
-            if (!lastVerified) {
-                clearPayroll();
-            }
-            else
-                payrollUseStale = false;
-            status($('assets-payroll-status'), `給与を取得できませんでした：${error instanceof Error ? error.message : '通信エラー'}。${lastVerified ? '最終成功時の給与はこのタブに保持しましたが、予測から除外しています。' : '設定から再接続できます。'}`, true);
-            renderAccounts();
-            renderPayroll();
-            onPayrollChange();
-        }
-        finally {
-            if (epoch === payrollEpoch) {
-                payrollBusy = false;
-                $('assets-payroll-sync').disabled = !getVault()?.unlocked;
-                $('assets-payroll-forget').disabled = !getVault()?.unlocked;
-            }
-        }
+        });
     }
     async function refreshPayroll() {
         const vault = getVault();

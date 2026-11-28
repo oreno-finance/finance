@@ -113,6 +113,46 @@ test('作成後に同じ空ロックのETagが変わっても所有者だけが�
  assert.ok(s.requests.some(r=>r.url.includes('/'+markerId+'/children?')));
  const next=await api.acquireVaultMutation(guard);await next();assert.equal(s.marker,null);
 });
+test('ETag変化を観測した接続の次の解除は失敗DELETEを省き、安定時は通常経路へ戻る',async()=>{
+ const {s,api}=fixture();
+ const first=await api.acquireVaultMutation(guard);s.marker.eTag='"first-change"';await first();
+ const second=await api.acquireVaultMutation(guard);const id=s.marker.id;s.marker.eTag='"second-change"';
+ const from=s.requests.length;await second();const requests=s.requests.slice(from);
+ assert.deepEqual(requests.map(r=>r.method),['GET','GET','DELETE']);
+ assert.ok(requests[0].url.includes(':/finance-operation-lock?'));
+ assert.ok(requests[1].url.includes('/'+id+'/children?'));
+ assert.equal(requests[2].headers['If-Match'],'"second-change"');assert.ok(requests[2].url.endsWith('/'+id));assert.equal(s.marker,null);
+ const third=await api.acquireVaultMutation(guard);const stable=s.requests.length;await third();
+ assert.deepEqual(s.requests.slice(stable).map(r=>r.method),['GET','GET','DELETE']);
+ const fourth=await api.acquireVaultMutation(guard);const direct=s.requests.length;await fourth();
+ assert.deepEqual(s.requests.slice(direct).map(r=>r.method),['DELETE']);
+});
+test('事前再照合でも別ID・非空のロックは削除せず、書込結果不明なら照合自体を開始しない',async()=>{
+ for(const mode of ['successor','nonempty','uncertain']){
+   const {s,api}=fixture();const first=await api.acquireVaultMutation(guard);s.marker.eTag='"first-change"';await first();
+   const release=await api.acquireVaultMutation(guard);s.marker.eTag='"second-change"';
+   if(mode==='successor')s.marker={...s.marker,id:'marker-successor'};
+   if(mode==='nonempty')s.children=[{id:'unexpected-child'}];
+   if(mode==='uncertain'){
+     s.mode='lost-uncommitted';await assert.rejects(api.uploadDatedOriginal(id(1),'synthetic-cipher','2026-01'),/lost final/);
+   }
+   const from=s.requests.length;
+   await assert.rejects(release(),mode==='successor'?/IDが変化/:mode==='nonempty'?/空ではない/:/操作ロックを保持/);
+   assert.equal(s.requests.slice(from).filter(r=>r.method==='DELETE').length,0);
+   if(mode==='uncertain')assert.equal(s.requests.length,from);
+   assert.ok(s.marker);
+ }
+});
+test('事前再照合後のETag変更も条件付き解除で一度だけ再照合し、再変更は拒否する',async()=>{
+ for(const changesAgain of [false,true]){
+   const {s,api}=fixture();const first=await api.acquireVaultMutation(guard);s.marker.eTag='"first-change"';await first();
+   const release=await api.acquireVaultMutation(guard);s.marker.eTag='"second-change"';const before=s.deleteCalls;
+   s.onDelete=()=>{if(s.deleteCalls===before+1)s.marker.eTag='"third-change"';else if(changesAgain)s.marker.eTag='"fourth-change"';};
+   if(changesAgain){await assert.rejects(release(),/412/);assert.ok(s.marker);}
+   else{await release();assert.equal(s.marker,null);}
+   assert.equal(s.deleteCalls,before+2);
+ }
+});
 test('412再照合で別IDのロックを発見した場合は後続ロックを削除しない',async()=>{
  const {s,api}=fixture();const release=await api.acquireVaultMutation(guard);s.marker.eTag='"changed"';
  const request=api.http;api.http=async(url,init)=>{

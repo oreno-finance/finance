@@ -16,11 +16,9 @@ details[open] > summary::after{
 .cloud-advanced > summary .cloud-chevron,
 .assets-nisa-link > summary > span[aria-hidden="true"],
 .assets-payroll-summary > summary .assets-payroll-chevron,
-.cloud-rotate-details > summary > span[aria-hidden="true"],
-.cloud-probe-details > summary > span[aria-hidden="true"]{display:none!important}
+.cloud-rotate-details > summary > span[aria-hidden="true"]{display:none!important}
 /* Do not rotate any inline summary contents in older CSS. */
 .cloud-rotate-details[open] > summary span,
-.cloud-probe-details[open] > summary span,
 .cloud-advanced[open] > summary span,
 .sidebar .sidebar-group[open] .sidebar-group-chevron,
 .assets-payroll-summary[open] .assets-payroll-chevron{transform:none!important;transition:none!important}

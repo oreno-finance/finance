@@ -101,13 +101,13 @@ test('Graph POST/PUT 401 is not retried even with a renewable token; callback si
   const forced=[];let writes=0,unauthorized=0;
   const api=new OneDriveTestClient(async(refresh=false)=>{forced.push(refresh);return 'token';},async(url,init)=>{
     if(url.endsWith('/me/drive/special/approot'))return Response.json({id:'folder'});
-    if(init.method==='PUT'){
+    if(init.method==='POST'){
       writes++;
       return Response.json({error:{code:'InvalidAuthenticationToken'}},{status:401});
     }
     throw new Error('unanticipated request');
   },()=>unauthorized++);
-  await assert.rejects(api.uploadEncryptedProbe('test-encrypted-file'),error=>{
+  await assert.rejects(api.writeLiveVault('test-encrypted-file',null),error=>{
     assert.ok(error instanceof GraphError);
     assert.equal(error.status,401);return true;
   });
@@ -134,7 +134,7 @@ test('signed content URL uses neither bearer token nor MSAL token callback',asyn
   let requested=0, signed=0;
   const read=new OneDriveTestClient(async()=>{requested++;return 'secret-token';},async(url,init)=>{
     if(url.endsWith('/me/drive/special/approot'))return Response.json({id:'folder'});
-    if(url.includes('/finance-v09-connectivity.enc.json'))return Response.json({id:'file',eTag:'e1','@microsoft.graph.downloadUrl':'https://blob.example.test/signed'});
+    if(url.includes('/finance-v1-vault.enc')||url.endsWith('/items/file'))return Response.json({id:'file',eTag:'e1','@microsoft.graph.downloadUrl':'https://blob.example.test/signed'});
     if(url==='https://blob.example.test/signed'){
       signed++;
       assert.equal(init.credentials,'omit');
@@ -143,9 +143,9 @@ test('signed content URL uses neither bearer token nor MSAL token callback',asyn
     }
     throw new Error(`unexpected ${url}`);
   });
-  assert.equal(await read.downloadEncryptedProbe(),'encrypted');
+  assert.equal((await read.readLiveVault()).text,'encrypted');
   assert.equal(signed,1);
-  assert.equal(requested,2,'only the two Graph metadata GETs require MSAL');
+  assert.equal(requested,3,'only the three Graph metadata GETs require MSAL');
 });
 
 test('GitHub Pages ships an isolated MSAL v5 bridge, no login redirects on passive startup',()=>{
@@ -188,9 +188,9 @@ test('silent timeout is retried once before any Graph write, shared acquisition 
     throw new Error('unexpected request');
   });
   await Promise.all([provider(),provider()]);assert.equal(tokens,2);
-  await api.uploadEncryptedProbe('fixture');assert.equal(writes,1);assert.equal(tokens,5);
+  await api.uploadVaultSnapshot(JSON.stringify({format:'finance-encrypted-backup-v1',meta:{},records:[]}));assert.equal(writes,1);assert.equal(tokens,5);
   const blocked=new OneDriveTestClient(()=>retrySilentTimeout(async()=>{throw {errorCode:'iframe_bridge_timeout'};},()=>{}),async()=>{throw new Error('Graph must not be contacted');});
-  await assert.rejects(blocked.uploadEncryptedProbe('fixture'),e=>e.errorCode==='iframe_bridge_timeout');
+  await assert.rejects(blocked.uploadVaultSnapshot(JSON.stringify({format:'finance-encrypted-backup-v1',meta:{},records:[]})),e=>e.errorCode==='iframe_bridge_timeout');
 });
 test('persistent timeout is bounded; interaction and account changes never retry',async()=>{
   const timeout={errorCode:'iframe_bridge_timeout'};let attempts=0;

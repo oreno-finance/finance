@@ -153,3 +153,18 @@ test('Phase B: financial correction checks only the affected months, not unrelat
  await a.saveBatch([{id:r.id,statement:{...r.statement,statedTotal:200,rows:r.statement.rows.map(row=>({...row,amount:200}))}}]);
  assert.deepEqual(flags(await reopen(state)),[other]);
 });
+
+test('v2.2.1: delete reuses assets read under the mutation lease and still checks its final ETag',async()=>{
+ const {a,ga,state}=await fixture();await save(a);await a.setBirthMonth('2000-01');
+ const calls=[];const read=ga.readAssetSettings.bind(ga);
+ ga.readAssetSettings=async(...args)=>{calls.push(['body',!!a.activeMutation]);return read(...args);};
+ ga.readFinanceMetadata=async kind=>{if(kind==='assets')calls.push(['fence',!!a.activeMutation]);return ga.read(kind);};
+ await a.delete('bill-a');assert.deepEqual(calls,[['body',true],['fence',true]]);
+ assert.equal(a.assetSettings().birthMonth,'2000-01');assert.equal(a.records().length,0);
+ // Change the file after a successful year write, bypassing the mock lock to
+ // model an unexpected remote modification. The closing fence must reject it.
+ await save(a);calls.length=0;const write=ga.writeYearVault.bind(ga);
+ ga.writeYearVault=async(...args)=>{const saved=await write(...args);const old=state.get('assets');state.set('assets',{...old,rev:old.rev+1});return saved;};
+ await a.delete('bill-a');assert.match(a.takeMutationWarning(),/削除は確認できましたが/);
+ assert.deepEqual(calls,[['body',true],['fence',true]]);assert.equal(a.records().length,0);
+});

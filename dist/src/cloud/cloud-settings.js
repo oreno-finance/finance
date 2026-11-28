@@ -1,5 +1,5 @@
+import { traceFinanceOperation } from './performance-diagnostics.js';
 import { requestConfirmation, confirmationPending } from '../ui/modal.js';
-import { createEncryptedProbe, decryptEncryptedProbe } from './test-envelope.js';
 import { OneDriveTestClient, GraphError } from './onedrive-api.js';
 import { clearPasswordField } from '../ui/password-fields.js';
 import { showActivity, simpleActivity } from '../ui/activity-feedback.js';
@@ -133,8 +133,6 @@ function updateUi() {
     $('cloud-lock-recover').toggleAttribute('disabled', busy || !connected);
     $('cloud-vault-diagnose').toggleAttribute('disabled', busy || !connected);
     $('cloud-diagnostic-copy').toggleAttribute('disabled', busy || !$('cloud-diagnostic-report').textContent?.trim());
-    $('cloud-upload').toggleAttribute('disabled', busy || !connected);
-    $('cloud-download').toggleAttribute('disabled', busy || !connected);
     $('cloud-account').textContent = connected ? (account()?.username || '') : '';
     $('cloud-account').hidden = !$('cloud-account').textContent;
     const state = $('cloud-auth-state');
@@ -337,21 +335,23 @@ export function initCloudSettings(handlers) {
         return await requestConfirmation({ ...options, owner: confirmationOwner }) && auth() && valid();
     }
     async function action(fn) {
-        if (busy || confirmationPending())
-            return;
-        busy = true;
-        updateUi();
-        try {
-            await fn();
-        }
-        catch (error) {
-            const reason = error instanceof Error ? error.message : '不明なエラー';
-            status(reason, 'error');
-        }
-        finally {
-            busy = false;
+        return traceFinanceOperation('connection', async () => {
+            if (busy || confirmationPending())
+                return;
+            busy = true;
             updateUi();
-        }
+            try {
+                await fn();
+            }
+            catch (error) {
+                const reason = error instanceof Error ? error.message : '不明なエラー';
+                status(reason, 'error');
+            }
+            finally {
+                busy = false;
+                updateUi();
+            }
+        });
     }
     $('cloud-save-id').addEventListener('click', () => {
         void action(async () => {
@@ -542,43 +542,6 @@ export function initCloudSettings(handlers) {
                 throw new Error('先に診断を実行してください。');
             await navigator.clipboard.writeText(value);
             status('診断結果をコピーしました。内容にパスフレーズ・暗号文・ファイルIDは含めていません。', 'ok');
-        });
-    });
-    $('cloud-upload').addEventListener('click', () => {
-        void action(async () => {
-            const input = $('cloud-passphrase');
-            try {
-                if (input.value.length < 12)
-                    throw new Error('テスト用パスフレーズは12文字以上で入力してください。');
-                const valid = handlers.confirmationContext(), auth = authContext(), password = input.value;
-                if (!await confirmAction({ title: '暗号化テストファイルを保存しますか？', message: '金融データを含まない暗号化テストファイルをOneDriveに保存します。', acceptLabel: '保存する' }) || !valid() || !auth() || input.value !== password)
-                    return;
-                const { encrypted, probe } = await createEncryptedProbe(password);
-                if (!valid() || !auth() || input.value !== password)
-                    return;
-                const client = await graphClient();
-                if (!valid() || !auth() || input.value !== password)
-                    return;
-                await client.uploadEncryptedProbe(encrypted);
-                $('cloud-probe-result').textContent = `アップロード成功：${probe.createdAt} / ID ${probe.nonce}`;
-                status('暗号化テストデータをアップロードしました。', 'ok');
-            }
-            finally {
-                clearPasswordField('cloud-passphrase');
-            }
-        });
-    });
-    $('cloud-download').addEventListener('click', () => {
-        void action(async () => {
-            const input = $('cloud-passphrase');
-            try {
-                const probe = await decryptEncryptedProbe(await (await graphClient()).downloadEncryptedProbe(), input.value);
-                $('cloud-probe-result').textContent = `復号成功：${probe.createdAt} / ID ${probe.nonce}`;
-                status('OneDriveから暗号化ファイルを取得し、復号できました。', 'ok');
-            }
-            finally {
-                clearPasswordField('cloud-passphrase');
-            }
         });
     });
     const cleanupScan = $('cloud-cleanup-scan');

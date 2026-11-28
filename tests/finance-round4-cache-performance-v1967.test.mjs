@@ -178,3 +178,25 @@ test('whole-render and points/chart phase timings remain aggregate-only, with no
   assert.match(analysis,/measureFinanceSync\('ui\.analysis\.render'/);
   assert.match(analysis,/periodPointBenefitsFromReports\(data\.months\.map\(m=>m\.report\),source\)/);
 });
+
+test('v2.2.1: missing optional rules recheck the path but preserve unrelated folder IDs',async()=>{
+ const f=fakeDrive();f.folders.set('f/rules','r');f.add('a','assets.enc','settings');f.add('s','2026.enc','year');
+ await f.api.readAssetSettings();await f.api.readYearVault('2026');
+ assert.equal(await f.api.readMerchantRules(true),null);
+ assert.equal(await f.api.readMerchantRules(true),null);
+ let before=f.stats.gets;await f.api.readAssetSettings(true);assert.equal(f.stats.gets-before,1);
+ before=f.stats.gets;await f.api.readYearVault('2026');assert.equal(f.stats.gets-before,1);
+ // A moved branch is re-resolved rather than keeping a stale ID.
+ f.folders.set('f/rules','r-new');f.add('r-new','merchants.enc','new rules');
+ assert.equal((await f.api.readMerchantRules(true)).text,'new rules');
+ before=f.stats.gets;await f.api.readAssetSettings(true);assert.equal(f.stats.gets-before,1);
+});
+
+test('v2.2.1: a replaced common ancestor invalidates its other cached descendants',async()=>{
+ const f=fakeDrive();f.folders.set('f/rules','r');f.add('a','assets.enc','old settings');
+ await f.api.readAssetSettings();await f.api.readMerchantRules(true);
+ f.folders.set('root/finance','f-new');f.folders.set('f-new/rules','r-new');f.folders.set('f-new/settings','a-new');
+ f.add('r-new','merchants.enc','new rules');f.add('a-new','assets.enc','new settings');
+ assert.equal((await f.api.readMerchantRules(true)).text,'new rules');
+ assert.equal((await f.api.readAssetSettings(true)).text,'new settings');
+});

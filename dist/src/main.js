@@ -16,14 +16,14 @@ import { syncFinanceCloudGates } from './ui/cloud-gate.js';
 import { LiveVault, CloudWriteUncertainError, CloudEditCancelledError, BrowserKeyGenerationChangedError } from './cloud/live-vault.js';
 import { GraphError } from './cloud/onedrive-api.js';
 import { readBrowserKey, rememberBrowserKey, forgetBrowserKey, applyBrowserRetentionChoice, isBrowserRemembered, InvalidRememberedBrowserKeyError, isManuallyLocked, setManualLock, notifyOtherFinanceTabs, beginBrowserRetention, browserLockEpoch, CROSS_TAB_LOCK_KEY } from './cloud/remembered-browser.js';
-import { displayMerchant, matchingRule, sortedRules, normalizeMerchant, fixedRuleEligible, fixedRuleKey, PALETTE } from './cloud/merchant-rules.js';
+import { displayMerchant, matchingSortedRule, sortedRules, normalizeMerchant, fixedRuleEligible, fixedRuleKey, PALETTE } from './cloud/merchant-rules.js';
 import { importErrors, importDisplayErrors, cardSelectionPending, duplicateMonths, redundantImportDrafts } from './importers/batch-policy.js';
 import { prioritizedIndices, orderedPreviewRows } from './ui/preview-order.js';
 import { calendarBillingPeriod, filteredStatementIndices } from './ui/manage-filter.js';
 import { recentMerchants } from './ui/recent-merchants.js';
 import { planCategoryBatch, categoryBatchChanged } from './ui/category-draft.js';
 import { initAssetsSettings } from './ui/assets-settings.js';
-import { measureFinancePhase } from './cloud/performance-diagnostics.js';
+import { traceFinanceOperation, measureFinancePhase } from './cloud/performance-diagnostics.js';
 import { initFutureProjection } from './ui/future-projection.js'; /* finance-v143 */
 import { canonicalStatementFilename } from './ui/statement-filename.js';
 import { initMonthlySummary } from './ui/monthly-summary.js'; /* finance-monthly-v140 */
@@ -210,14 +210,14 @@ async function confirmInterruption(label) {
 const ruleModes = { exact: '完全一致', prefix: '前方一致', contains: '部分一致' };
 function rules() { return liveVault?.unlocked ? liveVault.merchantRules() : []; }
 function categories() { return liveVault?.unlocked ? liveVault.merchantCategories() : []; }
-function categoryById(id) {
-    const item = categories().find(category => category.id === id);
+function categoryById(id, definitions = categories()) {
+    const item = definitions.find(category => category.id === id);
     if (!item)
         return null;
     return { ...item, hex: PALETTE.find(color => color.id === item.color)?.hex ?? '#718096' };
 }
 function cardDisplayName(cardId) {
-    return (cardId && liveVault?.unlocked ? liveVault.assetSettings().cardPreferences?.[cardId]?.name : undefined) ?? getCard(cardId)?.name;
+    return (cardId && liveVault?.unlocked ? liveVault.cardPreferenceName(cardId) : undefined) ?? getCard(cardId)?.name;
 }
 function refreshCardOptionLabels() {
     for (const id of ['rule-card', 'recent-merchants-card', 'assets-nisa-card']) {
@@ -229,10 +229,6 @@ function refreshCardOptionLabels() {
                 option.textContent = cardDisplayName(option.value);
     }
 }
-function categoryFor(row, s) {
-    const matched = matchingRule(row.merchant, s.cardId, rules());
-    return categoryById(matched?.categoryId);
-}
 function categoryChip(meta) {
     const chip = document.createElement('span');
     chip.className = 'category-chip';
@@ -242,8 +238,13 @@ function categoryChip(meta) {
     chip.append(dot, document.createTextNode(meta.name));
     return chip;
 }
-function merchantFor(row, s) {
-    return displayMerchant(row.merchant, s.cardId, rules(), row.merchantOverride);
+/** One snapshot and one match per row, shared by all labels in this draw. */
+function merchantPresentation(ordered = sortedRules(rules()), definitions = categories()) {
+    return (row, s) => {
+        const matched = matchingSortedRule(row.merchant, s.cardId, ordered);
+        return { name: row.merchantOverride?.trim() || matched?.displayName || row.merchant,
+            category: categoryById(matched?.categoryId, definitions) };
+    };
 }
 const list = $('statement-list');
 const previewEmpty = $('preview-empty');
@@ -432,7 +433,7 @@ function clearUnlockedFinanceViews() {
     $('paste-input').value = '';
     clipboardHtml = '';
     lockVault();
-    for (const id of ['cloud-passphrase', 'cloud-current-secret', 'cloud-next-secret', 'cloud-next-confirm', 'legacy-cleanup-secret'])
+    for (const id of ['cloud-current-secret', 'cloud-next-secret', 'cloud-next-confirm', 'legacy-cleanup-secret'])
         clearPasswordField(id);
     resetRuleEditor();
     categoryDraft = null;
@@ -795,45 +796,47 @@ async function deleteStatement(index) {
         toast('明細が更新されました。最新情報から確認してください。');
         return;
     }
-    batchBusy = true;
-    operationResult(storedId ? `${name}の明細をOneDriveから削除中…` : `${name}の下書きを破棄しています…`, 'working');
-    render();
-    try {
-        if (storedId) {
-            if (!vault?.unlocked)
-                throw new Error('OneDrive保管庫を解除してください。');
-            await vault.delete(storedId);
-        }
-        if (epoch !== lockSequence || liveVault !== vault)
-            return;
-        const mutationWarning = storedId ? vault?.takeMutationWarning() : null;
-        const current = statements.indexOf(statement);
-        if (current < 0)
-            return;
-        statements.splice(current, 1);
-        if (!statements.length)
-            activeIndex = -1;
-        else if (activeIndex === current)
-            activeIndex = Math.min(current, statements.length - 1);
-        else if (current < activeIndex)
-            activeIndex--;
-        if (!$('manage-view').classList.contains('hidden'))
-            selectVisibleManagerStatement();
-        if (storedId && !pending().length)
-            replaceCloudRecords(liveVault.records());
-        updateCloudStatus();
-        const result = storedId ? `${name}の明細をOneDriveから削除しました。` : `${name}の未保存下書きを破棄しました。`;
-        operationResult(mutationWarning ?? result, mutationWarning ? 'warn' : 'good');
-    }
-    catch (error) {
-        const unknown = error instanceof CloudWriteUncertainError;
-        const result = `${unknown ? '削除結果を確認できません' : '削除できませんでした'}：${error instanceof Error ? error.message : '不明なエラー'}`;
-        operationResult(result, unknown ? 'warn' : 'bad');
-    }
-    finally {
-        batchBusy = false;
+    return traceFinanceOperation('statement-delete', async () => {
+        batchBusy = true;
+        operationResult(storedId ? `${name}の明細をOneDriveから削除中…` : `${name}の下書きを破棄しています…`, 'working');
         render();
-    }
+        try {
+            if (storedId) {
+                if (!vault?.unlocked)
+                    throw new Error('OneDrive保管庫を解除してください。');
+                await vault.delete(storedId);
+            }
+            if (epoch !== lockSequence || liveVault !== vault)
+                return;
+            const mutationWarning = storedId ? vault?.takeMutationWarning() : null;
+            const current = statements.indexOf(statement);
+            if (current < 0)
+                return;
+            statements.splice(current, 1);
+            if (!statements.length)
+                activeIndex = -1;
+            else if (activeIndex === current)
+                activeIndex = Math.min(current, statements.length - 1);
+            else if (current < activeIndex)
+                activeIndex--;
+            if (!$('manage-view').classList.contains('hidden'))
+                selectVisibleManagerStatement();
+            if (storedId && !pending().length)
+                replaceCloudRecords(liveVault.records(), false);
+            updateCloudStatus();
+            const result = storedId ? `${name}の明細をOneDriveから削除しました。` : `${name}の未保存下書きを破棄しました。`;
+            operationResult(mutationWarning ?? result, mutationWarning ? 'warn' : 'good');
+        }
+        catch (error) {
+            const unknown = error instanceof CloudWriteUncertainError;
+            const result = `${unknown ? '削除結果を確認できません' : '削除できませんでした'}：${error instanceof Error ? error.message : '不明なエラー'}`;
+            operationResult(result, unknown ? 'warn' : 'bad');
+        }
+        finally {
+            batchBusy = false;
+            render();
+        }
+    });
 }
 function providerLabel(provider) {
     return ({ jcb: 'JCB', rakuten: '楽天カード', view: 'ビューカード', smbc: '三井住友カード系', goldpoint: 'GOLD POINT CARD+', unknown: '不明な発行会社' })[provider];
@@ -1073,10 +1076,10 @@ function initCloudActionControls() {
                     statements.push(s);
                 }
                 activeIndex = statements.length ? 0 : -1;
-                renderRules();
-                assetsUi?.render();
-                futureUi?.render();
-                cardSettingsUi?.render();
+                if (!$('assets-page').classList.contains('hidden') || !$('settings-view').classList.contains('hidden'))
+                    assetsUi?.render();
+                if (!$('settings-view').classList.contains('hidden'))
+                    cardSettingsUi?.render();
                 showBatchDetails([], '');
                 const warning = vault.takeMutationWarning();
                 operationResult(`${completedIds.size}件の保存を確認しました。${excluded ? ` 競合${excluded}件はOneDrive側を採用しました。` : ''}${warning ? ` ${warning}` : ''}`, warning || excluded ? 'warn' : 'good');
@@ -1123,9 +1126,11 @@ function renderRows() {
         rowBody.append(tr);
         return;
     }
+    const present = merchantPresentation();
     for (const row of orderedPreviewRows(s.rows, previewSort)) {
+        const meta = present(row, s);
         const tr = document.createElement('tr');
-        for (const value of [dateDisplay(row.usedOn), merchantFor(row, s), formatNumber(row.amount), row.description || '—']) {
+        for (const value of [dateDisplay(row.usedOn), meta.name, formatNumber(row.amount), row.description || '—']) {
             const td = document.createElement('td');
             td.textContent = value;
             td.title = value;
@@ -1134,15 +1139,14 @@ function renderRows() {
         // Keep the category badge beside the merchant instead of adding a second line.
         // Each import-preview row must have one consistent height, regardless of category.
         const merchantCell = tr.children[1];
-        merchantCell.title = row.merchant !== merchantFor(row, s) ? `元の利用先：${row.merchant}` : row.merchant;
+        merchantCell.title = row.merchant !== meta.name ? `元の利用先：${row.merchant}` : row.merchant;
         const merchantContent = div('preview-merchant-content');
         const merchantName = div('preview-merchant-name');
-        merchantName.textContent = merchantFor(row, s);
+        merchantName.textContent = meta.name;
         merchantContent.append(merchantName);
-        const meta = categoryFor(row, s);
-        if (meta) {
+        if (meta.category) {
             merchantCell.classList.add('preview-merchant-cell');
-            merchantContent.append(categoryChip(meta));
+            merchantContent.append(categoryChip(meta.category));
         }
         merchantCell.replaceChildren(merchantContent);
         tr.children[2].classList.add('amount-cell');
@@ -1260,7 +1264,7 @@ function attachSource(statement, source) {
     if (source)
         pendingSources.set(statement, source);
 }
-function replaceCloudRecords(records) {
+function replaceCloudRecords(records, redraw = true) {
     // Never discard an unsaved local draft while reloading remote data.
     if (pending().length && statements.length)
         throw new Error('未保存の編集があるため再読み込みできません。');
@@ -1278,7 +1282,8 @@ function replaceCloudRecords(records) {
     }
     if (statements.length)
         activeIndex = 0;
-    render();
+    if (redraw)
+        render();
 }
 function appendCloudRecordsKeepingDrafts(records) {
     const drafts = statements.filter(hasUnsavedChanges);
@@ -1382,181 +1387,189 @@ function showCloudConnectDialog(mode) {
     $('cloud-connect-continue').focus();
 }
 async function startCloud() {
-    if (cloudStartupRunning || liveVault?.unlocked)
-        return;
-    cloudStartupRunning = true;
-    $('cloud-live-status').textContent = '接続中';
-    syncCloudGate();
-    const startedWithLockSequence = lockSequence;
-    vaultDiscoveryCompleted = false;
-    // Connecting is a background task. It must not block navigation or silently redirect.
-    showActivity('OneDriveに接続中…', 'working');
-    const slowNotice = setTimeout(() => {
-        if (!cloudStartupRunning)
+    return traceFinanceOperation('startup', async () => {
+        if (cloudStartupRunning || liveVault?.unlocked)
             return;
-        showActivity('OneDriveの接続に時間がかかっています', 'working');
-    }, 12000);
-    try {
-        const client = await measureFinancePhase('startup.auth', () => graphClientWithoutRedirect());
-        const vault = new LiveVault(client, message => { if (liveVault === vault)
-            operationResult(message, 'warn'); });
-        revokeOriginalDownloadUrls();
-        liveVault = vault;
-        const authAccountId = activeMicrosoftAccountId();
-        liveVaultRememberContext = authAccountId ? { clientId: clientIdForTab(), homeAccountId: authAccountId } : null;
-        const resolverVault = liveVault;
-        liveVault.setAssetConflictResolver((collisions, details = []) => resolverVault === liveVault && confirmCloudConflicts('資産設定に同時編集があります', collisions.map((item, i) => ({ label: details[i]?.label ?? item.itemId, field: item.field,
-            local: details[i]?.localValue ?? '変更あり', remote: details[i]?.remoteValue ?? '別端末で変更あり' }))));
-        liveVault.setStatementConflictResolver(collisions => resolverVault === liveVault && confirmCloudConflicts('カード明細に同時編集があります', collisions.map(item => ({ label: `明細 ${item.recordId.slice(0, 12)} / ${item.path.replace(/^record\.statement\./, '')}`,
-            field: item.path.split('.').at(-1) ?? item.path, local: collisionValue(item.local), remote: collisionValue(item.remote) }))));
-        liveVault.setRuleConflictResolver(collisions => resolverVault === liveVault && confirmCloudConflicts('利用先ルール・カテゴリーに同時編集があります', collisions.map(item => ({ label: item.ruleId.startsWith('category:') ? `カテゴリー ${item.ruleId.slice(9)}` : `利用先ルール ${item.ruleId.slice(0, 16)}`,
-            field: item.field, local: collisionValue(item.local), remote: collisionValue(item.remote) }))));
-        assetsUi?.render();
-        futureUi?.render();
-        cardSettingsUi?.render();
-        const exists = await measureFinancePhase('startup.discover', () => liveVault.discover());
-        vaultDiscoveryCompleted = true;
-        clearTimeout(slowNotice);
-        finishActivity('OneDrive');
-        updateCloudStatus();
-        if (exists) {
-            const browserContext = browserKeyContext();
-            const local = localStorageSafe();
-            // Fail closed when the manual-lock preference cannot be inspected.
-            const allowAutomatic = !!local && !isManuallyLocked(local);
-            let restored = false;
-            if (allowAutomatic && browserContext) {
-                try {
-                    const checkSharedLock = browserLockEpoch(local);
-                    const remembered = await readBrowserKey(browserContext);
-                    checkSharedLock();
-                    if (remembered) {
-                        $('cloud-live-status').textContent = '自動復号中';
-                        syncCloudGate();
-                        showActivity('OneDriveの保管庫を自動復号中…', 'working');
-                        await liveVault.unlockBrowserKey(remembered);
-                        try {
-                            checkSharedLock();
+        cloudStartupRunning = true;
+        $('cloud-live-status').textContent = '接続中';
+        syncCloudGate();
+        const startedWithLockSequence = lockSequence;
+        vaultDiscoveryCompleted = false;
+        // Connecting is a background task. It must not block navigation or silently redirect.
+        showActivity('OneDriveに接続中…', 'working');
+        const slowNotice = setTimeout(() => {
+            if (!cloudStartupRunning)
+                return;
+            showActivity('OneDriveの接続に時間がかかっています', 'working');
+        }, 12000);
+        try {
+            const client = await measureFinancePhase('startup.auth', () => graphClientWithoutRedirect());
+            const vault = new LiveVault(client, message => { if (liveVault === vault)
+                operationResult(message, 'warn'); });
+            revokeOriginalDownloadUrls();
+            liveVault = vault;
+            const authAccountId = activeMicrosoftAccountId();
+            liveVaultRememberContext = authAccountId ? { clientId: clientIdForTab(), homeAccountId: authAccountId } : null;
+            const resolverVault = liveVault;
+            liveVault.setAssetConflictResolver((collisions, details = []) => resolverVault === liveVault && confirmCloudConflicts('資産設定に同時編集があります', collisions.map((item, i) => ({ label: details[i]?.label ?? item.itemId, field: item.field,
+                local: details[i]?.localValue ?? '変更あり', remote: details[i]?.remoteValue ?? '別端末で変更あり' }))));
+            liveVault.setStatementConflictResolver(collisions => resolverVault === liveVault && confirmCloudConflicts('カード明細に同時編集があります', collisions.map(item => ({ label: `明細 ${item.recordId.slice(0, 12)} / ${item.path.replace(/^record\.statement\./, '')}`,
+                field: item.path.split('.').at(-1) ?? item.path, local: collisionValue(item.local), remote: collisionValue(item.remote) }))));
+            liveVault.setRuleConflictResolver(collisions => resolverVault === liveVault && confirmCloudConflicts('利用先ルール・カテゴリーに同時編集があります', collisions.map(item => ({ label: item.ruleId.startsWith('category:') ? `カテゴリー ${item.ruleId.slice(9)}` : `利用先ルール ${item.ruleId.slice(0, 16)}`,
+                field: item.field, local: collisionValue(item.local), remote: collisionValue(item.remote) }))));
+            assetsUi?.render();
+            futureUi?.render();
+            cardSettingsUi?.render();
+            const exists = await measureFinancePhase('startup.discover', () => liveVault.discover());
+            vaultDiscoveryCompleted = true;
+            clearTimeout(slowNotice);
+            finishActivity('OneDrive');
+            updateCloudStatus();
+            if (exists) {
+                const browserContext = browserKeyContext();
+                const local = localStorageSafe();
+                // Fail closed when the manual-lock preference cannot be inspected.
+                const allowAutomatic = !!local && !isManuallyLocked(local);
+                let restored = false;
+                if (allowAutomatic && browserContext) {
+                    try {
+                        const checkSharedLock = browserLockEpoch(local);
+                        const remembered = await readBrowserKey(browserContext);
+                        checkSharedLock();
+                        if (remembered) {
+                            $('cloud-live-status').textContent = '自動復号中';
+                            syncCloudGate();
+                            showActivity('OneDriveの保管庫を自動復号中…', 'working');
+                            await liveVault.unlockBrowserKey(remembered);
+                            try {
+                                checkSharedLock();
+                            }
+                            catch {
+                                liveVault.lock();
+                                return;
+                            }
+                            if (lockSequence !== startedWithLockSequence || isManuallyLocked(local)) {
+                                liveVault.lock();
+                                return;
+                            }
+                            const restoredRecords = liveVault.records();
+                            appendCloudRecordsKeepingDrafts(restoredRecords);
+                            lastCloudCheckAt = Date.now();
+                            if (!$('assets-page').classList.contains('hidden') || !$('settings-view').classList.contains('hidden'))
+                                assetsUi?.render();
+                            if (!$('settings-view').classList.contains('hidden'))
+                                cardSettingsUi?.render();
+                            void assetsUi?.refreshPayroll();
+                            updateCloudStatus();
+                            if (liveVault.recoveryOnly)
+                                operationResult('保存ロックの復旧と最新データ取得が必要です。', 'warn');
+                            else
+                                operationResult(`このブラウザの保存鍵で自動復号しました（${restoredRecords.length}件）。`);
+                            restored = true;
                         }
-                        catch {
-                            liveVault.lock();
-                            return;
-                        }
-                        if (lockSequence !== startedWithLockSequence || isManuallyLocked(local)) {
-                            liveVault.lock();
-                            return;
-                        }
-                        const restoredRecords = liveVault.records();
-                        appendCloudRecordsKeepingDrafts(restoredRecords);
-                        lastCloudCheckAt = Date.now();
-                        renderRules();
-                        assetsUi?.render();
-                        futureUi?.render();
-                        cardSettingsUi?.render();
-                        void assetsUi?.refreshPayroll();
-                        updateCloudStatus();
-                        if (liveVault.recoveryOnly)
-                            operationResult('保存ロックの復旧と最新データ取得が必要です。', 'warn');
+                    }
+                    catch (error) {
+                        // Only proven generation changes or corrupt local records invalidate a
+                        // remembered key. Network/auth failures must leave it intact.
+                        // Do not delete a key that a different tab may have replaced during this read.
+                        if (error instanceof BrowserKeyGenerationChangedError || error instanceof InvalidRememberedBrowserKeyError)
+                            operationResult('ブラウザの保存鍵を利用できません。パスフレーズで解除してください。', 'warn');
                         else
-                            operationResult(`このブラウザの保存鍵で自動復号しました（${restoredRecords.length}件）。`);
-                        restored = true;
+                            operationResult('ブラウザの自動解除を確認できません。パスフレーズで解除してください。', 'warn');
                     }
                 }
-                catch (error) {
-                    // Only proven generation changes or corrupt local records invalidate a
-                    // remembered key. Network/auth failures must leave it intact.
-                    // Do not delete a key that a different tab may have replaced during this read.
-                    if (error instanceof BrowserKeyGenerationChangedError || error instanceof InvalidRememberedBrowserKeyError)
-                        operationResult('ブラウザの保存鍵を利用できません。パスフレーズで解除してください。', 'warn');
-                    else
-                        operationResult('ブラウザの自動解除を確認できません。パスフレーズで解除してください。', 'warn');
+                await updateBrowserRememberStatus();
+                if (!restored) {
+                    updateCloudStatus();
+                    await askVault('unlock', true);
                 }
             }
-            await updateBrowserRememberStatus();
-            if (!restored) {
+            else {
                 updateCloudStatus();
-                await askVault('unlock', true);
+                operationResult('現在のMicrosoftアカウントのアプリ領域にFinance保管庫が見つかりません。既存データを探している場合は、MicrosoftアカウントとClient IDを確認してください。', 'bad');
             }
         }
-        else {
-            updateCloudStatus();
-            operationResult('現在のMicrosoftアカウントのアプリ領域にFinance保管庫が見つかりません。既存データを探している場合は、MicrosoftアカウントとClient IDを確認してください。', 'bad');
+        catch (error) {
+            finishActivity('OneDrive');
+            recordCloudConnectionFailure(error);
+            const issue = error instanceof GraphError
+                ? error.status === 401 ? 'Microsoftアカウントの再認証が必要です。' : error.status === 403 ? 'OneDriveへのアクセス権限がありません。' :
+                    [429, 500, 502, 503, 504].includes(error.status) ? 'OneDriveに一時的に接続できません。時間をおいて再試行してください。' : error.message
+                : error instanceof Error ? error.message : '接続エラー';
+            updateCloudStatus(`OneDriveに接続してください：${issue}`);
+            showCloudConnectDialog(cloudConnectPrompt());
         }
-    }
-    catch (error) {
-        finishActivity('OneDrive');
-        recordCloudConnectionFailure(error);
-        const issue = error instanceof GraphError
-            ? error.status === 401 ? 'Microsoftアカウントの再認証が必要です。' : error.status === 403 ? 'OneDriveへのアクセス権限がありません。' :
-                [429, 500, 502, 503, 504].includes(error.status) ? 'OneDriveに一時的に接続できません。時間をおいて再試行してください。' : error.message
-            : error instanceof Error ? error.message : '接続エラー';
-        updateCloudStatus(`OneDriveに接続してください：${issue}`);
-        showCloudConnectDialog(cloudConnectPrompt());
-    }
-    finally {
-        clearTimeout(slowNotice);
-        finishActivity('OneDriveの保管庫を自動復号中');
-        cloudStartupRunning = false;
-        if ($('cloud-live-status').textContent === '自動復号中')
-            updateCloudStatus();
-        else
-            syncCloudGate();
-    }
+        finally {
+            clearTimeout(slowNotice);
+            finishActivity('OneDriveの保管庫を自動復号中');
+            cloudStartupRunning = false;
+            if ($('cloud-live-status').textContent === '自動復号中')
+                updateCloudStatus();
+            else
+                syncCloudGate();
+        }
+    });
 }
 async function refreshCloud() {
-    if (cloudStartupRunning || currentModal !== null)
-        throw new Error('保管庫を確認中です。完了後に操作してください。');
-    assertRefreshSafe();
-    if (!liveVault || !vaultDiscoveryCompleted)
-        await startCloud();
-    if (!liveVault || !vaultDiscoveryCompleted)
-        throw new Error('Microsoftアカウントの認証と保管庫の確認を完了してください。');
-    if (!liveVault.exists)
-        throw new Error('このMicrosoftアカウントのアプリ領域に保管庫がありません。接続先アカウントとClient IDを確認してください。新規作成は実行していません。');
-    if (!liveVault.unlocked) {
-        if (!await askVault('unlock'))
-            throw new Error('既存保管庫のロック解除をキャンセルしました。');
-        return;
-    }
-    assertRefreshSafe();
-    cloudRefreshing = true;
-    try {
-        const current = liveVault;
-        const fresh = await current.refresh();
-        // Never overwrite local state if a different vault has been connected.
-        if (current !== liveVault || !current.unlocked)
-            throw new Error('更新中に保管庫が変更されました。');
-        replaceCloudRecords(fresh);
-        // render() already updates visible rules and future screens; assets owns its draw.
-        if (!$('assets-page').classList.contains('hidden'))
-            assetsUi?.render();
-        lastCloudCheckAt = Date.now();
-        void assetsUi?.refreshPayroll();
-        updateCloudStatus('OneDriveから最新の明細を取得しました。');
-    }
-    finally {
-        cloudRefreshing = false;
-    }
+    return traceFinanceOperation('refresh', async () => {
+        if (cloudStartupRunning || currentModal !== null)
+            throw new Error('保管庫を確認中です。完了後に操作してください。');
+        assertRefreshSafe();
+        if (!liveVault || !vaultDiscoveryCompleted)
+            await startCloud();
+        if (!liveVault || !vaultDiscoveryCompleted)
+            throw new Error('Microsoftアカウントの認証と保管庫の確認を完了してください。');
+        if (!liveVault.exists)
+            throw new Error('このMicrosoftアカウントのアプリ領域に保管庫がありません。接続先アカウントとClient IDを確認してください。新規作成は実行していません。');
+        if (!liveVault.unlocked) {
+            if (!await askVault('unlock'))
+                throw new Error('既存保管庫のロック解除をキャンセルしました。');
+            return;
+        }
+        assertRefreshSafe();
+        cloudRefreshing = true;
+        try {
+            const current = liveVault;
+            const fresh = await current.refresh();
+            // Never overwrite local state if a different vault has been connected.
+            if (current !== liveVault || !current.unlocked)
+                throw new Error('更新中に保管庫が変更されました。');
+            replaceCloudRecords(fresh);
+            // Assets also owns the NISA/Payroll controls on the settings page.
+            if (!$('assets-page').classList.contains('hidden') || !$('settings-view').classList.contains('hidden'))
+                assetsUi?.render();
+            if (!$('settings-view').classList.contains('hidden'))
+                cardSettingsUi?.render();
+            lastCloudCheckAt = Date.now();
+            void assetsUi?.refreshPayroll();
+            updateCloudStatus('OneDriveから最新の明細を取得しました。');
+        }
+        finally {
+            cloudRefreshing = false;
+        }
+    });
 }
 async function migrateLegacy() {
-    if (cloudStartupRunning || currentModal !== null)
-        return;
-    if (!liveVault)
-        await startCloud();
-    if (!liveVault)
-        throw new Error('OneDriveへの接続が必要です。');
-    // IndexedDB is accessed ONLY when the user explicitly requests old-data migration.
-    if (!await hasVault())
-        throw new Error('このブラウザには旧IndexedDBの明細がありません。別の端末・URLでは引き継げません。');
-    if (liveVault.exists && !liveVault.unlocked) {
-        if (!await askVault('unlock'))
+    return traceFinanceOperation('migration', async () => {
+        if (cloudStartupRunning || currentModal !== null)
             return;
-    }
-    const valid = confirmationContext();
-    if (!await requestConfirmation({ owner: securityConfirmationOwner, title: '旧データを移行しますか？', message: '旧IndexedDBの明細とPDFを暗号化してOneDriveへ移行します。旧データは削除しません。すでに移行済みの明細IDは上書きしません。', acceptLabel: '移行する' }) || !valid())
-        return;
-    assertRefreshSafe();
-    await askVault('migrate');
+        if (!liveVault)
+            await startCloud();
+        if (!liveVault)
+            throw new Error('OneDriveへの接続が必要です。');
+        // IndexedDB is accessed ONLY when the user explicitly requests old-data migration.
+        if (!await hasVault())
+            throw new Error('このブラウザには旧IndexedDBの明細がありません。別の端末・URLでは引き継げません。');
+        if (liveVault.exists && !liveVault.unlocked) {
+            if (!await askVault('unlock'))
+                return;
+        }
+        const valid = confirmationContext();
+        if (!await requestConfirmation({ owner: securityConfirmationOwner, title: '旧データを移行しますか？', message: '旧IndexedDBの明細とPDFを暗号化してOneDriveへ移行します。旧データは削除しません。すでに移行済みの明細IDは上書きしません。', acceptLabel: '移行する' }) || !valid())
+            return;
+        assertRefreshSafe();
+        await askVault('migrate');
+    });
 }
 /** This flow never removes legacy IndexedDB automatically or during migration. */
 function initLegacyCleanup() {
@@ -1923,8 +1936,10 @@ function showView(view) {
         assetsUi?.render();
         homeUi?.renderFundingHistory();
     }
-    if (view === 'settings')
+    if (view === 'settings') {
+        assetsUi?.render();
         cardSettingsUi?.render();
+    }
     if (view === 'future')
         futureUi?.render();
     if (view === 'summary')
@@ -2061,14 +2076,14 @@ function updateManagerEditState(s) {
         flag.textContent = s.sourceKind === 'csv' && !s.paymentDate ? '引落日未設定' : state === 'review' ? '要確認' : state === 'selection' ? 'カード選択待ち' : s.confirmation === 'unknown' ? '確定状態不明' : state === 'provisional' ? '暫定明細' : isZeroUsage(s) ? '利用なし確認済み' : '照合OK';
     }
 }
-function updateManagerMerchantMetadata(control, row, s) {
+function updateManagerMerchantMetadata(control, row, meta) {
     const secondary = div('manage-merchant-secondary');
-    const category = categoryFor(row, s);
+    const category = meta.category;
     if (category)
         secondary.append(categoryChip(category));
     else
         secondary.append(div('category-chip manage-uncategorized', '未分類'));
-    const currentDisplay = merchantFor(row, s).trim();
+    const currentDisplay = meta.name.trim();
     const originalMerchant = row.merchant.trim();
     if (originalMerchant && currentDisplay !== originalMerchant) {
         const original = div('manage-source-text', `原文：${row.merchant}`);
@@ -2157,7 +2172,9 @@ function renderManager() {
     const matchingRows = activeAnalysisDrilldown ? drilldownRows.get(savedIds.get(s) ?? '') : null;
     const visibleRows = s.rows.map((row, index) => ({ row, index, usedOn: row.usedOn, amount: row.amount }))
         .filter(item => !activeAnalysisDrilldown || matchingRows?.has(item.row.id));
+    const present = merchantPresentation();
     for (const { row } of orderedPreviewRows(visibleRows, manageSort)) {
+        const meta = present(row, s);
         const tr = document.createElement('tr');
         const fields = [
             [row.usedOn, '利用日', (value, input) => {
@@ -2172,7 +2189,7 @@ function renderManager() {
                     row.usedOn = next;
                     markManagerInlineDirty(s);
                 }],
-            [merchantFor(row, s), '利用先', (value, input) => {
+            [meta.name, '利用先', (value, input) => {
                     const requested = value.trim();
                     const defaultDisplay = displayMerchant(row.merchant, s.cardId, rules());
                     const previous = row.merchantOverride;
@@ -2184,7 +2201,7 @@ function renderManager() {
                         return;
                     const control = input.closest('.manage-merchant-control');
                     if (control)
-                        updateManagerMerchantMetadata(control, row, s);
+                        updateManagerMerchantMetadata(control, row, merchantPresentation()(row, s));
                     markManagerInlineDirty(s);
                 }],
             [row.amount.toLocaleString('ja-JP'), '金額', (value, input) => {
@@ -2222,7 +2239,7 @@ function renderManager() {
                 const main = div('manage-merchant-main');
                 main.append(field);
                 cell.append(main);
-                updateManagerMerchantMetadata(cell, row, s);
+                updateManagerMerchantMetadata(cell, row, meta);
                 td.append(cell);
             }
             else
@@ -2465,7 +2482,7 @@ function renderRules() {
     if (!unlocked)
         return;
     fillRuleCategoryOptions();
-    const current = sortedRules(rules());
+    const current = sortedRules(rules()), definitions = categories();
     $('rules-list-count').textContent = `${current.length}件`;
     const list = $('rules-list');
     list.replaceChildren();
@@ -2482,7 +2499,7 @@ function renderRules() {
         const card = rule.cardId ? cardDisplayName(rule.cardId) ?? rule.cardId : '全カード';
         const metaLine = div('rules-item-meta-line');
         metaLine.append(div('rules-item-meta', rule.priority === 100 ? card : `${card} · 優先 ${rule.priority}`));
-        const category = categoryById(rule.categoryId);
+        const category = categoryById(rule.categoryId, definitions);
         if (category)
             metaLine.append(categoryChip(category));
         if (rule.fixedCost && ruleFixedState(rule.fixedCost, ruleToday()) !== 'ended')
@@ -2852,35 +2869,37 @@ async function ensureUnlocked() {
     return askVault(liveVault.exists ? 'unlock' : 'create');
 }
 async function downloadManagedOriginal() {
-    const s = active();
-    const id = s ? savedIds.get(s) : undefined;
-    if (!s || !id || !liveVault?.unlocked) {
-        toast('保存済みのPDF原本を選択してください。');
-        return;
-    }
-    const button = $('manage-original-download');
-    if (button.disabled || filesBusy || cloudRefreshing)
-        return;
-    filesBusy = true;
-    button.disabled = true;
-    const vault = liveVault, epoch = lockSequence;
-    try {
-        const bytes = await vault.original(id);
-        if (epoch !== lockSequence || liveVault !== vault || !vault.unlocked)
+    return traceFinanceOperation('original-read', async () => {
+        const s = active();
+        const id = s ? savedIds.get(s) : undefined;
+        if (!s || !id || !liveVault?.unlocked) {
+            toast('保存済みのPDF原本を選択してください。');
             return;
-        if (!bytes)
-            throw new Error('この明細のPDF原本は保存されていません。');
-        downloadFile(new Uint8Array(bytes).buffer, 'application/pdf', canonicalStatementFilename(s, id));
-        toast('暗号化PDF原本を復号し、統一ファイル名でダウンロードしました。');
-    }
-    catch (error) {
-        if (epoch === lockSequence && liveVault === vault && vault.unlocked)
-            toast(`PDF原本の取得に失敗しました：${error instanceof Error ? error.message : '不明なエラー'}`);
-    }
-    finally {
-        button.disabled = false;
-        filesBusy = false;
-    }
+        }
+        const button = $('manage-original-download');
+        if (button.disabled || filesBusy || cloudRefreshing)
+            return;
+        filesBusy = true;
+        button.disabled = true;
+        const vault = liveVault, epoch = lockSequence;
+        try {
+            const bytes = await vault.original(id);
+            if (epoch !== lockSequence || liveVault !== vault || !vault.unlocked)
+                return;
+            if (!bytes)
+                throw new Error('この明細のPDF原本は保存されていません。');
+            downloadFile(new Uint8Array(bytes).buffer, 'application/pdf', canonicalStatementFilename(s, id));
+            toast('暗号化PDF原本を復号し、統一ファイル名でダウンロードしました。');
+        }
+        catch (error) {
+            if (epoch === lockSequence && liveVault === vault && vault.unlocked)
+                toast(`PDF原本の取得に失敗しました：${error instanceof Error ? error.message : '不明なエラー'}`);
+        }
+        finally {
+            button.disabled = false;
+            filesBusy = false;
+        }
+    });
 }
 /** Restore only the selected saved statement, without writing to OneDrive. */
 async function clearManagerChanges() {
@@ -2971,7 +2990,7 @@ async function resolveManagedYearConflict() {
         const records = await vault.resolveYearConflict(id, year, reviewed);
         if (!valid())
             return;
-        replaceCloudRecords(records);
+        replaceCloudRecords(records, false);
         updateCloudStatus();
         operationResult('年度間の明細競合を解消しました。', 'good');
     }
@@ -2985,66 +3004,68 @@ async function resolveManagedYearConflict() {
     }
 }
 async function saveEditedStatement(s, manual = false) {
-    if (!savedIds.has(s))
-        return;
-    if (!hasUnsavedChanges(s)) {
-        if (manual)
-            operationResult('変更はありません。OneDriveに保存済みです。');
-        return;
-    }
-    if (batchBusy || filesBusy) {
-        if (manual)
-            operationResult('別の保存処理中です。変更は未保存のまま保持しています。', 'working');
-        return;
-    }
-    if (issues(s).length) {
-        updateCloudStatus('変更内容に不備があります。修正してから保存してください。');
-        operationResult('内容に不備があるため、OneDriveへの保存を保留しています。', 'warn');
-        return;
-    }
-    if (!liveVault?.unlocked) {
-        updateCloudStatus('ロック中のため変更は未保存です。');
-        operationResult('保管庫がロック中のため未保存です。', 'warn');
-        return;
-    }
-    batchBusy = true;
-    updateBatchStatus();
-    operationResult('変更内容をOneDriveへ保存中…', 'working');
-    const fingerprint = statementWorkingFingerprint(s);
-    try {
-        const id = savedIds.get(s);
-        await liveVault.saveBatch([{ id, statement: structuredClone(s), source: s.sourceKind === 'pdf' ? pendingSources.get(s) : undefined }]);
-        const mutationWarning = liveVault.takeMutationWarning();
-        if (statementWorkingFingerprint(s) === fingerprint) {
-            savedFingerprints.set(s, fingerprint);
-            dirty.delete(s);
-            pendingSources.delete(s);
-            importStaged.delete(s);
-            if (s.sourceKind === 'pdf')
-                originalSaved.add(s);
-            if (!pending().length)
-                replaceCloudRecords(liveVault.records());
-        }
-        else {
-            // Further edits during an in-flight Save remain in memory until the next click.
-        }
+    return traceFinanceOperation('statement-save', async () => {
+        if (!savedIds.has(s))
+            return;
         if (!hasUnsavedChanges(s)) {
-            updateCloudStatus(mutationWarning ?? '変更をOneDriveに保存しました。');
-            operationResult(mutationWarning ?? '変更内容をOneDriveに保存しました。', mutationWarning ? 'warn' : 'good');
+            if (manual)
+                operationResult('変更はありません。OneDriveに保存済みです。');
+            return;
         }
-        else
-            operationResult('保存中に新しい変更がありました。もう一度保存してください。', 'warn');
-    }
-    catch (error) {
-        const uncertain = error instanceof CloudWriteUncertainError;
-        const result = `${uncertain ? '保存結果を確認できません' : '保存失敗（未保存の変更を保持中）'}：${error instanceof Error ? error.message : '不明なエラー'}`;
-        updateCloudStatus();
-        operationResult(result, uncertain ? 'warn' : 'bad');
-    }
-    finally {
-        batchBusy = false;
-        render();
-    }
+        if (batchBusy || filesBusy) {
+            if (manual)
+                operationResult('別の保存処理中です。変更は未保存のまま保持しています。', 'working');
+            return;
+        }
+        if (issues(s).length) {
+            updateCloudStatus('変更内容に不備があります。修正してから保存してください。');
+            operationResult('内容に不備があるため、OneDriveへの保存を保留しています。', 'warn');
+            return;
+        }
+        if (!liveVault?.unlocked) {
+            updateCloudStatus('ロック中のため変更は未保存です。');
+            operationResult('保管庫がロック中のため未保存です。', 'warn');
+            return;
+        }
+        batchBusy = true;
+        updateBatchStatus();
+        operationResult('変更内容をOneDriveへ保存中…', 'working');
+        const fingerprint = statementWorkingFingerprint(s);
+        try {
+            const id = savedIds.get(s);
+            await liveVault.saveBatch([{ id, statement: structuredClone(s), source: s.sourceKind === 'pdf' ? pendingSources.get(s) : undefined }]);
+            const mutationWarning = liveVault.takeMutationWarning();
+            if (statementWorkingFingerprint(s) === fingerprint) {
+                savedFingerprints.set(s, fingerprint);
+                dirty.delete(s);
+                pendingSources.delete(s);
+                importStaged.delete(s);
+                if (s.sourceKind === 'pdf')
+                    originalSaved.add(s);
+                if (!pending().length)
+                    replaceCloudRecords(liveVault.records(), false);
+            }
+            else {
+                // Further edits during an in-flight Save remain in memory until the next click.
+            }
+            if (!hasUnsavedChanges(s)) {
+                updateCloudStatus(mutationWarning ?? '変更をOneDriveに保存しました。');
+                operationResult(mutationWarning ?? '変更内容をOneDriveに保存しました。', mutationWarning ? 'warn' : 'good');
+            }
+            else
+                operationResult('保存中に新しい変更がありました。もう一度保存してください。', 'warn');
+        }
+        catch (error) {
+            const uncertain = error instanceof CloudWriteUncertainError;
+            const result = `${uncertain ? '保存結果を確認できません' : '保存失敗（未保存の変更を保持中）'}：${error instanceof Error ? error.message : '不明なエラー'}`;
+            updateCloudStatus();
+            operationResult(result, uncertain ? 'warn' : 'bad');
+        }
+        finally {
+            batchBusy = false;
+            render();
+        }
+    });
 }
 function showBatchDetails(items, status) {
     const details = $('batch-outcome-details');
@@ -3068,108 +3089,110 @@ function showPendingBatchResults(results) {
     return '照合時点：' + Object.entries(labels).map(([status, label]) => `${label} ${counts[status]}件`).join('／');
 }
 async function saveAllPending() {
-    if (batchBusy || filesBusy || revisionBusy || liveVault?.hasPendingYearBatch || cloudRefreshing)
-        return;
-    const epoch = lockSequence;
-    let candidates = importBatchPlan().eligible;
-    if (!candidates.length)
-        return;
-    const initialCount = candidates.length;
-    let confirmed = false;
-    batchBusy = true;
-    updateBatchStatus();
-    showBatchDetails([], '');
-    operationResult(`${candidates.length}件の明細をOneDriveへ暗号化保存中…`, 'working');
-    try {
-        if (!await ensureUnlocked()) {
-            if (epoch === lockSequence)
-                operationResult('ロック解除がキャンセルされました。明細は未保存です。', 'warn');
+    return traceFinanceOperation('statement-save', async () => {
+        if (batchBusy || filesBusy || revisionBusy || liveVault?.hasPendingYearBatch || cloudRefreshing)
             return;
-        }
-        if (epoch !== lockSequence)
+        const epoch = lockSequence;
+        let candidates = importBatchPlan().eligible;
+        if (!candidates.length)
             return;
-        const vault = liveVault;
-        // Unlock may reveal saved records that conflict with a previously valid draft.
-        const latest = importBatchPlan().eligible;
-        if (!latest.length) {
-            operationResult('保存可能な明細がありません。取込待ちの内容を確認してください。', 'warn');
-            return;
-        }
-        candidates = latest;
-        const fingerprints = latest.map(s => statementWorkingFingerprint(s));
-        const ids = await vault.saveBatch(latest.map(s => {
-            let id = savedIds.get(s) ?? pendingCloudIds.get(s);
-            if (!id) {
-                id = crypto.randomUUID();
-                pendingCloudIds.set(s, id);
-            }
-            return { id, statement: structuredClone(s), source: s.sourceKind === 'pdf' ? pendingSources.get(s) : undefined, replace: savedIds.has(s) && importStaged.has(s) };
-        }), (phase, done, total) => { if (epoch === lockSequence && liveVault === vault && vault.unlocked)
-            showActivity(`明細を保存中… ${phase} ${done}/${total}`, 'working'); });
-        if (epoch !== lockSequence || liveVault !== vault || !vault.unlocked)
-            return;
-        confirmed = true;
-        for (const [index, s] of latest.entries()) {
-            savedIds.set(s, ids[index]);
-            if (statementWorkingFingerprint(s) === fingerprints[index]) {
-                savedFingerprints.set(s, fingerprints[index]);
-                dirty.delete(s);
-                pendingSources.delete(s);
-                importStaged.delete(s);
-                if (s.sourceKind === 'pdf')
-                    originalSaved.add(s);
-            }
-        }
-        if (!pending().length)
-            replaceCloudRecords(vault.records());
-        let mutationWarning = vault.takeMutationWarning();
-        showActivity('保存結果を反映中…', 'working');
+        const initialCount = candidates.length;
+        let confirmed = false;
+        batchBusy = true;
+        updateBatchStatus();
+        showBatchDetails([], '');
+        operationResult(`${candidates.length}件の明細をOneDriveへ暗号化保存中…`, 'working');
         try {
-            await refreshVaultControls();
-        }
-        catch {
-            mutationWarning = mutationWarning ?? 'OneDriveへの保存は完了しましたが、画面の更新に失敗しました。最新データを取得してください。';
-        }
-        if (epoch !== lockSequence || liveVault !== vault || !vault.unlocked)
-            return;
-        const remaining = importQueue().filter(hasUnsavedChanges).length + failedImports.length;
-        const message = `${latest.length}件の明細をOneDriveに暗号化保存しました。${remaining ? ` ${remaining}件は取込待ちに残っています。` : ''}`;
-        operationResult(mutationWarning ? `${message} ${mutationWarning}` : message, mutationWarning || remaining ? 'warn' : 'good');
-    }
-    catch (error) {
-        const uncertain = error instanceof CloudWriteUncertainError;
-        if (epoch !== lockSequence)
-            return;
-        if (confirmed) {
-            operationResult(`${candidates.length}件の保存は確認済みですが、画面の更新に失敗しました。最新データを確認してください。`, 'warn');
-            return;
-        }
-        const message = `${uncertain ? '一括保存結果を確認できません' : '一括保存に失敗しました'}：${error instanceof Error ? error.message : '不明なエラー'}`;
-        showBatchDetails(candidates, uncertain ? '保存結果未確認・照合が必要' : '今回の保存失敗・取込待ちを保持');
-        let resultMessage = `${candidates.length}件：${message}。取込待ちを保持しています。`;
-        const vault = liveVault;
-        if (uncertain && vault?.hasPendingYearBatch) {
+            if (!await ensureUnlocked()) {
+                if (epoch === lockSequence)
+                    operationResult('ロック解除がキャンセルされました。明細は未保存です。', 'warn');
+                return;
+            }
+            if (epoch !== lockSequence)
+                return;
+            const vault = liveVault;
+            // Unlock may reveal saved records that conflict with a previously valid draft.
+            const latest = importBatchPlan().eligible;
+            if (!latest.length) {
+                operationResult('保存可能な明細がありません。取込待ちの内容を確認してください。', 'warn');
+                return;
+            }
+            candidates = latest;
+            const fingerprints = latest.map(s => statementWorkingFingerprint(s));
+            const ids = await vault.saveBatch(latest.map(s => {
+                let id = savedIds.get(s) ?? pendingCloudIds.get(s);
+                if (!id) {
+                    id = crypto.randomUUID();
+                    pendingCloudIds.set(s, id);
+                }
+                return { id, statement: structuredClone(s), source: s.sourceKind === 'pdf' ? pendingSources.get(s) : undefined, replace: savedIds.has(s) && importStaged.has(s) };
+            }), (phase, done, total) => { if (epoch === lockSequence && liveVault === vault && vault.unlocked)
+                showActivity(`明細を保存中… ${phase} ${done}/${total}`, 'working'); });
+            if (epoch !== lockSequence || liveVault !== vault || !vault.unlocked)
+                return;
+            confirmed = true;
+            for (const [index, s] of latest.entries()) {
+                savedIds.set(s, ids[index]);
+                if (statementWorkingFingerprint(s) === fingerprints[index]) {
+                    savedFingerprints.set(s, fingerprints[index]);
+                    dirty.delete(s);
+                    pendingSources.delete(s);
+                    importStaged.delete(s);
+                    if (s.sourceKind === 'pdf')
+                        originalSaved.add(s);
+                }
+            }
+            if (!pending().length)
+                replaceCloudRecords(vault.records(), false);
+            let mutationWarning = vault.takeMutationWarning();
+            showActivity('保存結果を反映中…', 'working');
             try {
-                const results = await vault.inspectPendingYearBatch();
-                if (epoch !== lockSequence || liveVault !== vault || !vault.unlocked)
-                    return;
-                resultMessage = showPendingBatchResults(results);
+                await refreshVaultControls();
             }
             catch {
-                if (epoch !== lockSequence || liveVault !== vault || !vault.unlocked)
-                    return; /* Keep unknown results on read failure. */
+                mutationWarning = mutationWarning ?? 'OneDriveへの保存は完了しましたが、画面の更新に失敗しました。最新データを取得してください。';
             }
+            if (epoch !== lockSequence || liveVault !== vault || !vault.unlocked)
+                return;
+            const remaining = importQueue().filter(hasUnsavedChanges).length + failedImports.length;
+            const message = `${latest.length}件の明細をOneDriveに暗号化保存しました。${remaining ? ` ${remaining}件は取込待ちに残っています。` : ''}`;
+            operationResult(mutationWarning ? `${message} ${mutationWarning}` : message, mutationWarning || remaining ? 'warn' : 'good');
         }
-        updateCloudStatus();
-        operationResult(resultMessage, uncertain ? 'warn' : 'bad');
-    }
-    finally {
-        batchBusy = false;
-        finishActivity('明細を保存中');
-        finishActivity('保存結果を反映中');
-        finishActivity(`${initialCount}件の明細をOneDriveへ暗号化保存中`);
-        render();
-    }
+        catch (error) {
+            const uncertain = error instanceof CloudWriteUncertainError;
+            if (epoch !== lockSequence)
+                return;
+            if (confirmed) {
+                operationResult(`${candidates.length}件の保存は確認済みですが、画面の更新に失敗しました。最新データを確認してください。`, 'warn');
+                return;
+            }
+            const message = `${uncertain ? '一括保存結果を確認できません' : '一括保存に失敗しました'}：${error instanceof Error ? error.message : '不明なエラー'}`;
+            showBatchDetails(candidates, uncertain ? '保存結果未確認・照合が必要' : '今回の保存失敗・取込待ちを保持');
+            let resultMessage = `${candidates.length}件：${message}。取込待ちを保持しています。`;
+            const vault = liveVault;
+            if (uncertain && vault?.hasPendingYearBatch) {
+                try {
+                    const results = await vault.inspectPendingYearBatch();
+                    if (epoch !== lockSequence || liveVault !== vault || !vault.unlocked)
+                        return;
+                    resultMessage = showPendingBatchResults(results);
+                }
+                catch {
+                    if (epoch !== lockSequence || liveVault !== vault || !vault.unlocked)
+                        return; /* Keep unknown results on read failure. */
+                }
+            }
+            updateCloudStatus();
+            operationResult(resultMessage, uncertain ? 'warn' : 'bad');
+        }
+        finally {
+            batchBusy = false;
+            finishActivity('明細を保存中');
+            finishActivity('保存結果を反映中');
+            finishActivity(`${initialCount}件の明細をOneDriveへ暗号化保存中`);
+            render();
+        }
+    });
 }
 /** Display actual old/new rows before a month is replaced, regardless of import source. */
 function confirmStatementRevision(old, newStatement, diff) {
@@ -4010,10 +4033,10 @@ function init() {
             void updateBrowserRememberStatus();
             replaceCloudRecords(vault.records());
             lastCloudCheckAt = Date.now();
-            renderRules();
-            assetsUi?.render();
-            futureUi?.render();
-            cardSettingsUi?.render();
+            if (!$('assets-page').classList.contains('hidden') || !$('settings-view').classList.contains('hidden'))
+                assetsUi?.render();
+            if (!$('settings-view').classList.contains('hidden'))
+                cardSettingsUi?.render();
             updateCloudStatus('OneDrive：新しい暗号化パスフレーズに更新しました。');
             operationResult('暗号化パスフレーズを変更しました。すべての有効データを新しい鍵で再暗号化しました。');
         },
@@ -4469,10 +4492,10 @@ function init() {
                 const unlockedRecords = liveVault.records();
                 appendCloudRecordsKeepingDrafts(unlockedRecords);
                 lastCloudCheckAt = Date.now();
-                renderRules();
-                assetsUi?.render();
-                futureUi?.render();
-                cardSettingsUi?.render();
+                if (!$('assets-page').classList.contains('hidden') || !$('settings-view').classList.contains('hidden'))
+                    assetsUi?.render();
+                if (!$('settings-view').classList.contains('hidden'))
+                    cardSettingsUi?.render();
                 void assetsUi?.refreshPayroll();
                 updateCloudStatus();
                 await refreshVaultControls();

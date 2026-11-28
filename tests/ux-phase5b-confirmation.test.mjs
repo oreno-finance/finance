@@ -1,3 +1,4 @@
+import {traceFinanceOperation} from '../dist/src/cloud/performance-diagnostics.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -13,7 +14,7 @@ function harness(code,extra={}){
     if(!nodes.has(id))nodes.set(id,{open:true,value:'',textContent:'',classList:{contains:()=>true},close(){this.open=false;}});
     return nodes.get(id);
   };
-  const env={JSON,structuredClone,Error,Map,Set,WeakMap,Array,$,batchBusy:false,filesBusy:false,revisionBusy:false,rulesBusy:false,
+  const env={traceFinanceOperation,JSON,structuredClone,Error,Map,Set,WeakMap,Array,$,batchBusy:false,filesBusy:false,revisionBusy:false,rulesBusy:false,
     lockSequence:0,ordinaryConfirmationOwner:{},confirmationPending:()=>accept!==null,
     requestConfirmation(options){prompts.push(options);return new Promise(resolve=>{accept=resolve;});},
     render(){},renderRules(){},updateCloudStatus(){},operationResult(){},showActivity(){},toast(message){notices.push(message);},

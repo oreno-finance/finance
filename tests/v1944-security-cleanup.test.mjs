@@ -118,7 +118,7 @@ test('old unversioned folders are removable only after activating a versioned va
   assert.ok(await client.readFinanceIndex(),'index is not an eligible legacy cleanup target');
 });
 
-test('probe download caps bytes even if Content-Length is missing or wrong',async()=>{
+test('encrypted download caps bytes even if Content-Length is missing or wrong',async()=>{
   const items=new Map();
   const fetcher=async(url)=>{
     if(url==='https://download.test/probe')return new Response(new ReadableStream({start(controller){controller.enqueue(new Uint8Array(24001));controller.close();}}),{status:200,headers:{'Content-Length':'1'}});
@@ -126,8 +126,8 @@ test('probe download caps bytes even if Content-Length is missing or wrong',asyn
   };
   const client=new OneDriveTestClient('token',fetcher);
   client.appFolderId=async()=> 'someid';
-  client.graph=async()=>new Response(JSON.stringify({id:'probe', '@microsoft.graph.downloadUrl':'https://download.test/probe'}),{status:200});
-  await assert.rejects(client.downloadEncryptedProbe(),/サイズ上限/);
+  client.graph=async()=>new Response(JSON.stringify({id:'probe',eTag:'e1', '@microsoft.graph.downloadUrl':'https://download.test/probe'}),{status:200});
+  await assert.rejects(client.downloadItemInfo('probe',24000),/サイズ上限/);
   assert.equal(items.size,0);
 });
 test('settings and lock notification controls are present in source',()=>{

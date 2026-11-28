@@ -17,16 +17,10 @@
 .settings-view .assets-payroll-layout>form .assets-operation-status{margin:0!important;line-height:1.45}
 .settings-view .assets-payroll-layout>form .assets-payroll-actions{margin:0}
 .settings-view .assets-payroll-history-card .assets-payroll-summary-body{padding-bottom:4px;border:0!important}
-
-/* The password fields must use the whole width of their respective cards. */
-.settings-view .cloud-dev-test .cloud-dev-content,
-.settings-view .cloud-dev-test .password-control,
 .settings-view .cloud-troubleshooting .cloud-tool-diagnostic>.password-control{
   width:100%;max-width:none!important;min-width:0;
 }
-.settings-view .cloud-dev-test .cloud-password-control input,
-.settings-view .cloud-troubleshooting #cloud-diagnostic-secret,
-.settings-view .cloud-dev-test #cloud-passphrase{
+.settings-view .cloud-troubleshooting #cloud-diagnostic-secret{
   width:100%;max-width:none!important;min-width:0;
 }
 .settings-view .cloud-troubleshooting #cloud-diagnostic-copy{margin-top:0!important;align-self:center}

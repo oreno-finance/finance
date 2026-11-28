@@ -1,3 +1,4 @@
+import { traceFinanceOperation } from '../cloud/performance-diagnostics.js';
 import {requestConfirmation,confirmationPending,cancelConfirmation} from './modal.js';
 import {localDay} from '../cloud/asset-projection.js';
 import {DATA_STATUS,financialStatusClass,formatYen as sharedYen,formatMonth,formatDateTime,formatDate} from './formatters.js';
@@ -72,10 +73,11 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
   const active=()=>deps.vault()?.unlocked===true;
   function reset():void {++request;cancelConfirmation(confirmationOwner);selected=today();archiveYear=selected.slice(0,4);loadedPeriod='';archive=null;periods=[];busy=false;saving=false;message='';draft='';comparison='unchecked';++comparisonRequest;loadFailed=false;draftConflict=false;chosenRevision=null;drafts.clear();container.replaceChildren();}
   async function fetch():Promise<void>{
+    return traceFinanceOperation('report-read',async()=>{
     const vault=deps.vault();if(!vault?.unlocked)return;
     const id=++request;busy=true;message='';loadFailed=false;showActivity('月次レポートを読み込み中…','working');render();
     try{
-      const [list,document]=await Promise.all([vault.listArchivedMonths(),vault.loadArchivedReport(selected)]);
+      const [list,document]=await vault.loadArchivedReports(selected);
       if(id!==request)return;
       periods=list;archive=document;loadedPeriod=selected;
       if(drafts.get(selected)?.note===(document?.current.note??''))drafts.delete(selected);
@@ -86,8 +88,10 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
       message='';
     }catch(error){if(id!==request)return;loadedPeriod=selected;loadFailed=true;archive=null;periods=[];message=`取得失敗：${error instanceof Error?error.message:'レポートを取得できませんでした。'}`;}
     finally{if(id===request){busy=false;finishActivity('月次レポート');if(loadFailed)showActivity(message,'bad');render();if(!loadFailed&&archive)void compareSource();}}
+      });
   }
   async function save(noteOnly=false):Promise<void>{
+    return traceFinanceOperation('report-save',async()=>{
     const vault=deps.vault();if(!vault?.unlocked||busy||loadFailed||draftConflict||loadedPeriod!==selected)return;
     const id=++request;let saved=false;busy=true;saving=true;message='';showActivity('月次レポートを保存中…','working');render();
     try{
@@ -106,6 +110,7 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
       saved=true;message='';showActivity(noteOnly?'メモを保存しました。':'月次レポートを保存しました。','good');
     }catch(error){if(id!==request)return;if(!noteOnly&&archive)comparison='unavailable';message=`${error instanceof CloudWriteUncertainError?'保存結果未確認':'保存失敗'}：${error instanceof Error?error.message:'保存できませんでした。'}`;showActivity(message,'bad');}
     finally{if(id===request){busy=false;saving=false;render();if(saved&&archive)void compareSource();}}
+      });
   }
   async function compareSource():Promise<void>{
     const id=request,job=++comparisonRequest,vault=deps.vault(),revision=archive?.current,period=selected;

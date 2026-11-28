@@ -95,10 +95,6 @@
 .settings-view .cloud-maintenance-body>.field-label{margin:5px 0 0}
 .settings-view .cloud-maintenance-body>.password-control,
 .settings-view .cloud-maintenance-body>.cloud-diagnostic-report{width:100%}
-.settings-view .cloud-dev-test{margin-top:13px;min-width:0}
-.settings-view .cloud-dev-test>.panel-heading{margin-bottom:13px}
-.settings-view .cloud-dev-test .cloud-dev-content{min-width:0}
-.settings-view .cloud-dev-test .cloud-buttons{flex-wrap:wrap}
 
 /* Sorting is an operation on the visible rows, never on their saved order. */
 .manage-editor .manage-sort-button{
