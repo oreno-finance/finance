@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {emptyAssets,validateAssets,mergeAssets,detectAssetsEditCollisions,describeAssetsEditCollisions} from '../dist/src/cloud/assets.js';
 import {originalPaymentTerms,appendPaymentChange,paymentTermsOn,recurringForCalculation,fixedCostsForCalculation,nextContractPayment} from '../dist/src/fixed-costs/payment-history.js';
 import {recurringInMonth} from '../dist/src/cloud/recurring-schedule.js';
-import {fixedCostOccurrences} from '../dist/src/fixed-costs/contracts.js';
+import {fixedCostOccurrences,changeFixedCostState} from '../dist/src/fixed-costs/contracts.js';
 import {monthlyReport} from '../dist/src/summary/monthly-summary.js';
 import {forecastAssets} from '../dist/src/cloud/asset-projection.js';
 import {forecastAccounts} from '../dist/src/home/account-events.js';
@@ -141,4 +141,16 @@ test('実際のLiveVaultの暗号化保存・再読込・旧編集APIで支払�
  const c=new LiveVault(graph);await c.unlock(secret);assert.equal(c.assetSettings().recurring[0].name,'契約例の編集');
  assert.deepEqual(c.assetSettings().recurring[0].paymentHistory,changed.recurring[0].paymentHistory);
  assert.equal(c.assetSettings().snapshots.length,1);
+});
+
+
+test('M03: 銀行→カード→現金の支払履歴に対する停止・再開は境界日と未請求分を維持する',()=>{
+  const item=change(change(bank,cardTerms,'2026-10-01'),cashTerms,'2026-12-01');
+  const paused={...item,...changeFixedCostState(item,'paused','2026-10-05')};
+  const resumed={...paused,...changeFixedCostState(paused,'active','2026-12-05')};
+  const a=doc([resumed]);
+  assert.deepEqual(resumed.paymentHistory,item.paymentHistory);
+  assert.equal(movements(a,'2026-09')[0].entry.amount,1000);
+  assert.deepEqual(estimatedCardFixedBills({...a,cardDebitAccounts:{'smbc-nl':'rakuten-bank'},cardPreferences:{'smbc-nl':{payment:{monthOffset:1,day:27}}}},[],'2026-11-01','2026-12-31').map(x=>[x.paymentDate,x.amount]),[['2026-11-27',1000]]);
+  assert.equal(cash(a,'2026-12')[0].date,'2026-12-05');
 });

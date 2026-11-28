@@ -28,8 +28,9 @@ test('planned one-off movement is flagged as a possible cause of an apparent mis
   d.oneTime=[{id:'once-001',date:'2026-11-06',name:'予定の引落',kind:'expense',amount:3000,
     status:'planned',fromAccountId:'rakuten-bank',toAccountId:null}];
   const r=recon(d);
-  assert.equal(r.predicted,47000);assert.equal(r.difference,-4000);
-  assert.equal(r.provisionalEntries,1);
+  assert.equal(r.predicted,50000);assert.equal(r.difference,-7000);
+  assert.equal(r.provisionalEntries,1);assert.equal(r.provisionalDelta,-3000);
+  assert.equal(r.predicted+r.provisionalDelta,47000);
 });
 test('a confirmed change may match the expected value exactly',()=>{
   const d=fixture();d.snapshots[1].balance=50000;

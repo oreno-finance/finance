@@ -96,5 +96,20 @@ test('Payroll controls live in app settings and auto refresh is initiated after 
   assert.ok(!html.includes('id="assets-payroll-months"'));
   assert.match(main,/await liveVault\.unlock\(pass\)[\s\S]*?void assetsUi\?\.refreshPayroll\(\)/);
   assert.match(code,/window\.setInterval\(\(\)=>\{if\(!document\.hidden\)void refreshPayroll\(\);\},10\*60\*1000\)/);
-  assert.match(code,/if\(action!==undefined\)await vault\.setPayrollAutoPassphrase\(action\)/);
+  assert.match(code,/if\(action!==undefined\)\{await vault\.setPayrollAutoPassphrase\(action,saved\);guard\(\)/);
+});
+
+test('H302: live credential checks see remote revocation and stale writes cannot restore it',async()=>{
+  const store=new Map(),a=new LiveVault(new FakeGraph(store)),b=new LiveVault(new FakeGraph(store));
+  await a.create(financeSecret);await a.setPayrollAutoPassphrase(payrollSecret);await b.unlock(financeSecret);
+  const guard=b.payrollOperationGuard();assert.equal(await b.readPayrollCredential(),payrollSecret);
+  await a.setPayrollAutoPassphrase(null);
+  assert.equal(await b.readPayrollCredential(),null);
+  const before=structuredClone([...store]);
+  await assert.rejects(b.setPayrollAutoPassphrase(changedSecret,payrollSecret),/連携設定が変更/);
+  assert.deepEqual([...store],before);
+  b.lock();await b.unlock(financeSecret);assert.throws(guard,/保管庫が変更/);
+  assert.equal(await b.readPayrollCredential(),null);
+  await a.setPayrollAutoPassphrase(changedSecret);
+  assert.equal(await b.readPayrollCredential(),changedSecret);
 });

@@ -73,11 +73,11 @@ test('Payroll UI credential actions: saved password reused => no cloud settings 
 test('Payroll manual submit uses saved credential and keeps fetched income after settings-write failure',()=>{
   const code=source('src/ui/assets-settings.ts');
   assert.match(code,/\$\<HTMLFormElement\>\('assets-payroll-connect'\)\.addEventListener\('submit',event=>\{event\.preventDefault\(\);void syncPayroll\(\);\}\)/);
-  assert.match(code,/const secret=entered\|\|\(\(payrollSession&&payrollOwner===vault\)\?'':saved\?\?''\)/);
+  assert.match(code,/const secret=entered\|\|saved!/);
   assert.match(code,/const action=payrollPassphraseUpdate\(entered,saved\)/);
-  assert.match(code,/if\(action!==undefined\)await vault\.setPayrollAutoPassphrase\(action\)/);
-  assert.match(code,/payrollSession=session;payrollOwner=vault;payrollIncome=items;payrollSynced=true;payrollSyncedAt=Date\.now\(\);/);
-  assert.match(code,/catch\(error\)\{credentialError=error;\}/);
+  assert.match(code,/if\(action!==undefined\)\{await vault\.setPayrollAutoPassphrase\(action,saved\);guard\(\)/);
+  assert.match(code,/payrollSession=credentialError===undefined\?session:null;payrollOwner=vault;payrollIncome=items;payrollSynced=true;payrollSyncedAt=Date\.now\(\);/);
+  assert.match(code,/catch\(error\)\{\s*guard\(\);credentialError=error;/);
   assert.match(code,/取得済みの給与情報は維持しています/);
 });
 

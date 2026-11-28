@@ -1,10 +1,10 @@
 /** P1-C: read-only detection of card-paid recurring charges.
- * Payment month is the ONLY period axis. A suggestion never changes household cashflow. */
-import { CARDS } from '../models/types.js';
+ * Contract detection uses usage cycles; payment-month cashflow is unchanged. */
 import { displayMerchant, normalizeMerchant, fixedRuleKey } from '../cloud/merchant-rules.js';
 import { cardRecurringKey, nisaRuleOnDay } from '../cloud/assets.js';
 import { contractMerchantKeys, contractPaymentHistory, paymentTermsOn } from '../fixed-costs/payment-history.js';
-import { importErrors } from '../importers/batch-policy.js';
+import { confirmedRecords } from '../importers/batch-policy.js';
+import { CARDS } from "../models/types.js";
 const periodNumber = (p) => Number(p.slice(0, 4)) * 12 + Number(p.slice(5, 7)) - 1;
 const validDate = (d) => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(`${d}T00:00:00Z`)) && new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) === d;
 const close = (a, b) => Math.abs(a - b) <= Math.max(100, Math.round(Math.min(a, b) * 0.08));
@@ -15,26 +15,16 @@ const todayPeriod = () => { const d = new Date(); return `${d.getFullYear()}-${S
 function eligibleCardChargeGroups(source, asOf, allowFuturePayment = false) {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(asOf))
         throw new Error('検出対象の年月が不正です。');
-    const permittedCards = new Set(CARDS.map(item => item.id));
-    const duplicate = new Map();
-    for (const { statement: s } of source.records) {
-        if (!s.cardId || !s.billingMonth)
-            continue;
-        const id = `${s.cardId}|${s.billingMonth}`;
-        duplicate.set(id, (duplicate.get(id) ?? 0) + 1);
-    }
     const groups = new Map();
-    for (const record of source.records) {
+    for (const record of confirmedRecords(source.records)) {
         const s = record.statement;
-        if (!s.cardId || !permittedCards.has(s.cardId) || s.confirmation !== 'confirmed' || !validDate(s.paymentDate) ||
-            !s.billingMonth || duplicate.get(`${s.cardId}|${s.billingMonth}`) !== 1 ||
-            importErrors(s, s.sourceKind !== 'pdf' || !!record.originalId).length)
+        if (!s.cardId || !validDate(s.paymentDate))
             continue;
         const period = s.paymentDate.slice(0, 7);
         if ((!allowFuturePayment && period > asOf) || periodNumber(asOf) - periodNumber(period) > 37)
             continue;
         for (const row of s.rows) {
-            if (!Number.isSafeInteger(row.amount) || row.amount === 0 || (!allowFuturePayment && row.amount < 0) || !validDate(row.usedOn))
+            if (!Number.isSafeInteger(row.amount) || row.amount === 0 || !validDate(row.usedOn))
                 continue;
             const nisa = nisaRuleOnDay(source.assets, row.usedOn);
             if (nisa?.enabled && nisa.cardId === s.cardId && normalizeMerchant(row.merchant).includes(normalizeMerchant(nisa.merchantContains)))
@@ -63,7 +53,7 @@ export function latestRegisteredCardCharges(source, asOf = todayPeriod()) {
     for (const [key, group] of eligibleCardChargeGroups(source, asOf)) {
         const month = group.values.reduce((latest, item) => item.period > latest ? item.period : latest, '');
         const latest = group.values.filter(item => item.period === month);
-        result.set(key, latest.length === 1 ? { month, amount: latest[0].amount } : null);
+        result.set(key, latest.length === 1 && latest[0].amount > 0 ? { month, amount: latest[0].amount } : null);
     }
     return result;
 }
@@ -96,21 +86,24 @@ export function contractCardEvidence(source, today) {
 export function latestContractCardCharge(observations) {
     const month = observations.reduce((latest, x) => x.period > latest ? x.period : latest, '');
     const latest = observations.filter(x => x.period === month);
-    return latest.length === 1 ? { month, amount: latest[0].amount } : null;
+    return latest.length === 1 && latest[0].amount > 0 ? { month, amount: latest[0].amount } : null;
 }
 /** Detection accepts only valid, confirmed, uniquely-billed statements. */
 export function detectCardSubscriptions(source, asOf = todayPeriod()) {
     const groups = eligibleCardChargeGroups(source, asOf);
     const results = [];
     for (const [key, group] of groups) {
-        // Multiple charges on the same card / merchant / payment month are ambiguous.
+        // A contract cycle follows the original usage date, not the debit month.
         const byMonth = new Map();
         for (const item of group.values) {
-            const values = byMonth.get(item.period) ?? [];
-            values.push(item);
-            byMonth.set(item.period, values);
+            const period = item.usedOn.slice(0, 7);
+            if (period > asOf)
+                continue;
+            const values = byMonth.get(period) ?? [];
+            values.push({ ...item, period });
+            byMonth.set(period, values);
         }
-        const distinct = [...byMonth.values()].filter(items => items.length === 1).map(items => items[0]).sort((a, b) => a.period.localeCompare(b.period));
+        const distinct = [...byMonth.values()].filter(items => items.length === 1 && items[0].amount > 0).map(items => items[0]).sort((a, b) => a.period.localeCompare(b.period));
         if (distinct.length < 2)
             continue;
         let winner = null;
@@ -138,7 +131,7 @@ export function detectCardSubscriptions(source, asOf = todayPeriod()) {
             if (!winner) {
                 for (let i = 1; i < closeRows.length; i++) {
                     const a = closeRows[i - 1], b = closeRows[i];
-                    if (periodNumber(b.period) - periodNumber(a.period) !== 12 || periodNumber(asOf) - periodNumber(b.period) > 14)
+                    if (periodNumber(b.period) - periodNumber(a.period) !== 12 || periodNumber(asOf) - periodNumber(b.period) > 14 || [a, b].some(x => group.values.filter(v => v.usedOn.slice(0, 4) === x.usedOn.slice(0, 4) && v.usedOn.slice(0, 7) <= asOf).length !== 1))
                         continue;
                     winner = { frequency: 'yearly', values: [a, b] };
                 }

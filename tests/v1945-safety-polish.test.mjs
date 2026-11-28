@@ -68,6 +68,7 @@ class Node {
   setAttribute(k,v){this.attrs[k]=v;}
   addEventListener(k,callback){this.handlers[k]=callback;}
   querySelectorAll(){return [];}
+  querySelector(selector){return walk(this).find(n=>selector.startsWith('.')&&n.className.split(/\s+/).includes(selector.slice(1)))??null;}
   get childNodes(){return this.children;}
 }
 const later=()=>{let resolve;const promise=new Promise(ok=>resolve=ok);return {promise,resolve};};
@@ -123,4 +124,30 @@ test('saving locks its target month and reset discards any late UI response',asy
     assert.equal(ui.isBusy(),false);
     assert.deepEqual(root.children,[],'a stale save must not reinsert private report content after reset');
   }finally{globalThis.document=original;}
+});
+
+test('L303: failed comparison is visible and preserves the saved report',async()=>{
+ const {reportSnapshot,snapshotHash}=await import('../dist/src/reports/monthly-report.js');
+ const original=globalThis.document,originalOption=globalThis.Option,root=new Node();
+ globalThis.Option=class extends Node{constructor(text,value){super('option');this.textContent=text;this.value=value;}};
+ globalThis.document={getElementById:id=>id==='reports-content'?root:null,createElement:tag=>new Node(tag)};
+ const src={records:[],assets:emptyAssets(),rules:[],categories:[],currentPeriod:'2026-10',payroll:{ready:false,syncedAt:null,entries:[]}};
+ const snapshot=reportSnapshot('2026-10',src),hash=await snapshotHash(snapshot);
+ const archive={current:{id:'fixture',snapshot,sourceHash:hash,note:'saved note',savedAt:'2026-10-20T00:00:00Z'},history:[]};
+ let writes=0,memoWrites=0;const vault={unlocked:true,listArchivedMonths:async()=>[],loadArchivedReport:async()=>archive,saveArchivedReport:async()=>{writes++;return archive;},saveArchivedReportNote:async(period,note,revision)=>{assert.equal(period,'2026-10');assert.equal(note,'saved note');assert.equal(revision,'fixture');memoWrites++;return archive;}};
+ try{
+  const ui=initMonthlyReports({source:()=>{throw new Error('synthetic calculation failure');},vault:()=>vault,openMonth:()=>{}});
+  ui.openPeriod('2026-10');ui.render();
+  await Promise.resolve();await Promise.resolve();await Promise.resolve();await Promise.resolve();
+  const notice=root.querySelector('.reports-source-changed');assert.ok(notice);assert.equal(notice.hidden,false);
+  assert.match(notice.textContent,/一致を確認できません/);
+  assert.equal(walk(root).find(n=>n.tag==='textarea').value,'saved note');
+  walk(root).find(n=>n.tag==='button'&&n.textContent==='レポートを更新').handlers.click();
+  await Promise.resolve();await Promise.resolve();
+  assert.equal(writes,0);assert.equal(ui.isBusy(),false);
+  assert.equal(walk(root).find(n=>n.tag==='textarea').value,'saved note');
+  const memoOnly=root.querySelector('.reports-note-only');assert.equal(memoOnly.hidden,false);memoOnly.handlers.click();
+  await Promise.resolve();await Promise.resolve();await Promise.resolve();assert.equal(memoWrites,1);assert.equal(writes,0);
+  ui.reset();
+ }finally{globalThis.document=original;globalThis.Option=originalOption;}
 });

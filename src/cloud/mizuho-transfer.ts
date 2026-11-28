@@ -1,6 +1,6 @@
 /** Optional, read-only prediction of transfers from Rakuten Bank to Mizuho Bank.
  * A forecast is never marked completed and never written as a recurring entry. */
-import { DEFAULT_MIZUHO_PLAN, type AssetsDocument, type MizuhoTransferPlan, type OneTimeEntry } from './assets.js';
+import { cardDebitAccountOnDay, DEFAULT_MIZUHO_PLAN, type AssetsDocument, type MizuhoTransferPlan, type OneTimeEntry } from './assets.js';
 import { recurringOccursOn } from './recurring-schedule.js';
 export interface MizuhoBill {cardId:string; paymentDate:string|null; amount:number}
 export interface MizuhoPlannedTransfer {date:string; paymentDate:string|null; amount:number; cardId:string}
@@ -11,9 +11,9 @@ export function estimateMizuhoTransferAmount(bill:number,extraForSmallBills=true
   if(!Number.isSafeInteger(amount))throw Error('送金予定額が大きすぎます。');
   return amount;
 }
-export function mizuhoTransferForBill(bill:MizuhoBill,assets:Pick<AssetsDocument,'mizuhoTransferPlan'|'cardDebitAccounts'|'recurring'|'oneTime'>):MizuhoPlannedTransfer|null {
+export function mizuhoTransferForBill(bill:MizuhoBill,assets:Pick<AssetsDocument,'mizuhoTransferPlan'|'cardDebitAccounts'|'cardDebitAccountHistory'|'recurring'|'oneTime'>):MizuhoPlannedTransfer|null {
   const plan: MizuhoTransferPlan=assets.mizuhoTransferPlan??DEFAULT_MIZUHO_PLAN;
-  if(!plan.enabled||bill.cardId!=='rakuten-mizuho'||assets.cardDebitAccounts?.[bill.cardId]!=='mizuho-bank'||bill.amount<=0||!bill.paymentDate)return null;
+  if(!plan.enabled||bill.cardId!=='rakuten-mizuho'||cardDebitAccountOnDay(assets,bill.cardId,bill.paymentDate)!=='mizuho-bank'||bill.amount<=0||!bill.paymentDate)return null;
   const day=new Date(`${bill.paymentDate}T00:00:00Z`);
   if(Number.isNaN(day.getTime()))return null;
   day.setUTCDate(day.getUTCDate()-plan.leadDays);

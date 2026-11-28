@@ -76,3 +76,71 @@ test('encrypted vault persists birth month and debit settings without leaking na
  assert.equal(mirror.assetSettings().birthMonth,'2003-07');
  assert.equal(mirror.assetSettings().cardDebitAccounts.amazon,'rakuten-bank');
 });
+
+test('M304: date-effective routes preserve legacy values, null baseline, same-day final value and independent device edits',async()=>{
+ const {updateCardDebitRoutes,updatePayrollDepositRoute,cardDebitAccountOnDay,payrollDepositAccountOnDay,detectAssetsEditCollisions,assertAccountRouteContinuity}=await import('../dist/src/cloud/assets.js');
+ const legacy={...emptyAssets(),cardDebitAccounts:{'smbc-nl':'rakuten-bank'},payrollDepositAccount:'rakuten-bank'};
+ const left=structuredClone(legacy),right=structuredClone(legacy);
+ updateCardDebitRoutes(left,{'smbc-nl':'mizuho-bank'},'2026-11-20');
+ updateCardDebitRoutes(left,{'smbc-nl':'cash-savings'},'2026-11-20');
+ updateCardDebitRoutes(left,{'smbc-nl':'cash-savings'},'2026-11-21');
+ updateCardDebitRoutes(left,{},'2026-12-01');
+ updateCardDebitRoutes(right,{'smbc-nl':'rakuten-bank',amazon:'mizuho-bank'},'2026-11-20');
+ updatePayrollDepositRoute(right,'cash-savings','2026-11-25');
+ assert.equal(left.cardDebitAccountHistory['smbc-nl'].length,3);
+ assert.equal(left.format,'finance-assets-v3');
+ assert.equal(detectAssetsEditCollisions(legacy,left,right).length,0);
+ const both=mergeAssets(legacy,left,right);
+ assert.equal(cardDebitAccountOnDay(both,'smbc-nl','2026-11-19'),'rakuten-bank');
+ assert.equal(cardDebitAccountOnDay(both,'smbc-nl','2026-11-20'),'cash-savings');
+ assert.equal(cardDebitAccountOnDay(both,'smbc-nl','2026-12-01'),null);
+ assert.equal(cardDebitAccountOnDay(both,'amazon','2026-11-19'),null);
+ assert.equal(cardDebitAccountOnDay(both,'amazon','2026-11-20'),'mizuho-bank');
+ assert.equal(payrollDepositAccountOnDay(both,'2026-11-24'),'rakuten-bank');
+ assert.equal(payrollDepositAccountOnDay(both,'2026-11-25'),'cash-savings');
+ assert.deepEqual(validateAssets(both),both);
+ assert.throws(()=>validateAssets({...both,format:'finance-assets-v2'}),/履歴/);
+ assert.throws(()=>validateAssets({...both,payrollDepositAccount:'rakuten-bank'}),/履歴/);
+ assert.throws(()=>assertAccountRouteContinuity(both,legacy),/旧形式/);
+ const concurrent=structuredClone(legacy);
+ updateCardDebitRoutes(concurrent,{'smbc-nl':'mizuho-bank'},'2026-11-21');
+ assert.equal(detectAssetsEditCollisions(legacy,left,concurrent).length,1);
+ assert.throws(()=>mergeAssets(legacy,left,concurrent),/履歴/);
+ const independent={...legacy,birthMonth:'2000-01'};
+ assert.deepEqual(mergeAssets(legacy,independent,both).cardDebitAccountHistory,both.cardDebitAccountHistory);
+});
+
+test('M304: payment date and paidOn agree across bank forecasts, timeline, home and encrypted round-trip',async()=>{
+ const {updateCardDebitRoutes,updatePayrollDepositRoute}=await import('../dist/src/cloud/assets.js');
+ const {forecastBankBalances}=await import('../dist/src/cloud/salary-projection.js');
+ const {forecastAccounts}=await import('../dist/src/home/account-events.js');
+ const {monthlyReport}=await import('../dist/src/summary/monthly-summary.js');
+ const {mizuhoTransferForBill}=await import('../dist/src/cloud/mizuho-transfer.js');
+ const {freshSalt,deriveCloudKey,encryptAssets,decryptAssets}=await import('../dist/src/cloud/cloud-crypto.js');
+ const assets={...emptyAssets(),cardDebitAccounts:{'smbc-nl':'rakuten-bank','rakuten-mizuho':'rakuten-bank'},payrollDepositAccount:'rakuten-bank',
+  snapshots:['rakuten-bank','mizuho-bank','cash-savings'].map((accountId,i)=>({id:`snap-routes-${i}`,accountId,balance:100000,observedAt:'2026-11-01T00:00:00Z'}))};
+ updateCardDebitRoutes(assets,{'smbc-nl':'mizuho-bank','rakuten-mizuho':'mizuho-bank'},'2026-11-20');
+ updatePayrollDepositRoute(assets,'cash-savings','2026-11-20');
+ const records=[{id:'bill-before',statement:{...record.statement,billingMonth:'2026-10',paymentDate:'2026-11-10',confirmation:'confirmed',statedTotal:1000,rows:[{id:'row-one',usedOn:'2026-10-05',merchant:'SHOP',amount:1000}]}},
+  {id:'bill-after',statement:{...record.statement,billingMonth:'2026-11',paymentDate:'2026-11-27',confirmation:'confirmed',statedTotal:2000,rows:[{id:'row-two',usedOn:'2026-11-05',merchant:'SHOP',amount:2000}]}}];
+ const entries=[salary('pay-before','2026-11-10',10000),{...salary('pay-after','2026-11-27',20000),payPeriod:'2026-10'}];
+ const source={assets,records,rules:[],categories:[],payroll:{ready:true,syncedAt:Date.parse('2026-11-28T00:00:00Z'),entries},currentPeriod:'2026-11',currentDay:'2026-11-28'};
+ const report=forecastBankBalances(assets,'2026-11-30',records,entries,'cash-savings','2026-11-28');
+ assert.equal(report.accounts['rakuten-bank'].balance,109000);
+ assert.equal(report.accounts['mizuho-bank'].balance,98000);
+ assert.equal(report.accounts['cash-savings'].balance,120000);
+ assert.equal(bankTimeline('2026-11',source,'2026-11-28').endBalance,109000);
+ const home=forecastAccounts(source,'2026-11-28');
+ for(const id of ['rakuten-bank','mizuho-bank','cash-savings']){
+  const account=home.accounts.find(a=>a.accountId===id);
+  assert.equal(account.days.filter(d=>d.date<='2026-11-30').at(-1).balance,report.accounts[id].balance);
+ }
+ assert.equal(monthlyReport('2026-11',source).actualIncome,30000);
+ assets.mizuhoTransferPlan={enabled:true,leadDays:3,extraForSmallBills:false};
+ assert.equal(mizuhoTransferForBill({cardId:'rakuten-mizuho',paymentDate:'2026-11-19',amount:1000},assets),null);
+ assert.equal(mizuhoTransferForBill({cardId:'rakuten-mizuho',paymentDate:'2026-11-20',amount:1000},assets)?.date,'2026-11-17');
+ const salt=freshSalt(),key=await deriveCloudKey('synthetic route history test passphrase',salt);
+ const cipher=await encryptAssets(assets,key,salt);
+ assert.equal(cipher.includes('cardDebitAccountHistory'),false);
+ assert.deepEqual(await decryptAssets(cipher,key,salt),validateAssets(assets));
+});

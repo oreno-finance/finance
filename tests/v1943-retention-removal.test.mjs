@@ -18,7 +18,7 @@ test('old 2-hour feature and raw-key exports are absent from all shipped code',(
   assert.match(main,/function purgeLegacyTabKey\(\)/);
   assert.match(main,/store.removeItem\('finance-vault-tab-key-v1'\)/);
   assert.match(main,/function init\(\): void \{\s*purgeLegacyTabKey\(\)/);
-  assert.match(main,/await applyBrowserRetentionChoice\(context,false\)/);
+  assert.match(main,/await applyBrowserRetentionChoice\(context,false,undefined,checkRetention\)/);
 });
 
 test('vault derivation never produces an extractable AES key',async()=>{
@@ -33,6 +33,6 @@ test('the every-time default deletes an older browser key or keeps the vault loc
   assert.match(markup,/毎回パスフレーズを入力する/);
   assert.match(markup,/以前のブラウザ記憶も解除します/);
   assert.match(main,/if\(rememberBrowser\)\{[\s\S]*?else if\(mode!=='create'\)\{\s*\/\/ "毎回入力する" explicitly revokes/);
-  assert.match(main,/await applyBrowserRetentionChoice\(context,false\);\s*\}catch\(error\)\{\s*liveVault.lock\(\)/);
-  assert.match(main,/if\(mode==='create'&&!rememberBrowser\)[\s\S]*?await applyBrowserRetentionChoice\(newContext,false\)[\s\S]*?await liveVault.create\(pass\)/);
+  assert.match(main,/await applyBrowserRetentionChoice\(context,false,undefined,checkRetention\);\s*\}catch\(error\)\{\s*liveVault.lock\(\)/);
+  assert.match(main,/if\(mode==='create'&&!rememberBrowser\)[\s\S]*?await applyBrowserRetentionChoice\(newContext,false,undefined,checkRetention\)[\s\S]*?await liveVault.create\(pass\)/);
 });

@@ -26,7 +26,7 @@ const statement=()=>({cardId:'smbc-nl',provider:'smbc',billingMonth:'2026-11',so
 function deletion(){
   const s=statement(),other={...statement(),billingMonth:'2026-10'},savedIds=new Map([[s,'record-a'],[other,'record-b']]);
   const h=harness(extract('async function deleteStatement(', 'function providerLabel('),{
-    statements:[s,other],savedIds,activeIndex:0,cardDisplayName:()=> 'カード',needsReview:()=>true,
+    statements:[s,other],savedIds,conflictStorageYears:new WeakMap(),activeIndex:0,cardDisplayName:()=> 'カード',needsReview:()=>true,
     pending:()=>[],replaceCloudRecords(){},selectVisibleManagerStatement(){},
   });
   h.env.liveVault={unlocked:true,async delete(id){h.writes.push(id);},takeMutationWarning:()=>null,records:()=>[]};

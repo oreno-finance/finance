@@ -28,7 +28,7 @@ export function mergeDocuments(base, local, remote, now = new Date().toISOString
             return rv === missing ? missing : clone(rv);
         if (eq(rv, bv) || eq(lv, rv))
             return lv === missing ? missing : clone(lv);
-        if (lv !== missing && rv !== missing && bv !== missing &&
+        if (path !== 'record.originalReference' && lv !== missing && rv !== missing && bv !== missing &&
             lv && rv && bv && typeof lv === 'object' && typeof rv === 'object' && typeof bv === 'object') {
             if (rows(lv) && rows(rv) && rows(bv)) {
                 const bm = new Map(bv.map(x => [x.id, x]));
@@ -45,10 +45,17 @@ export function mergeDocuments(base, local, remote, now = new Date().toISOString
             if (!Array.isArray(lv) && !Array.isArray(rv) && !Array.isArray(bv)) {
                 const bo = bv, lo = lv, ro = rv;
                 const out = {};
+                const originalKeys = ['originalId', 'originalMonth', 'originalSha256'];
+                if (path === 'record') {
+                    const reference = (record) => Object.fromEntries(originalKeys.filter(k => Object.hasOwn(record, k)).map(k => [k, record[k]]));
+                    Object.assign(out, mergeValue('record.originalReference', id, reference(bo), reference(lo), reference(ro)));
+                }
                 for (const key of new Set([...Object.keys(bo), ...Object.keys(lo), ...Object.keys(ro)])) {
+                    if (path === 'record' && originalKeys.includes(key))
+                        continue;
                     const value = mergeValue(`${path}.${key}`, id, Object.hasOwn(bo, key) ? bo[key] : missing, Object.hasOwn(lo, key) ? lo[key] : missing, Object.hasOwn(ro, key) ? ro[key] : missing);
                     if (value !== missing)
-                        out[key] = value;
+                        Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true });
                 }
                 return out;
             }
@@ -84,19 +91,67 @@ export function mergeDocuments(base, local, remote, now = new Date().toISOString
     }
     return { format: 'finance-cloud-document-v1', records: output, deleted: [...deleted], conflicts: conflicts.slice(-500) };
 }
+const object = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+const text = (v, max = 100_000) => typeof v === 'string' && v.length <= max;
+const identity = (v) => text(v, 1024) && v.length > 0 && !/[\u0000-\u001f]/.test(v);
+const nullableText = (v, max) => v === null || text(v, max);
+/** Validate JSON extensions without applying them to prototypes or walking an
+ * unbounded recursive structure. Financial eligibility is checked separately. */
+function validateJsonTree(raw) {
+    const stack = [{ value: raw, depth: 0 }];
+    let nodes = 0;
+    while (stack.length) {
+        const { value, depth } = stack.pop();
+        if (++nodes > 2_000_000 || depth > 64)
+            throw new Error('クラウド明細の構造が上限を超えています。');
+        if (value === null || typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value) || text(value, 1_000_000))
+            continue;
+        if (!object(value) && !Array.isArray(value))
+            throw new Error('クラウド明細の構造が不正です。');
+        for (const [key, child] of Object.entries(value)) {
+            if (key.length > 1024 || key === '__proto__' || key === 'constructor' || key === 'prototype')
+                throw new Error('クラウド明細のプロパティが不正です。');
+            stack.push({ value: child, depth: depth + 1 });
+        }
+    }
+}
 export function validateCloudDocument(raw) {
-    if (!raw || typeof raw !== 'object')
+    if (!object(raw))
         throw new Error('クラウド明細の形式が不正です。');
     const d = raw;
     if (d.format !== 'finance-cloud-document-v1' || !Array.isArray(d.records) || !Array.isArray(d.deleted) || !Array.isArray(d.conflicts) || d.records.length > 10000 || d.deleted.length > 20000 || d.conflicts.length > 1000)
         throw new Error('クラウド明細のバージョンが不正です。');
+    validateJsonTree(raw);
     const seen = new Set();
     for (const rec of d.records) {
-        if (!rec || typeof rec.id !== 'string' || !rec.id || seen.has(rec.id) || !rec.statement || !Array.isArray(rec.statement.rows) || rec.statement.rows.length > 10000)
+        if (!object(rec) || !identity(rec.id) || seen.has(rec.id) || !object(rec.statement) || !Array.isArray(rec.statement.rows) || rec.statement.rows.length > 10000)
             throw new Error('クラウド明細に不正なレコードがあります。');
-        if (rec.statement.zeroUsage !== undefined && (!isZeroUsage(rec.statement) || !rec.originalId))
+        const s = rec.statement;
+        if (!['rakuten', 'jcb', 'view', 'smbc', 'goldpoint', 'unknown'].includes(s.provider) || !nullableText(s.cardId, 256) || !['pdf', 'paste', 'csv'].includes(s.sourceKind) || !text(s.sourceName) || !nullableText(s.billingMonth, 32) || !nullableText(s.paymentDate, 32) || !(s.statedTotal === null || Number.isSafeInteger(s.statedTotal)) || !['confirmed', 'provisional', 'unknown'].includes(s.confirmation) || !Array.isArray(s.warnings) || s.warnings.length > 10000 || s.warnings.some(w => !text(w)))
+            throw new Error('クラウド明細の属性が不正です。');
+        for (const row of s.rows) {
+            if (!object(row) || !text(row.id, 1024) || !text(row.usedOn, 32) || !text(row.merchant) || !Number.isSafeInteger(row.amount) || row.merchantOverride !== undefined && !text(row.merchantOverride) || row.description !== undefined && !text(row.description) || row.sourceLine !== undefined && (!Number.isSafeInteger(row.sourceLine) || row.sourceLine < 0))
+                throw new Error('クラウド取引行の構造が不正です。');
+        }
+        if (rec.originalId !== undefined && rec.originalId !== null && (!identity(rec.originalId) || !(/^[a-zA-Z0-9_-]+$/.test(rec.originalId))))
+            throw new Error('PDF原本参照が不正です。');
+        if (rec.originalSha256 !== undefined && (!rec.originalId || typeof rec.originalSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(rec.originalSha256)))
+            throw new Error('PDF原本の検証情報が不正です。');
+        if (rec.originalMonth !== undefined && rec.originalMonth !== null && (!text(rec.originalMonth, 32)))
+            throw new Error('PDF原本保存月が不正です。');
+        if (s.zeroUsage !== undefined && (!isZeroUsage(s) || !rec.originalId))
             throw new Error('利用なし明細の形式が不正です。');
         seen.add(rec.id);
+    }
+    const deleted = new Set();
+    for (const id of d.deleted) {
+        if (!identity(id) || seen.has(id) || deleted.has(id))
+            throw new Error('クラウド明細の削除記録が不正です。');
+        deleted.add(id);
+    }
+    for (const c of d.conflicts) {
+        if (!object(c) || !identity(c.recordId) || !text(c.path, 8192) || !text(c.at, 64) || !Number.isFinite(Date.parse(c.at)) || !Object.hasOwn(c, 'discarded') || !Object.hasOwn(c, 'chosen'))
+            throw new Error('クラウド明細の競合記録が不正です。');
     }
     return d;
 }

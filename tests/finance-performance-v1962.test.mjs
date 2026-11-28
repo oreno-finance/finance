@@ -95,6 +95,7 @@ test('Unlock fetches year records, rules and assets concurrently; refresh retain
     failAsset:false,
     async readFinanceIndex(){return {text:encrypted,id:'index',etag:'"1"'};},
     setVaultDataSet(){},async listYearFiles(){return [];},
+    async readFinanceMetadata(kind){return kind==='index'?{id:'index',etag:'"1"'}:null;},
     async readMerchantRules(){return pending();},
     async readAssetSettings(){if(this.failAsset)throw new Error('asset read failed');return pending();},
   };

@@ -17,6 +17,7 @@ export const FINANCE_CLOUD_GATE_PAGES = [
 export interface FinanceCloudGateState {
   blocked:boolean;
   locked:boolean;
+  recovery?:boolean;
   checking:boolean;
   progress?:string;
   notice:{kind:string;message:string};
@@ -48,12 +49,14 @@ export function syncFinanceCloudGates(state:FinanceCloudGateState):void {
       view.prepend(gate);
     }
     const displayTitle=state.checking?(state.progress??'OneDriveに接続中…'):
+      state.recovery?'保存ロックの確認が必要です':
       state.locked?'OneDrive保管庫はロックされています':
       state.notice.kind==='connected'?'OneDrive保管庫が見つかりません':'OneDriveに接続できません';
     const displayMessage=state.checking?'':
+      state.recovery?'設定から保存ロックを確認し、最新データを取得してください。':
       state.locked?'保管庫を解除すると、このページのデータを表示できます。':
       state.notice.kind==='connected'?'設定から接続先を確認してください。':state.notice.message;
-    const key=JSON.stringify([page.id,displayTitle,displayMessage,state.locked,state.checking,state.notice.kind]);
+    const key=JSON.stringify([page.id,displayTitle,displayMessage,state.locked,state.recovery,state.checking,state.notice.kind]);
     if(gate.dataset.renderKey===key)continue;
     gate.dataset.renderKey=key;
 
@@ -77,7 +80,7 @@ export function syncFinanceCloudGates(state:FinanceCloudGateState):void {
     const description=document.createElement('p');description.textContent=displayMessage;
     const actions=document.createElement('div');actions.className='finance-cloud-gate-actions';
     if(state.locked)appendAction(actions,'保管庫を解除',state.onUnlock,true);
-    else if(state.notice.kind!=='connected'){
+    else if(!state.recovery&&state.notice.kind!=='connected'){
       appendAction(actions,state.notice.kind==='not-connected'?'Microsoftアカウントで接続':'通信を再試行',state.onRetry,true);
       appendAction(actions,'Microsoft認証をやり直す',state.onReauthenticate);
     }

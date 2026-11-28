@@ -89,10 +89,32 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
   let recurringBaseline='';
   let payrollSession:PayrollReadSession|null=null;
   let payrollIncome:PayrollIncomeEntry[]=[];
-  let payrollSynced=false,payrollBusy=false,payrollAccountDirty=false;
+  let payrollSynced=false,payrollBusy=false,payrollAccountDirty=false,payrollAccountBaseline='';
   let payrollStale=false,payrollUseStale=false;
   let payrollSyncedAt=0,lastPayrollAttemptAt=0;
   let payrollOwner:LiveVault|null=null;
+  let payrollCredential:string|null|undefined,observedLocalCredential:string|null|undefined;
+  let payrollEpoch=0,payrollSessionGuard:(()=>void)|null=null;
+  function clearPayroll():void {
+    payrollSession=null;payrollSessionGuard=null;payrollIncome=[];payrollSynced=false;payrollOwner=null;payrollSyncedAt=0;payrollStale=false;payrollUseStale=false;
+    // Never retain a success message for a discarded session or revoked credential.
+    status($('assets-payroll-status'),'');
+  }
+  function observeLocalPayroll(vault:LiveVault):void {
+    if(payrollOwner){
+      try{if(payrollOwner!==vault||!payrollSessionGuard)throw new Error('保管庫が変更されました。');payrollSessionGuard();}
+      catch{payrollEpoch++;payrollBusy=false;clearPayroll();payrollCredential=undefined;observedLocalCredential=undefined;lastPayrollAttemptAt=0;}
+    }
+    const credential=vault.assetSettings().payrollAutoPassphrase;
+    if(observedLocalCredential!==undefined&&observedLocalCredential!==credential&&payrollCredential!==credential){
+      payrollEpoch++;payrollBusy=false;clearPayroll();payrollCredential=undefined;lastPayrollAttemptAt=0;
+    }
+    observedLocalCredential=credential;
+  }
+  function observeVerifiedPayroll(credential:string|null):void {
+    if(payrollCredential!==undefined&&payrollCredential!==credential){clearPayroll();lastPayrollAttemptAt=0;}
+    payrollCredential=credential;
+  }
   const amounts=new Map<AssetAccountId,HTMLInputElement>();
   const latestTexts=new Map<AssetAccountId,HTMLElement>();
   const reconciliationViews=new Map<AssetAccountId,HTMLElement>();
@@ -434,6 +456,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
   }
   function renderAccounts():void {
     const vault=getVault();if(!vault?.unlocked)return;
+    observeLocalPayroll(vault);
     const records=vault.readonlyRecords(),today=new Date();
     const data=fixedCostCalculationAssets({records,assets:vault.assetSettings(),rules:vault.merchantRules(),categories:[],fixedCostMigrations:vault.fixedCostMigrations(),payroll:{ready:false,syncedAt:null,entries:[]}},localDay(today));
     const work=prepareBankForecast(records,data);
@@ -466,6 +489,8 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
         // Shared calculation details in the warning settings.
         if(parts.length)details.append(make('p','',parts.join(' / ')));
         if(current.warning)details.append(make('p','',current.warning));
+        if(current.nisaOverlap?.scheduledDelta&&current.balance!==null)details.append(make('p','',`重複候補の未確認予定を除いた場合の参考値：${yen(current.balance-current.nisaOverlap.scheduledDelta)}`));
+        if(current.overdue&&current.balance!==null)details.append(make('p','',`期限経過・未確認 ${current.overdue.count}件：すべて実行された場合 ${yen(current.balance+current.overdue.delta)}（差額 ${yen(current.overdue.delta)}、参考値）`));
         if(data.payrollDepositAccount===account.id){
           if(payrollStale&&payrollUseStale&&payrollOwner===vault)details.append(make('p','','Payrollの前回取得分を使用中（最新同期失敗）。'));
           else if(!payrollSynced)details.append(make('p','','Payrollの給与は未取得です。'));
@@ -495,18 +520,21 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
           const cell=make('div','assets-reconcile-figure');cell.append(make('span','',name),make('strong','',yen(value)));pair.append(cell);
         }
         body.append(make('p','assets-reconcile-period',`${report.previousDay} → ${report.latestDay} の入出金を現在の設定で再計算`),pair);
+        if(report.oneTimeOverlap)body.append(make('p','assets-reconcile-advice','単発入出金と定期予定・給与の対応が確認できないため、照合結果は参考値です。'));
+        if(report.nisaOverlap)body.append(make('p','assets-reconcile-advice','NISA積立の対応が確認できないため、照合結果は参考値です。'));
+        if(gap===0&&report.provisionalEntries)body.append(make('p','assets-reconcile-advice',`期限経過・未確認：${report.provisionalEntries}件（実行時の差額 ${yen(report.provisionalDelta)}）`));
         if(gap!==0){
           body.append(make('p','assets-reconcile-advice',report.valuationMayChange
             ?'NISAの評価額には相場変動が含まれるため、差額は未記録の入出金を意味しません。'
             :'未記録の入出金がないか確認してください。予測と実際のズレは、未反映の予定や設定変更でも発生します。'));
           const findings:string[]=[];
-          if(report.provisionalEntries)findings.push(`予定のままの単発入出金：${report.provisionalEntries}件`);
+          if(report.provisionalEntries)findings.push(`予定のままの単発入出金：${report.provisionalEntries}件（実行時の差額 ${yen(report.provisionalDelta)}）`);
           if(report.unmappedCard)findings.push('引落口座が未設定のカード明細があります');
           if(report.payrollNotReady)findings.push('給与データを取得できていません');
           if(report.sameDayEntries)findings.push('今回の確認日と同日の予定が含まれています（確認時刻より後の取引かもしれません）');
           if(findings.length){const hints=make('ul','assets-reconcile-findings');
             for(const item of findings)hints.append(make('li','',item));body.append(hints);}
-          if(!report.valuationMayChange){
+          if(!report.valuationMayChange&&!report.provisionalEntries&&!report.nisaOverlap&&!report.oneTimeOverlap){
             const action=addButton('入出金を確認・登録',()=>{
               openOnce();
               if(!onceDialog.open)return;
@@ -602,8 +630,13 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
   }
   function renderNisaLink():void {
     const vault=getVault();if(!vault?.unlocked)return;
-    const rule=vault.assetSettings().nisaCardRule;
+    const assets=vault.assetSettings(),rule=assets.nisaCardRule;
     if(!nisaDirty){
+      const select=$<HTMLSelectElement>('assets-nisa-funding');
+      const options=[{value:'',label:'未確認'},{value:'independent',label:'銀行積立とは別の積立'},...assets.recurring.filter(r=>r.toAccountId==='nisa'&&r.fromAccountId!==null&&r.fromAccountId!=='nisa'&&r.kind==='transfer').map(r=>({value:`same:${r.id}`,label:`同じ積立：${r.name}`}))];
+      const selected=rule?.bankFunding?.kind==='same'?`same:${rule.bankFunding.recurringId}`:rule?.bankFunding?.kind==='independent'?'independent':'';
+      if(!options.some(o=>o.value===selected))options.push({value:selected,label:'同じ積立：登録済み予定（現在は未登録）'});
+      choices(select,options);select.value=selected;
       $<HTMLSelectElement>('assets-nisa-card').value=rule?.cardId??CARDS[0]!.id;
       $<HTMLInputElement>('assets-nisa-merchant').value=rule?.merchantContains??'';
     }
@@ -615,7 +648,9 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
     const node=$('assets-nisa-status');
     try{
       const cardId=value('assets-nisa-card'),merchant=value('assets-nisa-merchant').trim();
-      const link=clear?null:validateNisaCardRule({cardId,merchantContains:merchant,enabled:true});
+      const funding=value('assets-nisa-funding');
+      const bankFunding=funding==='independent'?{kind:'independent'}:funding.startsWith('same:')?{kind:'same',recurringId:funding.slice(5)}:undefined;
+      const link=clear?null:validateNisaCardRule({cardId,merchantContains:merchant,enabled:true,...(bankFunding?{bankFunding}:{})});
       // Invalid or empty matching text must not silently match every card row.
       if(!clear&&!CARDS.some(c=>c.id===cardId))throw new Error('対象カードを選択してください。');
       toggleBusy(true);status(node,'連携条件をOneDriveに保存しています…');
@@ -672,7 +707,8 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
   }
   function renderPayroll():void {
     const vault=getVault();if(!vault?.unlocked)return;
-    if(!payrollAccountDirty)$<HTMLSelectElement>('assets-payroll-deposit').value=vault.assetSettings().payrollDepositAccount??'';
+    observeLocalPayroll(vault);
+    if(!payrollAccountDirty){const data=vault.assetSettings();$<HTMLSelectElement>('assets-payroll-deposit').value=data.payrollDepositAccount??'';payrollAccountBaseline=JSON.stringify([data.payrollDepositAccount,data.payrollDepositAccountHistory]);}
     const haveLast=payrollOwner===vault&&payrollSyncedAt>0;
     $('assets-payroll-count').textContent=haveLast?`${payrollIncome.length}件`:'0件';
     $('assets-payroll-last').textContent=haveLast?`${formatDateTime(payrollSyncedAt)}${payrollStale?'（更新失敗・古いデータ）':''}`:'未同期';
@@ -696,87 +732,95 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
   async function syncPayroll(automatic=false):Promise<void> {
     if(busy||payrollBusy)return;
     const vault=getVault();
-    if(!vault?.unlocked){status($('assets-payroll-status'),'Financeの保管庫を解除してから連携してください。',true);return;}
+    if(!vault?.unlocked||vault.recoveryOnly){if(!automatic)status($('assets-payroll-status'),'Financeの保管庫を解除してから連携してください。',true);return;}
+    observeLocalPayroll(vault);
     const pass=$<HTMLInputElement>('assets-payroll-secret');
     const entered=automatic?'':pass.value;
-    pass.value='';
-    const saved=vault.assetSettings().payrollAutoPassphrase;
-    const secret=entered||((payrollSession&&payrollOwner===vault)?'':saved??'');
-    if(!automatic&&!saved&&!entered){
-      status($('assets-payroll-status'),'初回連携にはPayrollのパスフレーズを入力してください。',true);return;
-    }
+    if(!automatic)pass.value='';
+    const epoch=++payrollEpoch,vaultGuard=vault.payrollOperationGuard();
+    const current=()=>{try{vaultGuard();return getVault()===vault&&epoch===payrollEpoch;}catch{return false;}};
+    const guard=()=>{if(!current())throw new Error('Payroll連携の操作が変更されました。');};
     payrollBusy=true;lastPayrollAttemptAt=Date.now();
     $<HTMLButtonElement>('assets-payroll-sync').disabled=true;
     $<HTMLButtonElement>('assets-payroll-forget').disabled=true;
     try {
-      const session=secret?await PayrollReadSession.connect(vault.payrollReadClient(),secret):payrollSession;
-      if(!session||(!secret&&payrollOwner!==vault))throw new Error('Payrollのパスフレーズを入力してください。');
+      const saved=await vault.readPayrollCredential();guard();
+      const changed=payrollCredential!==undefined&&payrollCredential!==saved;
+      observeVerifiedPayroll(saved);
+      if(changed){renderAccounts();renderPayroll();onPayrollChange();}
+      if(!entered&&!saved){
+        if(!automatic)status($('assets-payroll-status'),'初回連携にはPayrollのパスフレーズを入力してください。',true);
+        renderAccounts();renderPayroll();onPayrollChange();return;
+      }
+      // Even before the usual synchronization interval, observe credential revocation.
+      if(automatic&&payrollOwner===vault&&payrollSession&&payrollSynced&&Date.now()-payrollSyncedAt<10*60*1000)return;
+      if(!payrollOwner||payrollOwner!==vault||entered&&entered!==saved)clearPayroll();
+      const secret=entered||saved!;
+      const session=!entered&&payrollOwner===vault&&payrollSession?payrollSession:await PayrollReadSession.connect(vault.payrollReadClient(),secret);
+      guard();
       status($('assets-payroll-status'),automatic?'Payrollの収入を自動同期しています…':'Payrollの暗号化収入を取得・検証しています…');
-      const items=await session.refresh();
-      if(!vault.unlocked||getVault()!==vault)throw new Error('保管庫が変更されました。再同期してください。');
-      // The decrypted read succeeded: keep these incomes even if updating the
-      // optional auto-link setting fails (e.g. temporary OneDrive write failure).
-      payrollSession=session;payrollOwner=vault;payrollIncome=items;payrollSynced=true;payrollSyncedAt=Date.now();payrollStale=false;payrollUseStale=false;
+      const items=await session.refresh();guard();
+      const verified=await vault.readPayrollCredential();guard();
+      if(verified!==saved){observeVerifiedPayroll(verified);throw new Error('Payroll連携設定が変更されました。最新の設定で再同期してください。');}
       let credentialError:unknown;
       if(!automatic){
         try{
-          // Never re-save an empty form when the saved secret was reused.
-          // Initial registration and changed credentials are always encrypted
-          // in Finance settings for future automatic refreshes.
           const action=payrollPassphraseUpdate(entered,saved);
-          if(action!==undefined)await vault.setPayrollAutoPassphrase(action);
-        }catch(error){credentialError=error;}
+          if(action!==undefined){await vault.setPayrollAutoPassphrase(action,saved);guard();observedLocalCredential=vault.assetSettings().payrollAutoPassphrase;payrollCredential=action;}
+        }catch(error){
+          guard();credentialError=error;
+          let latest:string|null;
+          try{latest=await vault.readPayrollCredential();}catch(readError){guard();if(saved!==null)throw readError;latest=null;}
+          guard();
+          if(latest!==saved){observeVerifiedPayroll(latest);throw error;}
+        }
       }
+      guard();
+      // A manually entered but not persisted credential may be used in this tab only.
+      // Never keep it as a reusable automatic session.
+      payrollSession=credentialError===undefined?session:null;payrollOwner=vault;payrollIncome=items;payrollSynced=true;payrollSyncedAt=Date.now();payrollSessionGuard=vaultGuard;payrollStale=false;payrollUseStale=false;
       const message=`Payrollから${items.length}件の給与実績を${automatic?'自動取得':'取得'}しました。`;
       status($('assets-payroll-status'),credentialError===undefined?message:
         `${message} ただし自動連携設定の${mutationError(credentialError)}。取得済みの給与情報は維持しています。`,credentialError!==undefined);
       renderAccounts();renderPayroll();onPayrollChange();
     }catch(error){
-      // Keep the last success only in this unlocked tab, clearly marked stale.
-      // Do not include stale salary in forecasts unless the user explicitly opts in.
+      if(!current())return;
       const lastVerified=payrollOwner===vault&&payrollSyncedAt>0;
       payrollSession=null;payrollSynced=false;payrollStale=lastVerified;
-      if(!lastVerified)payrollUseStale=false;
-      if(!lastVerified){payrollOwner=null;payrollIncome=[];payrollSyncedAt=0;}
+      if(!lastVerified){clearPayroll();}else payrollUseStale=false;
       status($('assets-payroll-status'),`給与を取得できませんでした：${error instanceof Error?error.message:'通信エラー'}。${lastVerified?'最終成功時の給与はこのタブに保持しましたが、予測から除外しています。':'設定から再接続できます。'}`,true);
-      if(getVault()?.unlocked){renderAccounts();renderPayroll();}
-      onPayrollChange();
+      renderAccounts();renderPayroll();onPayrollChange();
     }finally{
-      payrollBusy=false;
-      $<HTMLButtonElement>('assets-payroll-sync').disabled=false;
-      $<HTMLButtonElement>('assets-payroll-forget').disabled=!getVault()?.unlocked;
+      if(epoch===payrollEpoch){payrollBusy=false;$<HTMLButtonElement>('assets-payroll-sync').disabled=!getVault()?.unlocked;$<HTMLButtonElement>('assets-payroll-forget').disabled=!getVault()?.unlocked;}
     }
   }
   async function refreshPayroll():Promise<void> {
     const vault=getVault();
-    if(!vault?.unlocked||payrollBusy||busy)return;
-    const sameVault=payrollOwner===vault&&payrollSession&&payrollSynced;
-    if(sameVault){
-      if(Date.now()-payrollSyncedAt>=10*60*1000)await syncPayroll(true);
-      return;
-    }
-    if(!vault.assetSettings().payrollAutoPassphrase)return;
-    // If the cloud is temporarily unavailable, do not spam Graph on every UI render.
+    if(!vault?.unlocked||vault.recoveryOnly)return;
+    observeLocalPayroll(vault);
+    if(payrollBusy||busy)return;
     if(Date.now()-lastPayrollAttemptAt<60*1000)return;
     await syncPayroll(true);
   }
   async function forgetPayroll():Promise<void> {
     if(busy||payrollBusy)return;
     const vault=getVault();if(!vault?.unlocked||confirming())return;
-    const credential=vault.assetSettings().payrollAutoPassphrase,epoch=onceEpoch;
+    const credential=vault.assetSettings().payrollAutoPassphrase,epoch=payrollEpoch,lockGuard=vault.payrollOperationGuard();
     if(!await requestConfirmation({owner:confirmationOwner,title:'Payroll連携を解除しますか？',message:'保存済みのパスフレーズと、このタブの給与情報を破棄します。給与の原本は変更しません。',acceptLabel:'連携を解除する',destructive:true}))return;
-    if(getVault()!==vault||!vault.unlocked||onceEpoch!==epoch||busy||payrollBusy||vault.assetSettings().payrollAutoPassphrase!==credential)return;
+    const current=()=>{try{lockGuard();return getVault()===vault&&payrollEpoch===epoch;}catch{return false;}};
+    if(!current()||busy||payrollBusy||vault.assetSettings().payrollAutoPassphrase!==credential)return;
     payrollBusy=true;
     $<HTMLButtonElement>('assets-payroll-forget').disabled=true;
     try {
-      await vault.setPayrollAutoPassphrase(null);
-      payrollSession=null;payrollIncome=[];payrollSynced=false;payrollOwner=null;payrollSyncedAt=0;payrollStale=false;payrollUseStale=false;
+      await vault.setPayrollAutoPassphrase(null,credential);
+      if(!current())return;
+      clearPayroll();payrollCredential=null;observedLocalCredential=null;
       $<HTMLInputElement>('assets-payroll-secret').value='';
       status($('assets-payroll-status'),'Payroll連携を解除し、Financeの暗号化設定からパスフレーズを削除しました。');
       renderAccounts();renderPayroll();onPayrollChange();
     }catch(error){
-      status($('assets-payroll-status'),mutationError(error,'解除'),true);
-    }finally{payrollBusy=false;$<HTMLButtonElement>('assets-payroll-forget').disabled=false;}
+      if(current())status($('assets-payroll-status'),mutationError(error,'解除'),true);
+    }finally{if(epoch===payrollEpoch){payrollBusy=false;$<HTMLButtonElement>('assets-payroll-forget').disabled=!getVault()?.unlocked;}}
   }
   async function savePayrollDeposit():Promise<void> {
     if(busy||payrollBusy)return;
@@ -786,7 +830,9 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
     const node=$('assets-payroll-status');
     toggleBusy(true);status(node,'給与の入金先設定をOneDriveに保存しています…');
     try {
-      await requireVault().setPayrollDepositAccount(id===''?null:id as 'rakuten-bank'|'cash-savings');
+      const vault=requireVault(),settings=vault.assetSettings();
+      if(payrollAccountBaseline!==JSON.stringify([settings.payrollDepositAccount,settings.payrollDepositAccountHistory]))throw Error('給与振込先が更新されました。最新情報を確認して編集し直してください。');
+      await vault.setPayrollDepositAccount(id===''?null:id as 'rakuten-bank'|'cash-savings');
       payrollAccountDirty=false;
       onSaved('給与の入金先を保存しました。');render();
     }catch(error){status(node,mutationError(error),true);}
@@ -914,14 +960,15 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
     if(!match)return false;
     return openRecurringEditor(match);
   },refreshPayroll,payrollSnapshot:()=>{
-    const ready=!!getVault()?.unlocked&&payrollOwner===getVault()&&(payrollSynced||(payrollStale&&payrollUseStale));
+    const vault=getVault();if(vault?.unlocked)observeLocalPayroll(vault);
+    const ready=!!vault?.unlocked&&payrollOwner===vault&&(payrollSynced||(payrollStale&&payrollUseStale&&payrollOwner===vault));
     return ready?{ready:true,syncedAt:payrollSyncedAt,entries:structuredClone(payrollIncome)}:{ready:false,syncedAt:null,entries:[]};
   },reset:()=>{
     onceEpoch++;cancelConfirmation(confirmationOwner);if(onceDialog.open)onceDialog.close();unlockOncePage();
     resetForm();resetOnceForm();onceShowAll=false;nisaDirty=false;birthDirty=false;payrollAccountDirty=false;mizuhoPlanDirty=false;balanceWarningDirty=false;
     for(const id of BALANCE_WARNING_ACCOUNTS)$<HTMLInputElement>(`balance-warning-${id}`).value='';
     status($('balance-warning-status'),'');
-    payrollSession=null;payrollIncome=[];payrollSynced=false;payrollSyncedAt=0;lastPayrollAttemptAt=0;payrollOwner=null;payrollStale=false;payrollUseStale=false;
+    payrollEpoch++;payrollBusy=false;clearPayroll();payrollCredential=undefined;observedLocalCredential=undefined;lastPayrollAttemptAt=0;
     $<HTMLInputElement>('assets-payroll-secret').value='';
     $('assets-payroll-count').textContent='0件';
     $('assets-payroll-last').textContent='未同期';
@@ -936,7 +983,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
     for(const id of ['assets-once-list','assets-recurring-list','assets-nisa-match-count','assets-payroll-stale-note','assets-payroll-mapping-warning'])document.getElementById(id)?.replaceChildren();
     $('assets-once-count').textContent='0件';$('assets-recurring-count').textContent='0件';
     $('assets-once-toggle').textContent='すべて表示';$('assets-once-toggle').classList.add('hidden');
-    $<HTMLInputElement>('assets-nisa-merchant').value='';$<HTMLSelectElement>('assets-nisa-card').value=CARDS[0]!.id;
+    $<HTMLSelectElement>('assets-nisa-funding').replaceChildren();$<HTMLInputElement>('assets-nisa-merchant').value='';$<HTMLSelectElement>('assets-nisa-card').value=CARDS[0]!.id;
     $<HTMLSelectElement>('assets-payroll-deposit').value='';
     $<HTMLInputElement>('assets-payroll-use-stale').checked=false;
     $<HTMLInputElement>('mizuho-plan-enabled').checked=false;$<HTMLInputElement>('mizuho-plan-extra').checked=false;

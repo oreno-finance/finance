@@ -387,8 +387,12 @@ export function initFutureProjection(getSource) {
             breakdown.append(makeMetric('現金貯金', report.target.cash, 'cash', changesCash ? `変更後 ${short(report.target.cashScenario)}` : undefined));
             breakdown.append(makeMetric('NISA', report.target.nisa, 'nisa', changesNisa ? `変更後 ${short(report.target.nisaScenario)}` : undefined));
             results.append(breakdown);
+            if (report.oneTimeOverlapStartingBalance)
+                results.append(el('p', 'future-warning', '単発入出金と定期予定の重複候補を含む開始残高による参考値です。'));
+            if (report.overdueStartingBalance)
+                results.append(el('p', 'future-warning', '期限経過・未確認の入出金を除いた開始残高による参考値です。'));
             if (report.conflictingNisaSources)
-                results.append(el('p', 'future-warning', 'NISAの積立設定が重複している可能性があります。'));
+                results.append(el('p', 'future-warning', 'NISAの積立設定が重複している可能性があります。開始残高・将来予測は参考値です。'));
             if (report.cashStart === null || report.nisaStart === null)
                 results.append(el('p', 'future-warning', '口座管理で現在の残高を登録してください。'));
             const graph = el('div', 'future-chart');

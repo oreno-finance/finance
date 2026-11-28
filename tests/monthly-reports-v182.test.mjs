@@ -179,3 +179,54 @@ test('Phase 6E: 再暗号化の切替中は他端末の月次レポート書込�
  finally{release();await rotation;}
  assert.equal((await vault.loadArchivedReport('2026-11')).current.note,'old');
 });
+
+test('M302: provisional or unknown monthly evidence never establishes a definite expense change',()=>{
+ for(const index of [0,1])for(const confirmation of ['provisional','unknown']){
+  const s=base();s.records[index].statement.confirmation=confirmation;
+  const report=reportSnapshot('2026-11',s);
+  assert.equal(report.expense,15000);assert.equal(report.previousExpense,10000);
+  assert.equal(report.expenseChange,null);assert.ok(report.quality.some(x=>x.includes('比較')));
+  assert.ok(!report.reasons.some(x=>x.includes('前月')));
+ }
+ const s=base();s.payroll.ready=false;assert.equal(reportSnapshot('2026-11',s).expenseChange,5000);
+});
+test('L301: category absent in the current month is eligible as a reason for decreasing expenses',()=>{
+ const s=base();s.records[1].statement.rows[0].merchant='OTHER';s.records[1].statement.rows[0].amount=1000;s.records[1].statement.statedTotal=1000;
+ const report=reportSnapshot('2026-11',s);
+ assert.equal(report.expenseChange,-9000);
+ assert.ok(report.reasons.some(x=>x.startsWith('食費：前月比 -10,000')));
+ s.records[1].statement.rows[0].amount=10000;s.records[1].statement.statedTotal=10000;
+ const equal=reportSnapshot('2026-11',s);assert.equal(equal.expenseChange,0);assert.ok(!equal.reasons.some(x=>x.includes('前月比')));
+});
+
+test('INT3-11: missing or changed rules cannot overwrite an archived report, memo-only preserves the exact source',async()=>{
+  const {graph,vault}=await make();
+  graph.readMerchantRules=async()=>graph.read('rules');graph.writeMerchantRules=async(text,ref)=>graph.write('rules',text,ref);
+  await vault.upsertMerchantRule({id:'fixture-rule',pattern:'MARKET',displayName:'Shop',mode:'contains',cardId:null,enabled:true,priority:1});
+  const snapshot=reportSnapshot('2026-11',base()),first=await vault.saveArchivedReport(snapshot,'original',null);
+  const rules=graph.store.files.get('legacy:rules');graph.store.files.delete('legacy:rules');
+  const before=graph.read('report:2026-11'),writes=graph.store.writes;
+  const updated={...snapshot,expense:0};
+  await assert.rejects(vault.saveArchivedReport(updated,'bad',first.current.id),/集計元/);
+  assert.deepEqual(graph.read('report:2026-11'),before);assert.equal(graph.store.writes,writes);
+  const memo=await vault.saveArchivedReportNote('2026-11','note only',first.current.id);
+  assert.equal(memo.current.sourceHash,first.current.sourceHash);assert.deepEqual(memo.current.snapshot,first.current.snapshot);
+  assert.deepEqual(memo.history[0],first.current);assert.equal(memo.current.note,'note only');
+  const count=graph.store.writes;
+  await assert.rejects(vault.saveArchivedReportNote('2026-11','stale',first.current.id),CloudEditCancelledError);
+  assert.equal(graph.store.writes,count);
+  graph.store.files.set('legacy:rules',rules);await vault.refresh();
+  const regenerated=await vault.saveArchivedReport(snapshot,'after recovery',memo.current.id);
+  assert.equal(regenerated.current.note,'after recovery');assert.deepEqual(regenerated.current.snapshot,snapshot);
+});
+
+test('L303: note-only cannot create a report or blindly repeat an uncertain write',async()=>{
+  const {graph,vault}=await make();const snapshot=reportSnapshot('2026-11',base());
+  const before=graph.store.writes;
+  await assert.rejects(vault.saveArchivedReportNote('2026-11','new','nonexistent'),CloudEditCancelledError);assert.equal(graph.store.writes,before);
+  const first=await vault.saveArchivedReport(snapshot,'first',null);graph.store.uncertain=true;
+  await assert.rejects(vault.saveArchivedReportNote('2026-11','second',first.current.id),CloudWriteUncertainError);
+  const writes=graph.store.writes;graph.store.uncertain=false;
+  await assert.rejects(vault.saveArchivedReportNote('2026-11','repeat',first.current.id),CloudWriteUncertainError);assert.equal(graph.store.writes,writes);
+  const loaded=await vault.loadArchivedReport('2026-11');assert.equal(loaded.current.note,'second');assert.deepEqual(loaded.current.snapshot,snapshot);
+});

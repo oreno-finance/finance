@@ -17,7 +17,7 @@ test('明細のPDF原本ボタンは保存済みの参照がある場合だけ�
     {saved:true,unlocked:false,original:true,busy:false,expected:[true,true]},
   ]){
     const s={},button={hidden:false,disabled:false,classList:{toggle(name,value){assert.equal(name,'hidden');button.hidden=value;}}};
-    vm.runInNewContext(snippet,{$:()=>button,s,savedIds:new Map(saved?[[s,'record-a']]:[]),liveVault:{unlocked,readonlyRecords:()=>[{id:'record-a',originalId:original?'original-a':null}]},batchBusy:busy,filesBusy:false});
+    vm.runInNewContext(snippet,{$:()=>button,s,savedIds:new Map(saved?[[s,'record-a']]:[]),liveVault:{unlocked,readonlyRecords:()=>[{id:'record-a',originalId:original?'original-a':null}]},batchBusy:busy,filesBusy:false,yearConflict:false});
     assert.deepEqual([button.hidden,button.disabled],expected);
   }
 });

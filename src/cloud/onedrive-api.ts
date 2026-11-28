@@ -112,7 +112,7 @@ export class OneDriveTestClient {
     const parent=await this.folderPath([FINANCE_DIR],false);
     if(!parent)return {state:'absent',createdAt:null};
     try{
-      const response=await this.graph(`/me/drive/items/${encodeURIComponent(parent)}:/${MUTATION_LOCK_NAME}?$select=id,name,folder,createdDateTime`);
+      const response=await this.graph(`/me/drive/items/${encodeURIComponent(parent)}:/${MUTATION_LOCK_NAME}?$select=id,name,folder,createdDateTime`,{cache:'no-store'});
       const item=await response.json() as DriveItem;
       if(!item||typeof item.id!=='string'||!item.id||item.name!==MUTATION_LOCK_NAME||!item.folder||typeof item.folder!=='object'||Array.isArray(item.folder))throw new Error('保存ロックの形式を確認できません。');
       const created=typeof item.createdDateTime==='string'?new Date(item.createdDateTime):null;
@@ -370,44 +370,19 @@ export class OneDriveTestClient {
     const namePath = `/me/drive/items/${encodeURIComponent(folder)}:/${encodeURIComponent(name)}:`;
     const payload = new TextEncoder().encode(text);
     let item: DriveItem;
+    // This retired, immutable backup is not a current-vault write. Keep its
+    // existing small-file PUT, but share the final-response validation and
+    // large-file upload session with current encrypted writes.
     if (payload.byteLength <= 4 * 1024 * 1024) {
-      // Graph's conflictBehavior=fail disallows accidental replacement of an existing filename.
       const response = await this.graph(`${namePath}/content?@microsoft.graph.conflictBehavior=fail`, {
         method:'PUT', headers:{'Content-Type':'application/octet-stream'}, body: payload,
       });
-      item = await response.json() as DriveItem;
-    } else {
-      // Large PDF-backed vaults use Graph upload sessions. 3,276,800 bytes = 10 x 320 KiB.
-      const sessionResponse = await this.graph(`${namePath}/createUploadSession`, {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({item:{'@microsoft.graph.conflictBehavior':'fail'}}),
-      });
-      const session = await sessionResponse.json() as { uploadUrl?: string };
-      if (!session.uploadUrl || new URL(session.uploadUrl).protocol !== 'https:') {
-        throw new Error('OneDriveの安全なアップロードURLを取得できませんでした。');
-      }
-      const chunkSize = 320 * 1024 * 10;
-      item = {} as DriveItem;
-      for (let start = 0; start < payload.byteLength; start += chunkSize) {
-        const end = Math.min(start + chunkSize, payload.byteLength);
-        const chunk = payload.slice(start, end);
-        // Preauthenticated uploadUrl: never pass the Graph bearer token.
-        const part = await this.http(session.uploadUrl, {
-          method:'PUT', credentials:'omit',
-          headers:{'Content-Range':`bytes ${start}-${end-1}/${payload.byteLength}`},
-          body:chunk,
-        });
-        if (!part.ok) throw new Error(`分割アップロードに失敗しました (HTTP ${part.status})。`);
-        if (end < payload.byteLength) {
-          if (part.status !== 202) throw new Error('OneDriveのアップロードが途中で終了しました。');
-        } else {
-          if (part.status !== 200 && part.status !== 201) throw new Error('OneDriveがアップロード完了を返しませんでした。');
-          item = await part.json() as DriveItem;
-        }
-      }
+      item=await this.confirmedUploadItem(response);
+    } else item=await this.uploadSession(`${namePath}/createUploadSession`,payload);
+    if((item.name!==undefined&&item.name!==name)||(item.size!==undefined&&item.size!==payload.byteLength)){
+      this.markMutationUncertain();throw new Error('OneDriveのバックアップ保存結果を確認できませんでした。');
     }
-    if (!item.id) throw new Error('OneDriveの保存結果を確認できませんでした。');
-    return { id:item.id, name, size:new TextEncoder().encode(text).byteLength, createdDateTime:item.createdDateTime ?? new Date().toISOString() };
+    return { id:item.id, name, size:payload.byteLength, createdDateTime:item.createdDateTime ?? new Date().toISOString() };
   }
 
   async downloadVaultSnapshot(snapshot: VaultSnapshot): Promise<string> {
@@ -435,7 +410,7 @@ export class OneDriveTestClient {
     return {text:await this.downloadItem(item.id,25_000_000),id:item.id,etag:item.eTag};
   }
 
-  private async uploadSession(path:string, bytes:Uint8Array, etag?:string):Promise<DriveItem> {
+  private async uploadSession(path:string, bytes:Uint8Array, etag?:string, expectedId?:string):Promise<DriveItem> {
     if(bytes.byteLength>200*1024*1024)throw new Error('アップロードサイズが200MBを超えています。');
     const response=await this.graph(path,{
       method:'POST',
@@ -453,11 +428,19 @@ export class OneDriveTestClient {
       const final=end===bytes.byteLength;
       for(let attempt=0;;attempt++){
         this.checkMutationGuard();
-        try{part=await this.http(session.uploadUrl,{
-          method:'PUT',credentials:'omit',
-          headers:{'Content-Range':`bytes ${start}-${end-1}/${bytes.byteLength}`},
-          body:bytes.slice(start,end),
-        });}catch(error){if(final)this.markMutationUncertain();throw error;}
+        let deadline:ReturnType<typeof setTimeout>|undefined;
+        const controller=final?new AbortController():undefined;
+        try{
+          const sending=this.http(session.uploadUrl,{
+            method:'PUT',credentials:'omit',
+            headers:{'Content-Range':`bytes ${start}-${end-1}/${bytes.byteLength}`},
+            body:bytes.slice(start,end),...(controller?{signal:controller.signal}:{}),
+          });
+          part=final?await Promise.race([sending,new Promise<never>((_,reject)=>{
+            deadline=setTimeout(()=>{controller?.abort();reject(new Error('OneDriveの保存応答を確認できませんでした。'));},120000);
+          })]):await sending;
+        }catch(error){if(final)this.markMutationUncertain();throw error;}
+        finally{if(deadline!==undefined)clearTimeout(deadline);}
         if(part.status!==429||attempt>=3)break;
         const delay=throttlingDelay(part,attempt);if(delay===null)break;
         await wait(delay);
@@ -470,13 +453,28 @@ export class OneDriveTestClient {
       if(end<bytes.byteLength) {
         if(part.status!==202){this.markMutationUncertain();throw new Error('OneDriveのアップロードが途中で終了しました。');}
       } else {
-        if(part.status!==200&&part.status!==201){this.markMutationUncertain();throw new Error('OneDriveが保存完了を返しませんでした。');}
-        const item=await part.json() as DriveItem;
-        if(!item.id)throw new Error('OneDriveの保存IDを取得できません。');
-        return item;
+        return this.confirmedUploadItem(part,expectedId);
       }
     }
     throw new Error('空のアップロードは許可されません。');
+  }
+
+  /** A successful HTTP status alone is not proof of a committed write. */
+  private async confirmedUploadItem(response:Response,expectedId?:string):Promise<DriveItem>{
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    try {
+      if(response.status!==200&&response.status!==201)throw new Error('OneDriveが保存完了を返しませんでした。');
+      const raw:unknown=await Promise.race([response.json(),new Promise<never>((_,reject)=>{
+        timer=setTimeout(()=>reject(new Error('OneDriveの保存応答を確認できませんでした。')),30000);
+      })]);
+      if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('OneDriveの保存応答が不正です。');
+      const item=raw as DriveItem;
+      if(typeof item.id!=='string'||!item.id.trim()||(expectedId!==undefined&&item.id!==expectedId))
+        throw new Error('OneDriveの保存IDを確認できません。');
+      if(item.eTag!==undefined&&(typeof item.eTag!=='string'||!item.eTag.trim()))throw new Error('OneDriveの保存ETagが不正です。');
+      return item;
+    }catch(error){this.markMutationUncertain();throw error;}
+    finally{if(timer!==undefined)clearTimeout(timer);}
   }
 
   async writeLiveVault(text:string, existing: {id:string;etag:string}|null):Promise<void> {
@@ -486,7 +484,7 @@ export class OneDriveTestClient {
     const path=existing
       ? `/me/drive/items/${encodeURIComponent(existing.id)}/createUploadSession`
       : `/me/drive/items/${encodeURIComponent(folder)}:/finance-v1-vault.enc:/createUploadSession`;
-    await this.uploadSession(path,bytes,existing?.etag);
+    await this.uploadSession(path,bytes,existing?.etag,existing?.id);
   }
 
   private async originalsFolder(create:boolean):Promise<string|null> {
@@ -707,12 +705,21 @@ export class OneDriveTestClient {
     try {
       // Upload sessions retain the documented If-Match/409/412 flow for live data.
       // Direct PUT on Personal OneDrive lacks a documented final-boundary ETag guarantee.
-      const result=await measureFinancePhase('vault.encrypted-upload',()=>this.uploadSession(path,bytes,existing?.etag));
+      const result=await measureFinancePhase('vault.encrypted-upload',()=>this.uploadSession(path,bytes,existing?.etag,existing?.id));
       const key=JSON.stringify([parts,name,maxBytes]);
       this.encryptedReadCache.delete(key);this.encryptedReadJobs.delete(key);
-      // Some Graph variants omit ETag on upload completion. The caller will
-      // perform a safe read-back only in that case.
-      return result.eTag?{id:result.id,etag:result.eTag}:null;
+      if(!result.eTag){
+        this.markMutationUncertain();
+        if(lease)throw new Error('OneDriveの保存ETagを取得できません。');
+        // Confirm the exact target, including a new ETag, rather than accepting
+        // a successful HTTP response that cannot identify the committed version.
+        const verified=await this.readNamedFile(parts,name,maxBytes,true);this.checkMutationGuard();
+        if(!verified||verified.text!==text||verified.id!==result.id||!verified.etag||(existing&&verified.etag===existing.etag))
+          throw new Error('OneDriveの保存結果を照合できませんでした。');
+        return {id:verified.id,etag:verified.etag};
+      }
+      if(existing&&result.eTag===existing.etag){this.markMutationUncertain();throw new Error('OneDriveの更新結果を確認できませんでした。');}
+      return {id:result.id,etag:result.eTag};
     }catch(error){
       // A folder can be renamed/deleted outside Finance. Next attempt must
       // re-resolve its path rather than keep an invalid directory ID.
@@ -724,7 +731,7 @@ export class OneDriveTestClient {
         try{
           this.checkMutationGuard();
           const verified=await this.readNamedFile(parts,name,maxBytes,true);this.checkMutationGuard();
-          if(verified&&verified.text===text&&(!existing||(verified.id===existing.id&&verified.etag!==existing.etag))){
+          if(verified&&verified.etag&&verified.text===text&&(!existing||(verified.id===existing.id&&verified.etag!==existing.etag))){
             lease.uncertain=false;return {id:verified.id,etag:verified.etag};
           }
         }catch{/* Keep the original failure and fence. */}
@@ -732,25 +739,31 @@ export class OneDriveTestClient {
       throw error;
     }
   }
+  /** Fresh metadata only; never download encrypted bodies for the closing fence. */
+  async readFinanceMetadata(kind:'index'|'rules'|'assets'):Promise<{id:string;etag:string}|null>{
+    const [parts,name]:[string[],string]=kind==='index'?[[FINANCE_DIR],'index.enc']:kind==='rules'?[this.financeDataPath('rules'),'merchants.enc']:[this.financeDataPath('settings'),'assets.enc'];
+    const file=await this.findNamedFile(parts,name,true);
+    return file?{id:file.id,etag:file.eTag}:null;
+  }
   /** finance/index.enc contains only encrypted shard discovery metadata. */
   async readFinanceIndex(fresh=false):Promise<{text:string;id:string;etag:string}|null> {
     // A fresh metadata lookup must not join an earlier in-flight read.
     // Identical ID/ETag still proves the cached encrypted index is current.
     return this.readNamedFile([FINANCE_DIR],'index.enc',1_000_000,fresh,true);
   }
-  async writeFinanceIndex(text:string,existing:{id:string;etag:string}|null):Promise<void> {
-    await this.writeNamedFile([FINANCE_DIR],'index.enc',text,existing,1_000_000);
+  async writeFinanceIndex(text:string,existing:{id:string;etag:string}|null):Promise<{id:string;etag:string}|null> {
+    return this.writeNamedFile([FINANCE_DIR],'index.enc',text,existing,1_000_000);
   }
   /** Independent encrypted merchant display rules, shared across billing years. */
   async readMerchantRules(fresh=false):Promise<{text:string;id:string;etag:string}|null> {
-    return this.readNamedFile(this.financeDataPath('rules'),'merchants.enc',2_000_000,fresh);
+    return this.readNamedFile(this.financeDataPath('rules'),'merchants.enc',2_000_000,fresh,true);
   }
   async writeMerchantRules(text:string,existing:{id:string;etag:string}|null):Promise<{id:string;etag:string}|null> {
     return this.writeNamedFile(this.financeDataPath('rules'),'merchants.enc',text,existing,2_000_000);
   }
   /** Independent encrypted asset settings, never stored in the statement index. */
   async readAssetSettings(fresh=false):Promise<{text:string;id:string;etag:string}|null> {
-    return this.readNamedFile(this.financeDataPath('settings'),'assets.enc',2_000_000,fresh);
+    return this.readNamedFile(this.financeDataPath('settings'),'assets.enc',2_000_000,fresh,true);
   }
   async writeAssetSettings(text:string,existing:{id:string;etag:string}|null):Promise<{id:string;etag:string}|null> {
     return this.writeNamedFile(this.financeDataPath('settings'),'assets.enc',text,existing,2_000_000);
@@ -776,10 +789,10 @@ export class OneDriveTestClient {
     return this.writeNamedFile(this.financeDataPath('reports'),`${period}.enc`,text,existing,2_000_000);
   }
   /** One listing provides both year discovery and ETags, so unchanged years need no download. */
-  async listYearFiles():Promise<Array<{year:string;id:string;etag:string}>> {
+  async listYearFiles(fresh=false):Promise<Array<{year:string;id:string;etag:string}>> {
     const parent=await this.folderPath(this.financeDataPath('statements'),false);
     if(!parent)return [];
-    const r=await this.graph(`/me/drive/items/${encodeURIComponent(parent)}/children?$select=id,name,eTag&$top=400`);
+    const r=await this.graph(`/me/drive/items/${encodeURIComponent(parent)}/children?$select=id,name,eTag&$top=400`,fresh?{cache:'no-store'}:{});
     const json=await r.json() as {value?:DriveItem[];'@odata.nextLink'?:string};
     if(json['@odata.nextLink'])throw new Error('保存年度が多すぎるため一覧を取得できません。');
     if(!Array.isArray(json.value))throw new Error('年別明細の一覧が不正です。');

@@ -3,7 +3,8 @@ import { estimateRegularNet, regularSalarySample } from './salary-estimate.js';
  * Neither the monthly estimate nor the input salary is persisted to Finance/OneDrive.
  */
 import { forecastAssets, matchingNisaRows } from './asset-projection.js';
-import { payrollRole, recurringSalaryRole } from './payroll-income.js';
+import { cardDebitAccountOnDay, payrollDepositAccountOnDay } from './assets.js';
+import { payrollRole, recurringSalaryRole, manualMainSalaryInMonth } from './payroll-income.js';
 import { recurringInMonth } from './recurring-schedule.js';
 import { monthlyReport, prepareMonthlyReports } from '../summary/monthly-summary.js';
 import { estimatedCardFixedBills, estimatedMizuhoFunding } from './card-fixed-estimates.js';
@@ -58,7 +59,7 @@ export function forecastBankBalances(doc, asOf, records, income, payrollDepositA
     if (work && work.records !== records)
         throw new Error('口座予測の明細索引が一致しません。');
     const context = work ?? prepareBankForecast(records, doc);
-    const accounts = forecastAssets(doc, asOf, records, income, payrollDepositAccount, context.nisaRows);
+    const accounts = forecastAssets(doc, asOf, records, income, payrollDepositAccount, context.nisaRows, today);
     const estimatedByAccount = {};
     const cardDebitByAccount = {};
     const fixedCostCardEstimatesByAccount = {};
@@ -70,7 +71,7 @@ export function forecastBankBalances(doc, asOf, records, income, payrollDepositA
         let report = context.reports.get(month);
         if (!report) {
             report = monthlyReport(month, { records, rules: [], categories: [], assets: doc,
-                payroll: { ready: false, syncedAt: null, entries: [] } }, context.prepared);
+                payroll: { ready: false, syncedAt: null, entries: [] }, currentDay: today, currentPeriod: period(today) }, context.prepared);
             context.reports.set(month, report);
         }
         for (const line of report.cardLines) {
@@ -88,7 +89,7 @@ export function forecastBankBalances(doc, asOf, records, income, payrollDepositA
                     autoTransferByAccount[id] = (autoTransferByAccount[id] ?? 0) + sign * transfer.amount;
                 }
             }
-            const account = doc.cardDebitAccounts?.[line.cardId];
+            const account = cardDebitAccountOnDay(doc, line.cardId, line.paymentDate);
             if (!account)
                 continue;
             const balance = accounts[account];
@@ -105,7 +106,7 @@ export function forecastBankBalances(doc, asOf, records, income, payrollDepositA
     }
     // Imported payment-month statements override all estimated contracts for that card.
     for (const estimate of estimatedCardFixedBills(doc, records, today, asOf)) {
-        const account = doc.cardDebitAccounts?.[estimate.cardId];
+        const account = cardDebitAccountOnDay(doc, estimate.cardId, estimate.paymentDate);
         if (!account)
             continue;
         const bank = accounts[account];
@@ -136,29 +137,26 @@ export function forecastBankBalances(doc, asOf, records, income, payrollDepositA
             forecast.warning = [forecast.warning, '固定費から推定したみずほ送金を含みます（未確定）。'].filter(Boolean).join(' ');
         }
     }
-    if (!payrollDepositAccount || !['rakuten-bank', 'cash-savings'].includes(payrollDepositAccount) || asOf < today)
-        return { accounts, estimatedByAccount, estimates: [], cardDebitByAccount, fixedCostCardEstimatesByAccount, autoTransferByAccount, estimatedTransferByAccount };
-    const balance = accounts[payrollDepositAccount];
-    if (balance.balance === null || !balance.baseline)
-        return { accounts, estimatedByAccount, estimates: [], cardDebitByAccount, fixedCostCardEstimatesByAccount, autoTransferByAccount, estimatedTransferByAccount };
-    const baselineDay = snapshotDay(balance.baseline);
-    const estimates = expectedMainSalaries(income, today, asOf).filter(estimate => {
-        if (estimate.date <= baselineDay)
-            return false;
-        return !recurringInMonth(period(estimate.date), doc.recurring).some(event => event.entry.toAccountId === payrollDepositAccount && recurringSalaryRole(event.entry) === 'main');
-    });
-    let sum = 0;
-    for (const item of estimates) {
-        sum += item.amount;
-        if (!Number.isSafeInteger(sum))
-            throw new Error('給与見込みの集計額が大きすぎます。');
-    }
-    if (sum) {
-        const next = balance.balance + sum;
-        if (!Number.isSafeInteger(next))
-            throw new Error('口座残高の見込み額が大きすぎます。');
-        balance.balance = next;
-        estimatedByAccount[payrollDepositAccount] = sum;
-    }
+    const estimates = [];
+    if (asOf >= today)
+        for (const estimate of expectedMainSalaries(income, today, asOf)) {
+            const account = payrollDepositAccountOnDay(doc, estimate.date, payrollDepositAccount);
+            if (!account || !['rakuten-bank', 'cash-savings'].includes(account))
+                continue;
+            const balance = accounts[account];
+            if (balance.balance === null || !balance.baseline || estimate.date <= snapshotDay(balance.baseline))
+                continue;
+            if (manualMainSalaryInMonth(doc.oneTime, estimate.date, account) || recurringInMonth(period(estimate.date), doc.recurring).some(event => event.entry.toAccountId === account && recurringSalaryRole(event.entry) === 'main'))
+                continue;
+            const next = balance.balance + estimate.amount;
+            if (!Number.isSafeInteger(next))
+                throw new Error('口座残高の見込み額が大きすぎます。');
+            balance.balance = next;
+            estimatedByAccount[account] = (estimatedByAccount[account] ?? 0) + estimate.amount;
+            estimates.push(estimate);
+        }
+    for (const account of Object.values(accounts))
+        if (account.balance !== null && account.overdue && (!Number.isSafeInteger(account.balance + account.overdue.delta) || !Number.isSafeInteger(account.balance + account.overdue.debit)))
+            throw Error('未確認予定を含む予測額が大きすぎます。');
     return { accounts, estimatedByAccount, estimates, cardDebitByAccount, fixedCostCardEstimatesByAccount, autoTransferByAccount, estimatedTransferByAccount };
 }

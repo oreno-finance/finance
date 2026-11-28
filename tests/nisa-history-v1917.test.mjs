@@ -129,3 +129,18 @@ test('history remains encrypted at rest and survives decrypt/revalidate',async()
   assert.equal(encrypted.includes('INVEST'),false);
   assert.deepEqual(await decryptAssets(encrypted,key,salt),doc);
 });
+
+test('H02: duplicate IDs, duplicate bills and invalid or provisional records never contribute to NISA assets',()=>{
+ const assets={...emptyAssets(),nisaCardRule:oldRule};
+ const original=statement('normal','smbc-nl','2026-10','2026-11-27',[row('x','2026-10-09','RAKUTEN SECURITIES',30000)]);
+ assert.equal(matchingNisaRows(assets,[original])[0].amount,30000);
+ const other={...structuredClone(original),id:'duplicate'};
+ assert.deepEqual(matchingNisaRows(assets,[original,other]),[]);
+ assert.equal(monthlyReport('2026-11',source(assets,[original,other])).cardOutflow,null);
+ assert.equal(matchingNisaRows(assets,[original]).length,1);
+ const across=structuredClone(original);across.statement.billingMonth='2026-11';across.statement.paymentDate='2026-12-27';
+ assert.deepEqual(matchingNisaRows(assets,[original,across]),[]);
+ for(const mutate of [s=>s.confirmation='provisional',s=>s.confirmation='unknown',s=>s.statedTotal++,s=>s.paymentDate='2026-02-30',s=>s.sourceKind='pdf',s=>{s.rows.push({...s.rows[0]});s.statedTotal*=2;},s=>s.provider='rakuten']){
+  const bad=structuredClone(original);mutate(bad.statement);assert.deepEqual(matchingNisaRows(assets,[bad]),[]);
+ }
+});

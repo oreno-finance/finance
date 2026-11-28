@@ -31,7 +31,9 @@ function fixture(){
   if(method==='POST'&&url.endsWith('/createUploadSession')){
    if(s.createFail)throw new Error('synthetic lost session allocation');
    if(s.createThrottle){s.createThrottle=false;return err(429);}
-   const target=decodeURIComponent(url.slice(url.indexOf(':/')+2,-':/createUploadSession'.length));
+   const named=url.indexOf(':/',8);
+   const target=decodeURIComponent(named>=0?url.slice(named+2,-':/createUploadSession'.length):url.match(/\/items\/([^/]+)\/createUploadSession$/)[1]);
+   if(named<0&&(!s.files.has(target)||init.headers['If-Match']!==s.files.get(target).eTag))return err(412,'resourceModified');
    const session=`https://upload.invalid/${++s.serial}`;s.sessions.set(session,target);return Response.json({uploadUrl:session});
   }
   if(method==='DELETE'){
@@ -46,8 +48,8 @@ function fixture(){
   }
   if(method==='GET'&&url.includes(`:/${name}?`))return s.marker?Response.json(s.marker):err(404);
   if(method==='GET'&&url.includes('/children?')&&url.includes('/marker-'))return Response.json({value:s.children});
-  if(method==='GET'&&url.includes(':/')){
-   const target=decodeURIComponent(url.slice(url.indexOf(':/')+2).split('?')[0]);const file=s.files.get(target);
+  if(method==='GET'&&url.indexOf(':/',8)>=0){
+   const target=decodeURIComponent(url.slice(url.indexOf(':/',8)+2).split('?')[0]);const file=s.files.get(target);
    return file?Response.json({id:file.id,eTag:file.eTag,'@microsoft.graph.downloadUrl':`https://download.invalid/${encodeURIComponent(target)}`}):err(404);
   }
   throw new Error('Unexpected fixture request');
@@ -158,7 +160,7 @@ test('LiveVaultの45件一括保存は429を挟んでも全件登録され、次
  const {s,api}=fixture();const files=new Map();let version=0;
  const read=key=>files.get(key)??null;
  const write=(key,text,ref)=>{const old=read(key);if(ref?old?.etag!==ref.etag:!!old)throw new GraphError(412,'conflict');const file={id:key,etag:`"rev-${++version}"`,text};files.set(key,file);return file;};
- api.readFinanceIndex=async()=>read('index');api.writeFinanceIndex=async(text,ref)=>{write('index',text,ref);};
+ api.readFinanceMetadata=async kind=>read(kind);api.readFinanceIndex=async()=>read('index');api.writeFinanceIndex=async(text,ref)=>{write('index',text,ref);};
  api.readLiveVault=async()=>null;api.ensurePayrollNamespace=async()=>{};api.readMerchantRules=async()=>null;api.readAssetSettings=async()=>null;
  api.listYearFiles=async()=>[...files].filter(([k])=>k.startsWith('year:')).map(([k,v])=>({year:k.slice(5),id:v.id,etag:v.etag}));
  api.readYearVault=async year=>read('year:'+year);api.readListedYearVault=async file=>read('year:'+file.year);
@@ -210,7 +212,7 @@ test('自己ロック解除失敗後の資産・ルール・レポート保存�
  const {s,api}=fixture();const files=new Map();let serial=0;
  const read=k=>files.get(k)??null;
  const write=(k,text,ref)=>{const old=read(k);if(ref?old?.etag!==ref.etag:!!old)throw new GraphError(412,'conflict');const result={id:k,etag:`rev-${++serial}`,text};files.set(k,result);return result;};
- api.readFinanceIndex=async()=>read('index');api.writeFinanceIndex=async(text,ref)=>write('index',text,ref);
+ api.readFinanceMetadata=async kind=>read(kind);api.readFinanceIndex=async()=>read('index');api.writeFinanceIndex=async(text,ref)=>write('index',text,ref);
  api.readLiveVault=async()=>null;api.ensurePayrollNamespace=async()=>{};api.listYearFiles=async()=>[];
  api.readAssetSettings=async()=>read('assets');api.writeAssetSettings=async(text,ref)=>write('assets',text,ref);
  api.readMerchantRules=async()=>read('rules');api.writeMerchantRules=async(text,ref)=>write('rules',text,ref);
@@ -231,7 +233,60 @@ test('自己ロック解除失敗後の資産・ルール・レポート保存�
  assert.equal(messages.length,3);assert.equal(vault.takeMutationWarning(),null);
  // A competing marker must not disable read-only access or mutate the draft.
  s.marker={id:'marker-other',name:'finance-operation-lock',eTag:'other',folder:{childCount:0}};const deletes=s.deleteCalls;const before=read('assets');
- await vault.refresh();assert.equal(vault.assetSettings().birthMonth,'2000-02');assert.equal((await vault.loadArchivedReport('2026-01')).current.note,'edited');
+ await assert.rejects(vault.refresh(),/保存操作が進行中/);assert.equal(vault.assetSettings().birthMonth,'2000-02');assert.equal((await vault.loadArchivedReport('2026-01')).current.note,'edited');
  await assert.rejects(vault.setBirthMonth('2000-03'),CloudEditCancelledError);assert.equal(read('assets'),before);assert.equal(s.deleteCalls,deletes);
  s.marker=null;await vault.setBirthMonth('2000-03');assert.equal(vault.assetSettings().birthMonth,'2000-03');
+});
+
+test('H202: malformed final success body is an uncertain write, not a safe rejection',async()=>{
+ for(const body of ['{','null','[]','{}','{"id":7}','{"id":""}']){
+  const {s,api}=fixture();const release=await api.acquireVaultMutation(guard);
+  const request=api.http;api.http=async(url,init)=>url.startsWith('https://upload.invalid/')?(s.chunkCalls++,new Response(body,{status:201})):request(url,init);
+  await assert.rejects(api.uploadDatedOriginal(id(1),'synthetic-cipher','2026-01'));
+  assert.equal(s.chunkCalls,1);await assert.rejects(release(),/操作ロックを保持/);assert.ok(s.marker);assert.equal(s.deleteCalls,0);
+ }
+});
+test('H202: malformed final body after committing can recover only by exact read-back',async()=>{
+ const {s,api}=fixture();const release=await api.acquireVaultMutation(guard);
+ const request=api.http;api.http=async(url,init)=>{const response=await request(url,init);return url.startsWith('https://upload.invalid/')?new Response('{',{status:201}):response;};
+ const receipt=await api.uploadDatedOriginal(id(1),'synthetic-cipher','2026-01');assert.ok(receipt.etag);
+ assert.equal(s.chunkCalls,1);await release();assert.equal(s.marker,null);
+});
+
+// Real HTTP client for the index and asset writer, with only unrelated
+// namespace enumeration isolated. No real account or financial data.
+async function writerUpgradeFixture(){
+ const {s,api}=fixture();api.ensurePayrollNamespace=async()=>{};api.listYearFiles=async()=>[];api.readLiveVault=async()=>null;
+ const vault=new LiveVault(api);await vault.create('synthetic-password-for-test');
+ const initial=await api.readFinanceIndex(true);assert.equal(JSON.parse(initial.text).format,'finance-cloud-index-envelope-v3');
+ return {s,api,vault,initial};
+}
+function failNextIndexResponse(s,api,mode){
+ const original=api.http;let fired=false;
+ api.http=async(url,init)=>{
+  if(!fired&&url.startsWith('https://upload.invalid/')&&s.sessions.get(url)==='index.enc'){
+   fired=true;s.mode=mode;try{return await original(url,init);}finally{s.mode='normal';}
+  }
+  return original(url,init);
+ };
+ return ()=>fired;
+}
+test('INT3-19: first v4 index write with lost committed response verifies exact ciphertext and proceeds without replay',async()=>{
+ const {s,api,vault,initial}=await writerUpgradeFixture();const fired=failNextIndexResponse(s,api,'lost-committed');const chunks=s.chunkCalls;
+ await vault.setCardDebitAccounts({'rakuten-mizuho':'mizuho-bank'});assert.equal(fired(),true);
+ const index=await api.readFinanceIndex(true);assert.equal(index.id,initial.id);assert.notEqual(index.etag,initial.etag);
+ assert.equal(JSON.parse(index.text).format,'finance-cloud-index-envelope-v4');assert.equal(s.chunkCalls-chunks,2);
+ assert.equal(s.marker,null);assert.equal(vault.assetSettings().cardDebitAccounts['rakuten-mizuho'],'mizuho-bank');
+ const restarted=new LiveVault(api);await restarted.unlock('synthetic-password-for-test');assert.equal(restarted.assetSettings().format,'finance-assets-v3');
+});
+test('INT3-19: unconfirmed v4 upgrade fences the write; recovery verifies old data before an explicit retry',async()=>{
+ const {s,api,vault,initial}=await writerUpgradeFixture();const fired=failNextIndexResponse(s,api,'lost-uncommitted');const chunks=s.chunkCalls;
+ await assert.rejects(vault.setCardDebitAccounts({'rakuten-mizuho':'mizuho-bank'}),CloudWriteUncertainError);
+ assert.equal(fired(),true);assert.equal(s.chunkCalls-chunks,1);assert.ok(s.marker);assert.equal(await api.readAssetSettings(true),null);
+ assert.deepEqual(await api.readFinanceIndex(true),initial);
+ await assert.rejects(vault.setCardDebitAccounts({'rakuten-mizuho':'mizuho-bank'}),CloudWriteUncertainError);assert.equal(s.chunkCalls-chunks,1);
+ assert.equal(await vault.recoverSaveLock(async()=>true,()=>true),'released');await vault.refresh();
+ await vault.setCardDebitAccounts({'rakuten-mizuho':'mizuho-bank'});assert.equal(s.marker,null);
+ assert.equal(JSON.parse((await api.readFinanceIndex(true)).text).format,'finance-cloud-index-envelope-v4');
+ assert.equal(vault.assetSettings().cardDebitAccounts['rakuten-mizuho'],'mizuho-bank');
 });

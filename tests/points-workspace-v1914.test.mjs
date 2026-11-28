@@ -77,3 +77,18 @@ test('積立額変更の比較は変更開始月からのみ適用し、過去�
  for(const point of result.points.filter(p=>p.month<'2027-01'))assert.equal(point.nisa,point.nisaScenario);
  assert.ok(result.points.find(p=>p.month==='2027-03').nisaScenario>result.points.find(p=>p.month==='2027-03').nisa);
 });
+
+test('M303: exact floor for all allowed rate units, including integer boundaries and safe-integer amounts',async()=>{
+ const {pointsForAmount,safePointSum}=await import('../dist/src/summary/point-benefits.js');
+ for(let units=0;units<=10000;units++){
+  for(const amount of [0,1,199,200,1999,5000,9999,10000,10001,Number.MAX_SAFE_INTEGER]){
+   const expected=Number(BigInt(amount)*BigInt(units)/10000n);
+   assert.equal(pointsForAmount(amount,units/100),expected);
+  }
+ }
+ assert.equal(pointsForAmount(10000,1.13),113);assert.equal(pointsForAmount(5000,1.14),57);
+ assert.equal(pointsForAmount(-100,7),0);
+ for(const rate of [NaN,Infinity,-1,100.01,1.123])assert.throws(()=>pointsForAmount(10000,rate));
+ for(const amount of [NaN,1.1,Number.MAX_SAFE_INTEGER+1])assert.throws(()=>pointsForAmount(amount,1));
+ assert.throws(()=>safePointSum(Number.MAX_SAFE_INTEGER,1));
+});

@@ -138,3 +138,14 @@ test('NISA exclusion uses the same complete months, while cumulative reference s
  assert.equal(result.totals.balance,240000);assert.equal(balanceWithoutNisa(result.months),300000);
  assert.deepEqual(cumulativeBalances(result.months).map(p=>p.reference),[false,true,true]);
 });
+
+test('L302: incomplete comparison quality does not change known amounts or become an extreme',()=>{
+ const source=base([card('2026-09',500,{confirmation:'provisional'}),card('2026-10',10000),card('2026-11',50000,{confirmation:'unknown'})]);
+ const result=rollingAnalytics(source,'2026-11',3,'2026-11');
+ assert.equal(result.totals.expense,60500);assert.equal(result.totals.knownExpenseMonths,3);
+ assert.equal(result.totals.comparableExpenseMonths,1);assert.equal(result.totals.avgExpense,10000);
+ assert.equal(result.totals.maxExpense.period,'2026-10');assert.equal(result.totals.minExpense.period,'2026-10');
+ assert.deepEqual(result.categoryChanges,[]);assert.deepEqual(result.merchantChanges,[]);
+ const none=rollingAnalytics(base([card('2026-11',10,{confirmation:'provisional'})]),'2026-11',3,'2026-11');
+ assert.equal(none.totals.expense,10);assert.equal(none.totals.avgExpense,null);assert.equal(none.totals.maxExpense,null);assert.equal(none.totals.minExpense,null);
+});

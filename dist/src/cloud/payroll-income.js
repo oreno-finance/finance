@@ -21,7 +21,51 @@ export function recurringSalaryRole(entry) {
  * on the explicitly assigned account. A bonus or side job never hides main pay. */
 export function payrollCoversRecurringSalary(entry, day, entries, depositAccount) {
     const role = recurringSalaryRole(entry);
-    return !!role && !!depositAccount && entry.toAccountId === depositAccount && entries.some(item => payrollRole(item) === role && item.kind === 'salary' && item.paidOn.slice(0, 7) === day.slice(0, 7));
+    return !!role && entries.some(item => {
+        const account = typeof depositAccount === 'function' ? depositAccount(item.paidOn) : depositAccount;
+        return !!account && entry.toAccountId === account && payrollRole(item) === role && item.kind === 'salary' && item.paidOn.slice(0, 7) === day.slice(0, 7);
+    });
+}
+/** A manual one-off explicitly named regular salary is a candidate, not proof
+ * of another payment. Do not confuse bonus/adjustment entries with regular pay. */
+export function manualSalaryRole(entry) {
+    return /賞与|ボーナス|調整|bonus|adjustment/i.test(entry.name) ? null : recurringSalaryRole(entry);
+}
+export function manualMainSalaryInMonth(entries, day, account) {
+    return !!account && !!entries?.some(e => manualSalaryRole(e) === 'main' && e.toAccountId === account && e.date.slice(0, 7) === day.slice(0, 7));
+}
+/** Only a unique unexecuted plan is superseded by a published regular salary.
+ * Preserve executed and ambiguous entries and expose their quality to callers. */
+export function reconcileManualSalary(entries, payroll, accountOnDay) {
+    const key = (role, day, account) => JSON.stringify([role, day.slice(0, 7), account]);
+    const actual = new Map();
+    const plans = new Map();
+    for (const item of payroll) {
+        const role = payrollRole(item), account = accountOnDay(item.paidOn);
+        if (!role || !account || item.kind !== 'salary')
+            continue;
+        const k = key(role, item.paidOn, account);
+        actual.set(k, (actual.get(k) ?? 0) + 1);
+    }
+    for (const e of entries ?? []) {
+        const role = manualSalaryRole(e);
+        if (!role || !e.toAccountId)
+            continue;
+        const k = key(role, e.date, e.toAccountId);
+        if (!actual.has(k))
+            continue;
+        const list = plans.get(k) ?? [];
+        list.push(e);
+        plans.set(k, list);
+    }
+    const excluded = new Set(), ambiguous = [];
+    for (const [k, list] of plans) {
+        if (actual.get(k) === 1 && list.length === 1 && list[0].status === 'planned')
+            excluded.add(list[0].id);
+        else
+            ambiguous.push(...list);
+    }
+    return { excludes: (id) => excluded.has(id), ambiguous };
 }
 const idPattern = /^[a-zA-Z0-9_-]{3,100}$/;
 function isObject(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }

@@ -15,6 +15,6 @@ test('only two retention choices remain and each unlock is explicit',()=>{
   assert.match(html,/id="vault-retention-every-time" type="radio" name="vault-retention" value="always" checked/);
   assert.match(html,/id="vault-browser-keep" type="radio" name="vault-retention" value="browser"/);
   assert.doesNotMatch(html,/vault-tab-keep|2時間保持/);
-  assert.match(js,/forgetBrowserKey\(context\)/);
+  assert.match(js,/forgetBrowserKey\(context, operation.check\)/);
   assert.doesNotMatch(js,/unlockTab|exportTabKey|saveTabSession|readTabSession/);
 });

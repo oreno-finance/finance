@@ -48,14 +48,14 @@ test('oversized and excessive-page PDFs are rejected before extraction',async()=
   await assert.rejects(parsePdfFile({size:MAX_PDF_BYTES+1}),/15MB/);
   const code=readFileSync(new URL('../src/importers/pdf-reader.ts',import.meta.url),'utf8');
   assert.ok(code.indexOf('assertPdfLimits(file.size)')<code.indexOf('file.arrayBuffer()'));
-  assert.match(code,/try \{\s*const pdf\s*=\s*await task.promise;\s*signal\?\.throwIfAborted\(\);\s*assertPdfLimits\(file.size,pdf.numPages\)/);
-  assert.match(code,/finally \{ signal\?\.removeEventListener\(\x27abort\x27,abort\);await destroy\(\); \}/);
+  assert.match(code,/try \{\s*const pdf\s*=\s*await pdfAbortable\(task\.promise,active\);\s*check\(\);assertPdfLimits\(file.size,pdf.numPages\)/);
+  assert.match(code,/finally \{\s*active\.removeEventListener\(\x27abort\x27,abort\);\s*const cleanup=destroy\(\);/);
 });
 
 test('stale Payroll data are retained in memory but excluded until explicit opt-in',()=>{
   assert.match(payroll,/const lastVerified=payrollOwner===vault&&payrollSyncedAt>0/);
   assert.match(payroll,/payrollStale=lastVerified/);
-  assert.match(payroll,/if\(!lastVerified\)\{payrollOwner=null;payrollIncome=\[\];payrollSyncedAt=0;\}/);
+  assert.match(payroll,/if\(!lastVerified\)\{clearPayroll\(\);\}/);
   assert.match(payroll,/payrollStale&&payrollUseStale&&payrollOwner===vault/);
   assert.match(payroll,/payrollUseStale=\(event.target as HTMLInputElement\).checked/);
   assert.match(payroll,/payrollStale=false;payrollUseStale=false/);

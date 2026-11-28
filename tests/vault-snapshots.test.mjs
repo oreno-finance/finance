@@ -39,7 +39,7 @@ test('Graph creates immutable encrypted snapshot and downloads without exposing 
       assert.equal(init.headers.Authorization,'Bearer TOKEN');
       assert.ok(!init.body.includes('my-password'));
       const name = decodeURIComponent(url.match(/items\/appfolder:\/(.*):\/content\?/)[1]);
-      const item = { id:'i1',name,size:new TextEncoder().encode(init.body).byteLength,createdDateTime:'2026-11-15T12:00:00Z',body:init.body };
+      const item = { id:'i1',name,size:init.body.byteLength,createdDateTime:'2026-11-15T12:00:00Z',body:init.body };
       if (files.has(name)) return Response.json({error:{code:'nameAlreadyExists'}},{status:409});
       files.set(name,item);
       return Response.json(item);
@@ -128,4 +128,24 @@ test('cleanup rejects incomplete root enumeration and malformed snapshot metadat
     url.endsWith('/approot')?Response.json({id:'root'}):Response.json(value));
   await assert.rejects(create({value:[], '@odata.nextLink':'https://graph.microsoft.com/next'}).listRetiredRootData(),/全件確認/);
   await assert.rejects(create({value:[{id:'s1',name:known,eTag:'one'}]}).listRetiredRootData(),/メタデータ/);
+});
+
+// Both immutable snapshot upload routes must reject malformed success replies,
+// and must not blindly resend an ambiguous final write.
+test('legacy snapshot small and large uploads reject malformed successful replies without resending',async()=>{
+ const large=JSON.stringify({format:'finance-encrypted-backup-v1',meta:{salt:[1]},records:[{id:'s',statement:{iv:[1],data:'X'.repeat(4*1024*1024)}}]});
+ for(const body of [text,large])for(const invalid of ['{bad','null','[]','{"id":123}','{"id":" "}']){
+  let finalWrites=0;
+  const api=new OneDriveTestClient('TOKEN',async (url,init={})=>{
+   if(url.endsWith('/approot'))return Response.json({id:'root'});
+   if(url.endsWith('/createUploadSession'))return Response.json({uploadUrl:'https://upload.example.test/snapshot'});
+   if(url==='https://upload.example.test/snapshot'){
+    assert.equal(init.headers.Authorization,undefined);assert.equal(init.credentials,'omit');
+    const [,end,total]=init.headers['Content-Range'].match(/-(\d+)\/(\d+)$/);
+    if(+end+1!==+total)return new Response(null,{status:202});
+   }
+   finalWrites++;return new Response(invalid,{status:201});
+  });
+  await assert.rejects(api.uploadVaultSnapshot(body));assert.equal(finalWrites,1);
+ }
 });

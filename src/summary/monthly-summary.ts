@@ -1,3 +1,5 @@
+import {matchingNisaRows} from '../cloud/asset-projection.js';
+import {reconcileNisaMovements} from '../cloud/nisa-movements.js';
 import {estimateRegularNet,regularSalarySample} from '../cloud/salary-estimate.js';
 import {recurringForCalculation,fixedCostsForCalculation} from '../fixed-costs/payment-history.js';
 /** Finance monthly report. Real debits follow paymentDate, never transaction usedOn.
@@ -5,12 +7,12 @@ import {recurringForCalculation,fixedCostsForCalculation} from '../fixed-costs/p
  * This module is pure and has no persistence or bank-balance side effects. */
 import { getCard, isZeroUsage, statementPeriod, type ImportRow, type ParsedStatement } from '../models/types.js';
 import type { CloudRecord } from '../cloud/merge.js';
-import { importErrors } from '../importers/batch-policy.js';
+import { recordIssues, statementConflicts } from '../importers/batch-policy.js';
 import { displayMerchant, matchingRule, type CategoryDefinition, type MerchantRule } from '../cloud/merchant-rules.js';
-import { recurringOneTimeMatch, nisaRuleOnDay, type AssetAccountId, type AssetsDocument, type OneTimeEntry } from '../cloud/assets.js';
+import { payrollDepositAccountOnDay, recurringOneTimeMatch, nisaRuleOnDay, type AssetAccountId, type AssetsDocument, type OneTimeEntry } from '../cloud/assets.js';
 import { recurringInMonth } from '../cloud/recurring-schedule.js';
 import { fixedCostOccurrences } from '../fixed-costs/contracts.js';
-import { payrollRole, payrollCoversRecurringSalary, recurringSalaryRole, type PayrollJob, type PayrollIncomeEntry } from '../cloud/payroll-income.js';
+import { payrollRole, payrollCoversRecurringSalary, recurringSalaryRole, reconcileManualSalary, manualSalaryRole, type PayrollJob, type PayrollIncomeEntry } from '../cloud/payroll-income.js';
 
 export interface SummaryIncome { id: string; employerId: string; job: PayrollJob|null; kind: string; date: string; amount: number }
 export interface SummaryIncomeEstimate { employerId: string; job: 'main'; kind: 'salary'; sourcePeriod: string; amount: number; method: 'previous-regular-net-excluding-nontaxable' | 'previous-regular-net-fallback' }
@@ -39,6 +41,7 @@ export interface MonthlyReport {
   oneTimePlannedExpense:number;
   oneTimePlannedIncome:number;
   pastUnconfirmedOneTime:number;
+  pastUnconfirmedExpense:number;
   cardNoUseConfirmed:boolean;
   oneTimeLines:OneTimeEntry[];
   recurringExpense: number;
@@ -47,6 +50,8 @@ export interface MonthlyReport {
   recurringSalaryExcluded: number;
   recurringCardOverlap: number;
   recurringOneTimeOverlap:number;
+  nisaOverlapCount?:number;
+  payrollOneTimeOverlap?:number;
   categories: SummaryCategory[];
   merchants: SummaryMerchant[];
   issues: SummaryIssue[];
@@ -62,7 +67,7 @@ export function hasScheduledSalary(report:MonthlyReport):boolean {
   return report.recurringLines.some(line=>recurringSalaryRole(line)!==null);
 }
 export interface PayrollSnapshot { ready: boolean; syncedAt: number | null; entries: readonly PayrollIncomeEntry[] }
-export interface MonthlySource { fixedCostMigrations?:readonly string[]; records: readonly CloudRecord[]; rules: readonly MerchantRule[]; categories: readonly CategoryDefinition[]; assets: Pick<AssetsDocument,'nisaCardRule'|'recurring'> & Partial<Pick<AssetsDocument,'nisaCardRuleHistory'>> & Partial<Pick<AssetsDocument,'snapshots'|'payrollDepositAccount'|'cardDebitAccounts'|'cardPreferences'|'cardRecurringDecisions'|'mizuhoTransferPlan'|'oneTime'|'fixedCosts'|'mizuhoFundingChecks'|'cardNoUseMonths'|'balanceWarningLimits'>>; payroll: PayrollSnapshot; /** Optional injected local month for deterministic tests. */ currentPeriod?:string }
+export interface MonthlySource { fixedCostMigrations?:readonly string[]; records: readonly CloudRecord[]; rules: readonly MerchantRule[]; categories: readonly CategoryDefinition[]; assets: Pick<AssetsDocument,'nisaCardRule'|'recurring'> & Partial<Pick<AssetsDocument,'nisaCardRuleHistory'>> & Partial<Pick<AssetsDocument,'snapshots'|'payrollDepositAccount'|'payrollDepositAccountHistory'|'cardDebitAccounts'|'cardDebitAccountHistory'|'cardPreferences'|'cardRecurringDecisions'|'mizuhoTransferPlan'|'oneTime'|'fixedCosts'|'mizuhoFundingChecks'|'cardNoUseMonths'|'balanceWarningLimits'>>; payroll: PayrollSnapshot; /** Optional injected local month for deterministic tests. */ currentPeriod?:string; currentDay?:string }
 const validPeriod = (value: string): boolean => /^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(value);
 export function isValidPeriod(value:string): boolean {return validPeriod(value);}
 function validDay(value: string | null | undefined): value is string {
@@ -97,26 +102,24 @@ export interface PreparedMonthlyReports {
   readonly records:readonly CloudRecord[];
   readonly months:ReadonlyMap<string,readonly {position:number;record:CloudRecord}[]>;
   readonly undated:readonly {position:number;record:CloudRecord}[];
-  readonly duplicates:ReadonlySet<string>;
+  readonly conflicts:ReturnType<typeof statementConflicts>;
+  /** Reused only within this immutable render snapshot. */
+  nisaReconciliation?:{assets:MonthlySource['assets'];today:string;plan:ReturnType<typeof reconcileNisaMovements>};
 }
 /** Build global duplicate information once, preserving each original record position. */
 export function prepareMonthlyReports(records:readonly CloudRecord[]):PreparedMonthlyReports {
   const months=new Map<string,{position:number;record:CloudRecord}[]>();
   const undated:{position:number;record:CloudRecord}[]=[];
-  const counts=new Map<string,number>();
   for(let position=0;position<records.length;position++){
     const record=records[position];
     if(!record||!record.statement)continue;
     const statement=record.statement;
-    const key=statement.cardId&&statement.billingMonth?`${statement.cardId}|${statement.billingMonth}`:null;
-    if(key)counts.set(key,(counts.get(key)??0)+1);
     const period=statementPeriod(statement);
     const ref={position,record};
     if(period){const month=months.get(period)??[];month.push(ref);months.set(period,month);}
     else undated.push(ref);
   }
-  const duplicates=new Set([...counts].filter(([,count])=>count>1).map(([key])=>key));
-  return {records,months,undated,duplicates};
+  return {records,months,undated,conflicts:statementConflicts(records)};
 }
 /** Unknown payment dates are listed globally since they cannot be attributed to a month. */
 export function monthlyReport(period: string, source: MonthlySource, prepared?:PreparedMonthlyReports):MonthlyReport {
@@ -127,7 +130,6 @@ export function monthlyReport(period: string, source: MonthlySource, prepared?:P
   const categoryTotals=new Map<string,SummaryCategory>();
   const merchantTotals=new Map<string,SummaryMerchant>();
   const cardRowsForOverlap:Array<{name:string;amount:number}>=[];
-  const usedIds=new Set<string>();
   let excludedCount=0,unclassifiedCount=0,unknownConfirmationCount=0;
   let included=0, sum=0, nisa=0;
   // An index belongs to its exact statement-array snapshot. Never accept an index
@@ -137,30 +139,13 @@ export function monthlyReport(period: string, source: MonthlySource, prepared?:P
     ?[...(prepared.months.get(period)??[]),...prepared.undated]
       .sort((a,b)=>a.position-b.position).map(item=>item.record)
     :source.records.filter(record=>record && record.statement);
-  const duplicateKeys=prepared?.duplicates??(()=>{
-    const counts=new Map<string,number>();
-    for(const record of source.records){
-      if(!record?.statement)continue;
-      const s=record.statement;
-      const key=s.cardId&&s.billingMonth?`${s.cardId}|${s.billingMonth}`:null;
-      if(key)counts.set(key,(counts.get(key)??0)+1);
-    }
-    return new Set([...counts].filter(([,count])=>count>1).map(([key])=>key));
-  })();
+  const conflicts=prepared?.conflicts??statementConflicts(source.records);
   for(const record of indexed) {
     const s=record.statement;
     const month=statementPeriod(s);
     // Undated records are visible as unresolved data quality issues in every month.
     if(month!==period && month!==null)continue;
-    const identity=s.cardId && s.billingMonth?`${s.cardId}|${s.billingMonth}`:null;
-    const reasons:string[]=[];
-    if(usedIds.has(record.id))reasons.push('保存済み明細IDが重複しています');
-    else usedIds.add(record.id);
-    if(identity && duplicateKeys.has(identity))reasons.push('同じカード・請求月の明細が複数あります');
-    const validation=importErrors(s,s.sourceKind!=='pdf'||!!record.originalId);
-    reasons.push(...validation);
-    // Set-based validation: a single linear walk, preserving duplicate-ID errors.
-    if(s.rows.length!==new Set(s.rows.map(row=>row.id)).size)reasons.push('取引行IDが重複しています');
+    const reasons=recordIssues(record,conflicts);
     if(month===null)reasons.push('支払日が不明または不正です');
     const reason=[...new Set(reasons)].join(' / ');
     if(reason){issues.push({id:record.id,title:cardTitle(record,source),reason,month});if(month===period)excludedCount++;continue;}
@@ -206,17 +191,28 @@ export function monthlyReport(period: string, source: MonthlySource, prepared?:P
     ?incomeLines.reduce((acc,line)=>add(acc,line.amount),0):null;
   const scheduled=recurringForCalculation(source.assets);
   const occurrences=recurringInMonth(period,scheduled);
+  const thisPeriod=source.currentPeriod??localPeriod();
+  const today=source.currentDay??(source.currentPeriod?`${thisPeriod}-01`:new Date().toLocaleDateString('sv-SE'));
+  const savedPlan=prepared?.nisaReconciliation;
+  const nisaPlan=savedPlan?.assets===source.assets&&savedPlan.today===today?savedPlan.plan:
+    reconcileNisaMovements(source.assets,matchingNisaRows(source.assets,source.records),today,scheduled);
+  if(prepared&&nisaPlan!==savedPlan?.plan)prepared.nisaReconciliation={assets:source.assets,today,plan:nisaPlan};
+  const nisaOverlapCount=nisaPlan.ambiguous.filter(e=>e.date.slice(0,7)===period).length;
   // Household income does not require a configured bank account. When there is
   // one, use the same account/role/month match as the bank forecasts. Otherwise
   // keep the legacy household-only role match without inventing a bank route.
-  const salaryAccount=source.assets.payrollDepositAccount;
-  const manualMain=source.payroll.ready&&occurrences.some(({entry})=>
-    recurringSalaryRole(entry)==='main'&&(!salaryAccount||entry.toAccountId===salaryAccount));
+  const manualMain=source.payroll.ready&&occurrences.some(({entry,date})=>{
+    const salaryAccount=payrollDepositAccountOnDay(source.assets,date);
+    return recurringSalaryRole(entry)==='main'&&(!salaryAccount||entry.toAccountId===salaryAccount);
+  });
+  const manualOneTimeMain=source.payroll.ready&&(source.assets.oneTime??[]).some(e=>e.date.slice(0,7)===period&&manualSalaryRole(e)==='main'&&e.toAccountId!==null&&e.toAccountId===payrollDepositAccountOnDay(source.assets,e.date));
+  const salaryPlan=reconcileManualSalary(source.assets.oneTime,source.payroll.ready?source.payroll.entries:[],day=>payrollDepositAccountOnDay(source.assets,day));
+  const payrollOneTimeOverlap=salaryPlan.ambiguous.filter(e=>e.date.slice(0,7)===period).length;
   const incomeEstimates:SummaryIncomeEstimate[]=[];
   const currentPeriod=source.currentPeriod??localPeriod();
   // Forecast only for the actual current month. The prior regular salary must be published.
   // Prefer prior payment month; allow one older payment month when salaries arrive late.
-  if(source.payroll.ready && period===currentPeriod && !manualMain &&
+  if(source.payroll.ready && period===currentPeriod && !manualMain && !manualOneTimeMain &&
     !incomeLines.some(line=>line.job==='main'&&line.kind==='salary')) {
     const sample=regularSalarySample(source.payroll.entries,period);
     if(sample){
@@ -236,11 +232,12 @@ export function monthlyReport(period: string, source: MonthlySource, prepared?:P
   let recurringIncome=0,recurringExpense=0,recurringTransfers=0,recurringSalaryExcluded=0,recurringCardOverlap=0,recurringOneTimeOverlap=0;
   for(const occurrence of occurrences){
     const e=occurrence.entry;
-    const oneTimeMatch=recurringOneTimeMatch(e,occurrence.date,source.assets.oneTime,'done',scheduled);
-    if(oneTimeMatch==='unique')continue;
+    if(nisaPlan.excludesRecurring(e.id,occurrence.date))continue;
+    const oneTimeMatch=recurringOneTimeMatch(e,occurrence.date,source.assets.oneTime,undefined,scheduled);
+    if(oneTimeMatch==='unique'&&(e.kind==='transfer'||recurringOneTimeMatch(e,occurrence.date,source.assets.oneTime,'done',scheduled)==='unique'))continue;
     if(oneTimeMatch==='ambiguous')recurringOneTimeOverlap++;
     const payrollOverlap=source.payroll.ready&&payrollCoversRecurringSalary(e,occurrence.date,source.payroll.entries,
-      salaryAccount??e.toAccountId);
+      paidOn=>payrollDepositAccountOnDay(source.assets,paidOn)??e.toAccountId);
     if(payrollOverlap){recurringSalaryExcluded++;continue;}
     const line:SummaryRecurring={id:occurrence.id,entryId:e.id,name:e.name,date:occurrence.date,kind:e.kind,
       amount:e.amount,fromAccountId:e.fromAccountId,toAccountId:e.toAccountId,categoryId:e.categoryId,payrollOverlap:false,
@@ -276,15 +273,14 @@ export function monthlyReport(period: string, source: MonthlySource, prepared?:P
     old.amount=add(old.amount,amount);old.count++;categoryTotals.set(key,old);
     if(!category)unclassifiedCount++;
   }
-  const oneTimeLines=[...(source.assets.oneTime??[])].filter(e=>e.date.slice(0,7)===period)
+  const oneTimeLines=[...(source.assets.oneTime??[])].filter(e=>e.date.slice(0,7)===period&&!nisaPlan.excludesOneTime(e.id)&&!salaryPlan.excludes(e.id))
     .sort((a,b)=>a.date.localeCompare(b.date)||a.id.localeCompare(b.id));
-  let oneTimeIncome=0,oneTimeExpense=0,oneTimePlannedExpense=0,oneTimePlannedIncome=0,pastUnconfirmedOneTime=0;
-  const thisPeriod=source.currentPeriod??localPeriod();
+  let oneTimeIncome=0,oneTimeExpense=0,oneTimePlannedExpense=0,oneTimePlannedIncome=0,pastUnconfirmedOneTime=0,pastUnconfirmedExpense=0;
   for(const entry of oneTimeLines){
     if(entry.status==='planned'){
       if(entry.kind==='income')oneTimePlannedIncome=add(oneTimePlannedIncome,entry.amount);
       if(entry.kind==='expense')oneTimePlannedExpense=add(oneTimePlannedExpense,entry.amount);
-      if(period<thisPeriod)pastUnconfirmedOneTime++;
+      if(entry.date<today){pastUnconfirmedOneTime++;if(entry.kind==='expense')pastUnconfirmedExpense++;}
       continue; // A past plan never silently becomes a paid expense.
     }
     if(entry.kind==='income')oneTimeIncome=add(oneTimeIncome,entry.amount);
@@ -309,7 +305,7 @@ export function monthlyReport(period: string, source: MonthlySource, prepared?:P
   const monthlyBalance=income===null||cardOutflow===null?null:add(add(add(income,-cardOutflow),-recurringExpense),-oneTimeExpense);
   const referenceBalance=monthlyBalance;
   return {period,income,actualIncome,estimatedIncome,incomeEstimates,incomeMissingRegular,incomeLines,cardOutflow,cardLines,livingOutflow,nisaOutflow:nisa,
-    referenceBalance,monthlyBalance,recurringIncome,recurringExpense,recurringTransfers,recurringLines,oneTimeIncome,oneTimeExpense,oneTimePlannedExpense,oneTimePlannedIncome,pastUnconfirmedOneTime,cardNoUseConfirmed,oneTimeLines,recurringSalaryExcluded,recurringCardOverlap,recurringOneTimeOverlap,categories:[...categoryTotals.values()].sort((a,b)=>b.amount-a.amount||a.name.localeCompare(b.name,'ja')),
+    referenceBalance,monthlyBalance,recurringIncome,recurringExpense,recurringTransfers,recurringLines,oneTimeIncome,oneTimeExpense,oneTimePlannedExpense,oneTimePlannedIncome,pastUnconfirmedOneTime,pastUnconfirmedExpense,cardNoUseConfirmed,oneTimeLines,recurringSalaryExcluded,recurringCardOverlap,recurringOneTimeOverlap,...(nisaOverlapCount?{nisaOverlapCount}:{}),...(payrollOneTimeOverlap?{payrollOneTimeOverlap}:{}),categories:[...categoryTotals.values()].sort((a,b)=>b.amount-a.amount||a.name.localeCompare(b.name,'ja')),
     merchants:[...merchantTotals.values()].sort((a,b)=>b.amount-a.amount||a.name.localeCompare(b.name,'ja')),
     issues,provisional,unclassifiedCount,excludedCount,unknownConfirmationCount,
     payrollReady:source.payroll.ready,payrollSyncedAt:source.payroll.ready?source.payroll.syncedAt:null};
@@ -320,9 +316,15 @@ export type CashflowCoverage='missing'|'partial'|'review'|'provisional'|'registe
 export function monthlyCashflow(report:MonthlyReport):{coverage:CashflowCoverage;expense:number|null;livingExpense:number|null;balance:number|null} {
   const nonCard=add(report.recurringExpense,report.oneTimeExpense);
   const coverage:CashflowCoverage=report.cardOutflow===null?(nonCard>0||report.cardLines.some(card=>card.paymentDate===null)?'partial':'missing'):
-    report.issues.length||report.unknownConfirmationCount||report.recurringCardOverlap?'review':report.provisional.length?'provisional':'registered';
+    report.issues.length||report.unknownConfirmationCount||report.recurringCardOverlap||report.pastUnconfirmedExpense||report.recurringOneTimeOverlap?'review':report.provisional.length?'provisional':'registered';
   return {coverage,expense:report.cardOutflow===null?(nonCard||null):add(report.cardOutflow,nonCard),
     livingExpense:report.livingOutflow===null?(nonCard||null):add(report.livingOutflow,nonCard),balance:report.monthlyBalance};
+}
+/** Expense-only comparison must not depend on Payroll availability. */
+export function expenseComparable(report:MonthlyReport):boolean {
+  const {coverage,expense}=monthlyCashflow(report);
+  return coverage==='registered'&&expense!==null&&report.excludedCount===0&&
+    report.recurringOneTimeOverlap===0&&report.pastUnconfirmedExpense===0;
 }
 export function changePeriod(period:string,delta:number):string {
   if(!validPeriod(period)||!Number.isSafeInteger(delta))throw new Error('年月が不正です。');

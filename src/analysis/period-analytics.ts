@@ -1,6 +1,6 @@
 /** Read-only cross-period analysis. Finance's payment-date monthlyReport remains the source of truth.
  * Never turn absent statements, income or future projections into verified zeroes. */
-import {changePeriod,monthlyReport,monthlyCashflow,hasScheduledSalary,isValidPeriod,prepareMonthlyReports,type CashflowCoverage,type PreparedMonthlyReports,type MonthlyReport,type MonthlySource} from '../summary/monthly-summary.js';
+import {changePeriod,monthlyReport,monthlyCashflow,expenseComparable,hasScheduledSalary,isValidPeriod,prepareMonthlyReports,type CashflowCoverage,type PreparedMonthlyReports,type MonthlyReport,type MonthlySource} from '../summary/monthly-summary.js';
 
 export type AnalysisCoverage=CashflowCoverage;
 export type AnalysisDimension='card'|'category'|'merchant';
@@ -30,6 +30,7 @@ export interface AnalysisTotals {
   nisa:number|null;
   knownIncomeMonths:number;
   knownExpenseMonths:number;
+  comparableExpenseMonths:number;
   missingMonths:number;
   provisionalMonths:number;
   reviewMonths:number;
@@ -78,7 +79,7 @@ function createGroups(months:AnalysisMonth[],dimension:AnalysisDimension):Analys
     const values=group.amounts;
     const total=sum(values)??0;
     const before=values.at(-2),after=values.at(-1);
-    return {...group,total,delta:before!==undefined&&after!==undefined&&before!==null&&after!==null?after-before:null,
+    return {...group,total,delta:months.length>=2&&expenseComparable(months.at(-2)!.report)&&expenseComparable(months.at(-1)!.report)&&before!==undefined&&after!==undefined&&before!==null&&after!==null?after-before:null,
       observedMonths:values.filter(value=>value!==null).length};
   }).sort((a,b)=>b.total-a.total||a.label.localeCompare(b.label,'ja'));
 }
@@ -101,17 +102,19 @@ export function analyzePeriods(source:MonthlySource,periods:readonly string[],cu
   const income=sum(months.map(month=>month.income)),expense=sum(months.map(month=>month.expense));
   const livingExpense=sum(months.map(month=>month.livingExpense)),balance=sum(months.map(month=>month.balance));
   const nisa=sum(months.map(month=>month.nisa));
-  const validExpenses=knownExpenses.map(item=>item.amount);
+  const comparableExpenses=months.filter(month=>expenseComparable(month.report)).map(month=>({period:month.period,amount:month.expense!}));
+  const validExpenses=comparableExpenses.map(item=>item.amount);
   const comparable=months.every(month=>month.coverage==='registered'&&month.income!==null&&month.balance!==null&&month.report.incomeEstimates.length===0&&!hasScheduledSalary(month.report));
   const totals:AnalysisTotals={income,expense,livingExpense,balance,nisa,
     knownIncomeMonths:months.filter(month=>month.income!==null).length,
     knownExpenseMonths:knownExpenses.length,
+    comparableExpenseMonths:comparableExpenses.length,
     missingMonths:months.filter(month=>month.coverage==='missing').length,
     provisionalMonths:months.filter(month=>month.coverage==='provisional').length,
     reviewMonths:months.filter(month=>month.coverage==='review').length,
     avgExpense:validExpenses.length?validExpenses.reduce(add,0)/validExpenses.length:null,
-    maxExpense:knownExpenses.length?knownExpenses.reduce((a,b)=>b.amount>a.amount?b:a):null,
-    minExpense:knownExpenses.length?knownExpenses.reduce((a,b)=>b.amount<a.amount?b:a):null,
+    maxExpense:comparableExpenses.length?comparableExpenses.reduce((a,b)=>b.amount>a.amount?b:a):null,
+    minExpense:comparableExpenses.length?comparableExpenses.reduce((a,b)=>b.amount<a.amount?b:a):null,
     comparable};
   const groups={card:createGroups(months,'card'),category:createGroups(months,'category'),merchant:createGroups(months,'merchant')};
   return {months,totals,groups,categoryChanges:changes(groups.category),merchantChanges:changes(groups.merchant)};
@@ -154,7 +157,7 @@ export function comparableDelta(current:PeriodAnalytics,previous:PeriodAnalytics
   if(!previous||current.months.length!==previous.months.length)return null;
   const ready=(item:PeriodAnalytics)=>item.months.every(month=>metric==='income'
     ?month.income!==null&&month.report.incomeEstimates.length===0&&!hasScheduledSalary(month.report)
-    :metric==='expense'?month.coverage==='registered'&&month.expense!==null
+    :metric==='expense'?expenseComparable(month.report)
     :month.coverage==='registered'&&month.balance!==null&&month.report.incomeEstimates.length===0&&!hasScheduledSalary(month.report));
   if(!ready(current)||!ready(previous))return null;
   const a=current.totals[metric],b=previous.totals[metric];

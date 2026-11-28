@@ -10,6 +10,7 @@ const DATABASE = 'finance-remembered-browser-key-v1';
 const STORE = 'keys';
 const VERSION = 1;
 const LOCK_FLAG = 'finance-browser-vault-manually-locked-v1';
+const RETENTION_INTENT = 'finance-browser-retention-intent-v1';
 export const CROSS_TAB_LOCK_KEY = 'finance-vault-lock-event-v1';
 /** Every event is unique so repeated locks also notify already-open tabs. */
 export function notifyOtherFinanceTabs(storage) {
@@ -48,9 +49,10 @@ function openDatabase() {
     });
 }
 /** Resolve after transaction commit, not merely when the request succeeds. */
-async function transaction(mode, run) {
+async function transaction(mode, run, guard = () => { }, onSuccess) {
     const db = await openDatabase();
     try {
+        guard();
         return await new Promise((resolve, reject) => {
             let tx;
             try {
@@ -61,9 +63,28 @@ async function transaction(mode, run) {
                 return;
             }
             let output;
-            const request = run(tx.objectStore(STORE));
-            request.onsuccess = () => { output = request.result; };
-            tx.oncomplete = () => resolve(output);
+            guard();
+            const store = tx.objectStore(STORE), request = run(store);
+            request.onsuccess = () => {
+                output = request.result;
+                try {
+                    onSuccess?.(store, output);
+                }
+                catch (error) {
+                    try {
+                        tx.abort();
+                    }
+                    catch { /* Already inactive. */ }
+                    reject(error);
+                }
+            };
+            tx.oncomplete = () => { try {
+                guard();
+                resolve(output);
+            }
+            catch (error) {
+                reject(error);
+            } };
             tx.onerror = () => reject(tx.error ?? new Error('鍵保存処理に失敗しました。'));
             tx.onabort = () => reject(tx.error ?? new Error('鍵保存が中断されました。'));
         });
@@ -91,33 +112,53 @@ export async function readBrowserKey(context) {
 export async function isBrowserRemembered(context) {
     return (await readBrowserKey(context)) !== null;
 }
-export async function rememberBrowserKey(context, record) {
+export async function rememberBrowserKey(context, record, guard = () => { }) {
     const id = await keyId(context);
     if (!validRememberedCryptoKey(record.key) || !saltPattern.test(record.salt) ||
         (record.dataSetId !== null && !validDataSetId(record.dataSetId)))
         throw new Error('保存できない復号鍵です。');
-    const entry = { id, version: VERSION, key: record.key, salt: record.salt, dataSetId: record.dataSetId };
-    await transaction('readwrite', store => store.put(entry));
+    const operationId = crypto.randomUUID();
+    const entry = { id, version: VERSION, key: record.key, salt: record.salt, dataSetId: record.dataSetId, operationId };
+    let issued = false;
+    try {
+        await transaction('readwrite', store => { const request = store.put(entry); issued = true; return request; }, guard);
+    }
+    catch (error) {
+        // The guard may fail after commit. Clean up only our own write in one
+        // readwrite transaction: a newer remember operation must never be deleted.
+        if (issued)
+            try {
+                await transaction('readwrite', store => store.get(id), () => { }, (store, current) => {
+                    if (current?.operationId === operationId)
+                        store.delete(id);
+                });
+            }
+            catch { /* Shared lock/intent still prevents auto-unlock if cleanup fails. */ }
+        throw error;
+    }
 }
-export async function forgetBrowserKey(context) {
+export async function forgetBrowserKey(context, guard = () => { }) {
     const id = await keyId(context);
-    await transaction('readwrite', store => store.delete(id));
+    await transaction('readwrite', store => store.delete(id), guard);
 }
 /** Exactly one policy for unlock: save a non-extractable browser key, or revoke any earlier one. */
-export async function applyBrowserRetentionChoice(context, remember, record) {
+export async function applyBrowserRetentionChoice(context, remember, record, guard = () => { }) {
     if (remember) {
         if (!record)
             throw new Error('記憶する鍵がありません。');
-        await rememberBrowserKey(context, record);
+        await rememberBrowserKey(context, record, guard);
     }
     else {
-        await forgetBrowserKey(context);
+        await forgetBrowserKey(context, guard);
     }
 }
 /** Manual lock survives reload/browser restart without storing any sensitive data. */
 export function isManuallyLocked(storage) {
     try {
-        return storage.getItem(LOCK_FLAG) === '1';
+        const flag = storage.getItem(LOCK_FLAG), intent = storage.getItem(RETENTION_INTENT);
+        if (intent === null)
+            return flag === '1'; // legacy browser data
+        return flag !== `ready:${intent}:${storage.getItem(CROSS_TAB_LOCK_KEY) ?? ''}`;
     }
     catch {
         return true;
@@ -125,3 +166,26 @@ export function isManuallyLocked(storage) {
 }
 export function setManualLock(storage) { storage.setItem(LOCK_FLAG, '1'); }
 export function clearManualLock(storage) { storage.removeItem(LOCK_FLAG); }
+/** Shared intent and lock event contain random tokens only. Start by disabling
+ * automatic unlock, and permit clearing that flag only for the latest intent. */
+export function beginBrowserRetention(storage) {
+    const epoch = storage.getItem(CROSS_TAB_LOCK_KEY), token = crypto.randomUUID();
+    storage.setItem(RETENTION_INTENT, token);
+    setManualLock(storage);
+    const check = () => {
+        if (storage.getItem(CROSS_TAB_LOCK_KEY) !== epoch || storage.getItem(RETENTION_INTENT) !== token)
+            throw new Error('別のタブでロックまたは鍵記憶の変更がありました。操作を中止しました。');
+    };
+    return { check, resume: () => {
+            check();
+            storage.setItem(LOCK_FLAG, `ready:${token}:${epoch ?? ''}`);
+            // Never overwrite the latest intent on completion. A concurrent lock or
+            // newer intent makes this acknowledgement invalid even before its event arrives.
+            check();
+        } };
+}
+export function browserLockEpoch(storage) {
+    const epoch = storage.getItem(CROSS_TAB_LOCK_KEY), intent = storage.getItem(RETENTION_INTENT);
+    return () => { if (storage.getItem(CROSS_TAB_LOCK_KEY) !== epoch || storage.getItem(RETENTION_INTENT) !== intent || isManuallyLocked(storage))
+        throw new Error('別のタブで保管庫がロックされました。'); };
+}

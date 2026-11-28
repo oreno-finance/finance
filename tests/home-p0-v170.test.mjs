@@ -212,7 +212,7 @@ test('future negative balance wins over floor warning, past dips and events outs
   const s=source([]);s.payroll.entries=[];s.assets.payrollDepositAccount='rakuten-bank';
   s.assets.snapshots=[snapshot('snap-r','rakuten-bank',100000,'2026-11-01')];s.assets.balanceWarningLimits={'rakuten-bank':50000};
   const once=(id,date,amount,kind)=>({id,date,amount,kind,name:'架空の入出金',status:'planned',fromAccountId:kind==='expense'?'rakuten-bank':null,toAccountId:kind==='income'?'rakuten-bank':null});
-  s.assets.oneTime=[once('past-out','2026-11-02',120000,'expense'),once('past-in','2026-11-03',120000,'income'),once('future-out','2027-01-03',200000,'expense')];
+  s.assets.oneTime=[{...once('past-out','2026-11-02',120000,'expense'),status:'done'},{...once('past-in','2026-11-03',120000,'income'),status:'done'},once('future-out','2027-01-03',200000,'expense')];
   assert.ok(!homeOverview(s,today).actions.some(a=>a.kind==='shortage'));
   s.assets.oneTime.push(once('floor-out','2026-11-25',60000,'expense'),once('negative-out','2026-11-26',50000,'expense'));
   const a=homeOverview(s,today).actions.filter(a=>a.kind==='shortage');assert.equal(a.length,1);assert.match(a[0].detail,/11\/26.*-10,000円/);

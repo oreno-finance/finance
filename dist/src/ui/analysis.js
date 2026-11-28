@@ -114,7 +114,7 @@ export function initAnalysis(deps) {
         const totals = data.totals;
         const range = `${labelYearMonth(data.months[0].period)}〜${labelYearMonth(data.months.at(-1).period)}`;
         const { income, expense, balance } = periodMetrics(data);
-        result.append(metric('収入', income.value, `${income.detail} · ${range} · 実績・見込み`), metric('支出', expense.value, `${expense.detail} · NISAを含む`), metric('収支', balance.value, `${balance.detail} · NISAを除く：${sharedYen(balanceWithoutNisa(data.months), 0, DATA_STATUS.unavailable)}`, balance.tone), metric('平均支出', sharedYen(totals.avgExpense, 0, DATA_STATUS.unavailable), `${totals.knownExpenseMonths}か月分の平均`));
+        result.append(metric('収入', income.value, `${income.detail} · ${range} · 実績・見込み`), metric('支出', expense.value, `${expense.detail} · NISAを含む`), metric('収支', balance.value, `${balance.detail} · NISAを除く：${sharedYen(balanceWithoutNisa(data.months), 0, DATA_STATUS.unavailable)}`, balance.tone), metric('平均支出', sharedYen(totals.avgExpense, 0, DATA_STATUS.unavailable), `${totals.comparableExpenseMonths}か月分の平均`));
         return result;
     }
     function qualitySummary(data) {
@@ -269,7 +269,7 @@ export function initAnalysis(deps) {
         const block = panel('期間の特徴');
         const totals = data.totals;
         const grid = el('div', 'analysis-insights');
-        grid.append(metric('支出が最大の月', totals.maxExpense ? labelYearMonth(totals.maxExpense.period) : DATA_STATUS.missing, totals.maxExpense ? formatYen(totals.maxExpense.amount) : '登録済み明細なし'), metric('支出が最小の月', totals.minExpense ? labelYearMonth(totals.minExpense.period) : DATA_STATUS.missing, totals.minExpense ? formatYen(totals.minExpense.amount) : '登録済み明細なし'));
+        grid.append(metric('支出が最大の月', totals.maxExpense ? labelYearMonth(totals.maxExpense.period) : DATA_STATUS.missing, totals.maxExpense ? `${formatYen(totals.maxExpense.amount)} · 比較可能な${totals.comparableExpenseMonths}か月` : '比較可能な月なし'), metric('支出が最小の月', totals.minExpense ? labelYearMonth(totals.minExpense.period) : DATA_STATUS.missing, totals.minExpense ? `${formatYen(totals.minExpense.amount)} · 比較可能な${totals.comparableExpenseMonths}か月` : '比較可能な月なし'));
         block.body.append(grid);
         const latest = data.months.at(-1), previous = data.months.at(-2);
         if (latest && previous) {

@@ -2,19 +2,20 @@ import { fixedCostsForCalculation } from '../fixed-costs/payment-history.js';
 /** Conservative, read-only card debit estimates built from actual fixed-cost contracts.
  * Never creates a statement or persists a bill. An imported payment-month statement
  * takes precedence for the WHOLE card to prevent duplicate bank debits. */
-import { DEFAULT_MIZUHO_PLAN } from './assets.js';
+import { cardDebitAccountOnDay, DEFAULT_MIZUHO_PLAN, cardRecurringKey } from './assets.js';
 import { mizuhoTransferForBill } from './mizuho-transfer.js';
-import { fixedCostOccurrences } from '../fixed-costs/contracts.js';
+import { confirmedRecords } from '../importers/batch-policy.js';
+import { cardForecastPriceOnDay, fixedCostOccurrences } from '../fixed-costs/contracts.js';
 import { cardPaymentDate } from '../importers/payment-date.js';
 import { CARDS, statementPeriod } from '../models/types.js';
 const month = (day) => day.slice(0, 7);
 const index = (m) => Number(m.slice(0, 4)) * 12 + Number(m.slice(5, 7)) - 1;
 const fromIndex = (i) => `${Math.floor(i / 12)}-${String(i % 12 + 1).padStart(2, '0')}`;
-function paymentTiming(cardId, doc, records) {
+function paymentTiming(cardId, doc, verified) {
     const explicit = doc.cardPreferences?.[cardId]?.payment;
     if (explicit)
         return explicit;
-    const latest = records.filter(r => r.statement.cardId === cardId && r.statement.paymentDate && r.statement.billingMonth)
+    const latest = verified.filter(r => r.statement.cardId === cardId && r.statement.paymentDate && r.statement.billingMonth)
         .sort((a, b) => b.statement.paymentDate.localeCompare(a.statement.paymentDate))[0];
     if (!latest)
         return null;
@@ -24,6 +25,7 @@ function paymentTiming(cardId, doc, records) {
         return null;
     return { monthOffset: offset, day: Number(payment.slice(8, 10)) };
 }
+const usageCycle = (day, frequency) => frequency === 'weekly' ? day : frequency === 'yearly' ? day.slice(0, 4) : month(day);
 /** Future estimate needs a configured/observed payment-day rule and a source contract. */
 export function estimatedCardFixedBills(doc, records, fromDay, toDay) {
     if (toDay < fromDay || !/^20\d\d-\d\d-\d\d$/.test(fromDay) || !/^20\d\d-\d\d-\d\d$/.test(toDay))
@@ -34,17 +36,48 @@ export function estimatedCardFixedBills(doc, records, fromDay, toDay) {
     const seen = new Set(records.filter(r => r.statement.cardId && statementPeriod(r.statement))
         .map(r => `${r.statement.cardId}|${statementPeriod(r.statement)}`));
     const observedMonths = new Set(records.flatMap(r => { const p = statementPeriod(r.statement); return p ? [p] : []; }));
+    const contracts = fixedCostsForCalculation(doc).filter(c => c.payment === 'card' && c.cardId);
+    if (!contracts.length)
+        return [];
+    const watched = new Map();
+    for (const contract of contracts) {
+        if (!contract.merchantKey)
+            continue;
+        const frequencies = watched.get(contract.merchantKey) ?? new Set();
+        frequencies.add(contract.frequency);
+        watched.set(contract.merchantKey, frequencies);
+    }
+    const verified = confirmedRecords(records);
+    const observedCycles = new Map();
+    for (const { statement } of verified) {
+        if (!statement.cardId)
+            continue;
+        for (const row of statement.rows) {
+            if (row.amount === 0)
+                continue;
+            const key = cardRecurringKey(statement.cardId, row.merchant);
+            for (const frequency of watched.get(key) ?? []) {
+                const cycleKey = `${key}|${frequency}|${usageCycle(row.usedOn, frequency)}`;
+                const days = observedCycles.get(cycleKey) ?? new Set();
+                days.add(row.usedOn);
+                observedCycles.set(cycleKey, days);
+            }
+        }
+    }
     const buckets = new Map();
-    for (const contract of fixedCostsForCalculation(doc)) {
-        if (contract.payment !== 'card' || !contract.cardId)
+    for (const contract of contracts) {
+        if (!contract.cardId)
             continue;
-        if (!doc.cardDebitAccounts?.[contract.cardId])
-            continue;
-        const timing = paymentTiming(contract.cardId, doc, records);
+        const timing = paymentTiming(contract.cardId, doc, verified);
         if (!timing)
             continue; // Never invent a payment date.
         for (const m of months) {
             for (const occurrence of fixedCostOccurrences(m, [contract])) {
+                // A known usage cycle already appears in a verified statement. A changed
+                // payment schedule must not create another estimated debit for that cycle.
+                const known = contract.merchantKey ? observedCycles.get(`${contract.merchantKey}|${contract.frequency}|${usageCycle(occurrence.date, contract.frequency)}`) : undefined;
+                if (known && [...known].some(day => day >= contract.startOn && (!contract.endOn || day <= contract.endOn)))
+                    continue;
                 let due;
                 try {
                     due = cardPaymentDate(m, timing);
@@ -52,12 +85,15 @@ export function estimatedCardFixedBills(doc, records, fromDay, toDay) {
                 catch {
                     continue;
                 }
-                if (due < fromDay || due > toDay || seen.has(`${contract.cardId}|${month(due)}`) ||
+                if (!cardDebitAccountOnDay(doc, contract.cardId, due) || due < fromDay || due > toDay || seen.has(`${contract.cardId}|${month(due)}`) ||
                     (doc.cardNoUseMonths?.includes(month(due)) && !observedMonths.has(month(due))))
                     continue;
                 const key = `${contract.cardId}|${due}`;
                 const previous = buckets.get(key);
-                const next = (previous?.amount ?? 0) + occurrence.amount;
+                const amount = cardForecastPriceOnDay(contract, occurrence.date);
+                if (amount === null)
+                    continue;
+                const next = (previous?.amount ?? 0) + amount;
                 if (!Number.isSafeInteger(next))
                     throw new Error('カード固定費の請求見込みが大きすぎます。');
                 const name = doc.cardPreferences?.[contract.cardId]?.name ?? CARDS.find(c => c.id === contract.cardId)?.name ?? 'カード';
