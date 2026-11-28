@@ -21,7 +21,7 @@ const original='12345678-1234-1234-1234-123456789abc';
 function fakeDrive(){
   const folders=new Map([
     ['root/finance','f'],['f/statements','s'],['f/settings','a'],
-    ['f/originals','o'],['o/2026','y'],['y/11','m'],
+    ['f/originals','o'],['o/2026','y'],['y/11','m'],['root/payroll','p'],['p/income','pi'],
   ]);
   const files=new Map();const stats={gets:0,downloads:0,retries:0};
   const http=async (url,init={})=>{
@@ -199,4 +199,20 @@ test('v2.2.1: a replaced common ancestor invalidates its other cached descendant
  f.add('r-new','merchants.enc','new rules');f.add('a-new','assets.enc','new settings');
  assert.equal((await f.api.readMerchantRules(true)).text,'new rules');
  assert.equal((await f.api.readAssetSettings(true)).text,'new settings');
+});
+
+test('Payroll ciphertext reuses the bounded cache only after fresh ID/ETag metadata',async()=>{
+  const f=fakeDrive(),file=f.add('pi','2026.enc','small encrypted income');
+  const read=()=>f.api.readPayrollPublishedFile(['income'],'2026.enc',30_000_000);
+  assert.equal((await read()).text,file.text);
+  const cold={...f.stats};assert.equal((await read()).text,file.text);
+  assert.equal(f.stats.gets,cold.gets+1,'warm read still observes metadata');
+  assert.equal(f.stats.downloads,cold.downloads,'warm body download avoided');
+  file.etag='"2"';file.text='changed ciphertext';
+  assert.equal((await read()).text,file.text);assert.equal(f.stats.downloads,cold.downloads+1);
+  f.api.setVaultDataSet(crypto.randomUUID());
+  assert.equal((await read()).text,file.text);assert.equal(f.stats.downloads,cold.downloads+2);
+  file.etag='"3"';file.text='x'.repeat(5*1024*1024);
+  await read();await read();assert.equal(f.stats.downloads,cold.downloads+4,'large body exceeds cache budget');
+  assert.ok([...f.api.encryptedReadCache.values()].reduce((sum,x)=>sum+2*x.text.length,0)<=8*1024*1024);
 });

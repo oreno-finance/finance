@@ -90,18 +90,23 @@ function bankChart(timeline, period) {
         low -= 10000;
         high += 10000;
     }
-    const range = high - low, W = 630, H = 142, L = 60, R = 13, T = 10, B = 23;
+    const rawStep = (high - low) / 4;
+    const magnitude = 10 ** Math.floor(Math.log10(rawStep));
+    const step = ([1, 2, 5, 10].find(n => n * magnitude >= rawStep) ?? 10) * magnitude;
+    low = Math.floor(low / step) * step;
+    high = Math.ceil(high / step) * step;
+    const range = high - low, W = 630, H = 220, L = 75, R = 18, T = 16, B = 28;
     const x = (day) => L + (day - 1) / Math.max(1, chart.lastDay - 1) * (W - L - R);
     const y = (value) => T + (high - value) / range * (H - T - B);
     const ns = 'http://www.w3.org/2000/svg';
     const node = (tag, attrs) => { const e = document.createElementNS(ns, tag); for (const [k, v] of Object.entries(attrs))
         e.setAttribute(k, v); return e; };
     const svg = node('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': '楽天銀行の月内予測残高。点をタップ、または日付選択を開いて詳細を選べます。', class: 'monthly-balance-svg' });
-    for (let i = 0; i <= 2; i++) {
-        const val = low + range * i / 2, yy = y(val);
-        svg.append(node('line', { x1: String(L), x2: String(W - R), y1: String(yy), y2: String(yy), class: Math.abs(val) < range / 8 ? 'monthly-chart-zero' : 'monthly-chart-grid' }));
+    for (let i = 0; i <= Math.round(range / step); i++) {
+        const val = low + step * i, yy = y(val);
+        svg.append(node('line', { x1: String(L), x2: String(W - R), y1: String(yy), y2: String(yy), class: val === 0 ? 'monthly-chart-zero' : 'monthly-chart-grid' }));
         const t = node('text', { x: String(L - 9), y: String(yy + 4), 'text-anchor': 'end', class: 'monthly-chart-label' });
-        t.textContent = `${Math.round(val / 10000).toLocaleString('ja-JP')}万`;
+        t.textContent = Math.abs(step) >= 10000 ? `${(val / 10000).toLocaleString('ja-JP')}万` : `${val.toLocaleString('ja-JP')}円`;
         svg.append(t);
     }
     const path = [`M${x(points[0].day).toFixed(2)} ${y(points[0].balance).toFixed(2)}`];

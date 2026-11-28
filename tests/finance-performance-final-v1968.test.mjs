@@ -61,7 +61,7 @@ test('the import batch defers full DOM renders but keeps feedback and final rend
   assert.ok(begin>=0&&end>begin);
   const events={feedback:0,rows:0,list:0,summary:0,sort:0};
   const node={classList:{contains:key=>key!=='hidden'}};
-  const ctx=vm.createContext({filesBusy:true,revisionBusy:false,$:()=>node,events,
+  const ctx=vm.createContext({initialPayrollVault:null,filesBusy:true,revisionBusy:false,$:()=>node,events,
     updateImportUploadFeedback:()=>events.feedback++,applyCsvPaymentSettings:()=>{},
     refreshCardOptionLabels:()=>{},buildStatementList:()=>events.list++,renderSummary:()=>events.summary++,
     renderRows:()=>events.rows++,updateBatchStatus:()=>{},
@@ -92,8 +92,8 @@ test('Phase 4B: 同期後は表示中の画面だけ一度描画し、給与同�
   const render=code.slice(code.indexOf('function render() {'),code.indexOf('function attachSource('));
   const refresh=code.slice(code.indexOf('async function refreshCloud() {'),code.indexOf('async function migrateLegacy('));
   const counts={rules:0,assets:0,future:0,home:0,fundingHistory:0,payroll:0,cards:0};let visible='home-view';
-  const vault={unlocked:true,exists:true,refresh:async()=>[]};
-  const ctx=vm.createContext({traceFinanceOperation,filesBusy:false,revisionBusy:false,$:id=>({classList:{contains:()=>id!==visible}}),
+  const vault={unlocked:true,exists:true,refresh:async()=>[],payrollCredentialHint:()=>undefined};
+  const ctx=vm.createContext({initialPayrollVault:null,traceFinanceOperation,filesBusy:false,revisionBusy:false,$:id=>({classList:{contains:()=>id!==visible}}),
     liveVault:vault,vaultDiscoveryCompleted:true,cloudStartupRunning:false,currentModal:null,cloudRefreshing:false,lastCloudCheckAt:0,assertRefreshSafe(){},
     renderRules:()=>counts.rules++,assetsUi:{render:()=>counts.assets++,refreshPayroll:async()=>{counts.payroll++;}},
     cardSettingsUi:{render:()=>counts.cards++},futureUi:{render:()=>counts.future++},homeUi:{render:()=>counts.home++,renderFundingHistory:()=>counts.fundingHistory++},summaryUi:null,analysisUi:null,subscriptionsUi:null,

@@ -545,11 +545,32 @@ export class LiveVault {
     }
     /** A Payroll read is valid only in the same unlocked generation, even after a same-key re-unlock. */
     payrollOperationGuard() { return this.approvalGuard(); }
-    async readPayrollCredential() {
+    /** Capture immediately after automatic unlock or a successful full refresh, never on a timer. */
+    payrollCredentialHint() {
+        if (!this.key || this.recoveryReadOnly || this.rotating || this.assetsNeedRefresh || this.assetsSaving || this.rulesSaving || this.activeMutation)
+            return;
+        const guard = this.approvalGuard(), document = this.assetsDocument, settingsRevision = this.settingsRevision, mutationRevision = this.mutationRevision;
+        let consumed = false;
+        return { vault: this, consume: () => {
+                if (consumed)
+                    return;
+                consumed = true;
+                guard();
+                if (this.recoveryReadOnly || this.assetsNeedRefresh || this.assetsSaving || this.rulesSaving || this.activeMutation || this.assetsDocument !== document || settingsRevision !== this.settingsRevision || mutationRevision !== this.mutationRevision)
+                    return;
+                return { value: document.payrollAutoPassphrase };
+            } };
+    }
+    async readPayrollCredential(hint) {
         return traceFinanceOperation('payroll-credential', async () => {
             if (this.recoveryReadOnly)
                 throw new Error('保管庫の復旧後に給与を同期してください。');
             const guard = this.approvalGuard(), key = this.key, salt = this.salt;
+            const verified = hint?.vault === this ? hint.consume() : undefined;
+            if (verified) {
+                guard();
+                return verified.value;
+            }
             await this.assertActiveGeneration();
             guard();
             const latest = await this.readAssets(key, salt, true);
@@ -734,14 +755,14 @@ export class LiveVault {
         return { key: this.key, salt: this.salt, dataSetId: this.dataSetId };
     }
     /** Read-only authentication against this account's current OneDrive index. */
-    async unlockBrowserKey(record) {
+    async unlockBrowserKey(record, discovered) {
         return traceFinanceOperation('unlock', async () => {
             if (this.rotating)
                 throw new Error('保管庫の管理操作が終了してから解除してください。');
             if (record.key.extractable || record.key.type !== 'secret' || record.key.algorithm.name !== 'AES-GCM')
                 throw new Error('保存したブラウザ鍵が不正です。');
             const guard = this.lockGuard();
-            const index = await this.client.readFinanceIndex();
+            const index = discovered ?? await this.client.readFinanceIndex();
             guard();
             if (!index)
                 throw new Error('OneDriveの保管庫が見つかりません。');
@@ -752,18 +773,20 @@ export class LiveVault {
             return this.records();
         });
     }
-    async discover() {
+    async discover() { return (await this.discoverWithIndex()).exists; }
+    /** The caller may reuse this encrypted index only within the same startup operation. */
+    async discoverWithIndex() {
         return traceFinanceOperation('discover', async () => {
             const current = await this.client.readFinanceIndex();
             if (current) {
                 this.hasRemote = true;
                 this.hasLegacy = false;
-                return true;
+                return { exists: true, index: current };
             }
             const legacy = await this.client.readLiveVault();
             this.hasRemote = !!legacy;
             this.hasLegacy = !!legacy;
-            return this.hasRemote;
+            return { exists: this.hasRemote, index: null };
         });
     }
     /** Read the new layout, with safe recovery of shards committed before the index update. */
@@ -2532,9 +2555,9 @@ export class LiveVault {
             if (affected.size > 1 || items.some(item => item.statement.sourceKind === 'pdf' && item.source)) {
                 let approved;
                 let checkApprovedLocal;
-                const run = () => this.withMutation(guard, async (lease) => {
+                const run = () => this.withMutation(guard, async (lease, index) => {
                     checkApprovedLocal?.();
-                    const fresh = await this.verifyYearEditScope(explicitIds, guard, moving, targets);
+                    const fresh = await this.verifyYearEditScope(explicitIds, guard, moving, targets, index);
                     const review = this.reviewBatchCollisions(items, fresh?.shards);
                     if (approved) {
                         checkApprovedLocal?.();
@@ -2543,7 +2566,7 @@ export class LiveVault {
                     }
                     else if (review.size)
                         throw new BatchApprovalRequired(review);
-                    return this.saveBatchInternal(items, lease, onProgress, false, approved);
+                    return this.saveBatchInternal(items, lease, onProgress, false, approved, index ? fresh : undefined);
                 });
                 try {
                     return await run();
@@ -2574,7 +2597,7 @@ export class LiveVault {
             return this.saveBatchInternal(items, undefined, onProgress);
         });
     }
-    async saveBatchInternal(items, lease, onProgress, deferRefresh = false, approved) {
+    async saveBatchInternal(items, lease, onProgress, deferRefresh = false, approved, scope) {
         const progress = (phase, done, total) => { try {
             onProgress?.(phase, done, total);
         }
@@ -2679,6 +2702,10 @@ export class LiveVault {
             // Multi-year writes are not atomic. Distinguish an uncertain result from a rejected edit.
             this.mutationWarning = null;
             let committedYears = 0;
+            // Only the uncomplicated, already registered years can reuse the locked snapshot.
+            // Moves, new years, approvals and writer-format changes retain the full refresh path.
+            const writerV4Before = this.activeWriterV4;
+            const reuseScope = lease && scope && !moves.size && !approved?.size && [...changes.keys()].every(year => this.index.years.includes(year) && scope.shards.has(year)) ? scope : undefined;
             const syncInCommit = (generation === 'finance-cloud-index-envelope-v3' || generation === 'finance-cloud-index-envelope-v4') && !lease && !deferRefresh && changes.size === 1 && !moves.size && [...changes.keys()].every(year => this.index.years.includes(year));
             try {
                 // First put records into their destinations; only afterwards tombstone old-year copies.
@@ -2720,7 +2747,11 @@ export class LiveVault {
                 return ids; // Recovery or the single-year commit owns final sync.
             progress("保存結果の同期確認", 0, 1);
             try {
-                await this.refresh(lease);
+                const hint = reuseScope && writerV4Before === this.activeWriterV4 ? reuseScope : undefined;
+                if (hint)
+                    for (const year of changes.keys())
+                        hint.shards.set(year, this.shards.get(year));
+                await this.refresh(lease, false, hint);
             }
             catch {
                 checkCommitted();

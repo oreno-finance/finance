@@ -995,7 +995,7 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             [!deposit ? '給与の入金先が未設定です。' : '', unknown ? '勤務区分不明の給与があります。Payrollの勤務先設定を確認してください。' : '', mismatch ? '給与の定期入金と入金先設定が一致していません。重複計上にご注意ください。' : ''].filter(Boolean).join(' ') : '';
     }
     /** Manual registration is explicit; automatic reads use only the encrypted settings document. */
-    async function syncPayroll(automatic = false) {
+    async function syncPayroll(automatic = false, hint) {
         return traceFinanceOperation('payroll-sync', async () => {
             if (busy || payrollBusy)
                 return;
@@ -1025,7 +1025,7 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             $('assets-payroll-sync').disabled = true;
             $('assets-payroll-forget').disabled = true;
             try {
-                const saved = await vault.readPayrollCredential();
+                const saved = await vault.readPayrollCredential(automatic ? hint : undefined);
                 guard();
                 const changed = payrollCredential !== undefined && payrollCredential !== saved;
                 observeVerifiedPayroll(saved);
@@ -1133,7 +1133,7 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             }
         });
     }
-    async function refreshPayroll() {
+    async function refreshPayroll(hint) {
         const vault = getVault();
         if (!vault?.unlocked || vault.recoveryOnly)
             return;
@@ -1142,7 +1142,7 @@ export function initAssetsSettings(getVault, getCategories, onSaved, onPayrollCh
             return;
         if (Date.now() - lastPayrollAttemptAt < 60 * 1000)
             return;
-        await syncPayroll(true);
+        await syncPayroll(true, hint);
     }
     async function forgetPayroll() {
         if (busy || payrollBusy)

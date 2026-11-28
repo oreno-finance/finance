@@ -423,8 +423,8 @@ export function initSubscriptions(deps:Deps):SubscriptionsUi {
     }
     toolbar.append(tabs);
     const registration=el('div','fixed-cost-registration-actions');
-    if(deps.openCardRule)registration.append(btn('カード払いを登録',()=>{if(!busy)deps.openCardRule!();},'secondary-action'));
-    registration.append(btn(deps.openCardRule?'銀行・現金を登録':'＋ 新規登録',()=>{if(!busy)startEdit(null);},'secondary-action'));
+    if(deps.openCardRule)registration.append(btn('＋ カード払いを登録',()=>{if(!busy)deps.openCardRule!();},'secondary-action'));
+    registration.append(btn(deps.openCardRule?'＋ 銀行・現金を登録':'＋ 新規登録',()=>{if(!busy)startEdit(null);},'secondary-action'));
     toolbar.append(registration);root!.append(toolbar);
     if(notice)root!.append(el('p','subscriptions-notice error',notice));
     const list=el('div','subscriptions-list');

@@ -14,7 +14,7 @@ test('mobile: CSV/PDF picker is a single visible button while desktop keeps nati
   assert.match(html,/id="file-input"[^>]+multiple/);
   assert.match(css,/\.drop-mobile-label\{display:none\}/);
   assert.match(css,/#pdf-pane \.dropzone \ .drop-mobile-label|#pdf-pane \.dropzone \.drop-mobile-label/);
-  assert.match(css,/#pdf-pane \.dropzone[^}]*height:48px/);
+  assert.match(css,/#pdf-pane \.dropzone[^}]*height:44px/);
 });
 
 test('mobile and desktop both offer explicit icon toggles without a system selector',()=>{

@@ -708,9 +708,9 @@ export function initSubscriptions(deps) {
         toolbar.append(tabs);
         const registration = el('div', 'fixed-cost-registration-actions');
         if (deps.openCardRule)
-            registration.append(btn('カード払いを登録', () => { if (!busy)
+            registration.append(btn('＋ カード払いを登録', () => { if (!busy)
                 deps.openCardRule(); }, 'secondary-action'));
-        registration.append(btn(deps.openCardRule ? '銀行・現金を登録' : '＋ 新規登録', () => { if (!busy)
+        registration.append(btn(deps.openCardRule ? '＋ 銀行・現金を登録' : '＋ 新規登録', () => { if (!busy)
             startEdit(null); }, 'secondary-action'));
         toolbar.append(registration);
         root.append(toolbar);

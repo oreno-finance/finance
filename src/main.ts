@@ -15,7 +15,7 @@ import { hasVault, unlockVault, readStatements, readOriginal, exportEncryptedBac
 import { verifyLegacyMigration, verifyDownloadedBackup } from './storage/legacy-cleanup.js';
 import { graphClientWithoutRedirect, initCloudSettings, cloudConnectPrompt, activeMicrosoftAccountId, cloudConnectionNotice, cloudConnectionPending, recordCloudConnectionFailure, type CloudConnectPrompt } from './cloud/cloud-settings.js';
 import { syncFinanceCloudGates } from './ui/cloud-gate.js';
-import { LiveVault, CloudWriteUncertainError, CloudEditCancelledError, BrowserKeyGenerationChangedError, type PendingBatchResult, type VaultRecordView } from './cloud/live-vault.js';
+import { LiveVault, CloudWriteUncertainError, CloudEditCancelledError, BrowserKeyGenerationChangedError, type PendingBatchResult, type VaultRecordView, type PayrollCredentialHint } from './cloud/live-vault.js';
 import { GraphError } from './cloud/onedrive-api.js';
 import { readBrowserKey, rememberBrowserKey, forgetBrowserKey, applyBrowserRetentionChoice, isBrowserRemembered, InvalidRememberedBrowserKeyError, isManuallyLocked, setManualLock, notifyOtherFinanceTabs, beginBrowserRetention, browserLockEpoch, CROSS_TAB_LOCK_KEY, type BrowserKeyContext } from './cloud/remembered-browser.js';
 import { displayMerchant, matchingSortedRule, sortedRules, normalizeMerchant, fixedRuleEligible, fixedRuleKey, PALETTE, type RuleFixedCost, type CategoryDefinition, type MerchantRule, type MatchMode, type CategoryId, type PaletteId } from './cloud/merchant-rules.js';
@@ -79,6 +79,7 @@ let subscriptionsUi: SubscriptionsUi | null = null;
 let cardSettingsUi: CardSettingsUi | null = null;
 let currentModal: 'create' | 'unlock' | 'migrate' | null = null;
 let cloudStartupRunning = false;
+let initialPayrollVault:LiveVault|null=null;
 let lockSequence=0;
 let cleanupBusy=false;
 let vaultDiscoveryCompleted = false;
@@ -335,7 +336,7 @@ function broadcastVaultLock():void {
 }
 /** Force-close sensitive views on a lock from this tab or another one. */
 function clearUnlockedFinanceViews():void {
-  lockSequence++;revokeOriginalDownloadUrls();
+  lockSequence++;revokeOriginalDownloadUrls();initialPayrollVault=null;
   $<HTMLButtonElement>('manage-clear-changes').disabled=true;
   importAbort?.abort();clearActivity();
   showBatchDetails([], '');
@@ -451,6 +452,7 @@ function createStatementEntry(index: number, withDelete: boolean): HTMLElement {
   const title = document.createElement('b'); title.textContent = name;
   const subtitle = document.createElement('small');
   subtitle.textContent = `${statement.billingMonth?.replace('-', '/') ?? '請求月不明'} · ${statement.sourceKind==='pdf'?canonicalStatementFilename(statement):statement.sourceName}`;
+  if(!withDelete){subtitle.title=subtitle.textContent;subtitle.textContent=`${statement.billingMonth?.replace('-', '/')??'請求月不明'} · ${isZeroUsage(statement)?'引落なし':statement.paymentDate?`引落 ${dateDisplay(statement.paymentDate)}`:'引落日未設定'}`;}
   if(conflictStorageYears.has(statement))subtitle.textContent+=` · 保存年度 ${conflictStorageYears.get(statement)}`;
   const right = div('statement-end');
   const amount = document.createElement('strong'); amount.textContent = yen(statement.statedTotal);
@@ -925,10 +927,11 @@ function updateBatchStatus(): void {
 /** One adapter supplies the state and actions; every gated page uses the same UI. */
 function syncCloudGate():void {
   const notice=cloudConnectionNotice();
-  const opening=cloudStartupRunning||currentModal!==null;
+  const loadingPayroll=!!initialPayrollVault&&initialPayrollVault===liveVault;
+  const opening=cloudStartupRunning||currentModal!==null||loadingPayroll;
   const checking=opening||notice.kind==='checking'||(!liveVault?.unlocked&&cloudConnectionPending());
-  const pending=!liveVault?.unlocked&&checking;
-  const progress=$('cloud-live-status').textContent==='自動復号中'?'保管庫を復号中…':'OneDriveに接続中…';
+  const pending=loadingPayroll||(!liveVault?.unlocked&&checking);
+  const progress=loadingPayroll?'収入・支出データを読み込み中…':$('cloud-live-status').textContent==='自動復号中'?'保管庫を復号中…':'OneDriveに接続中…';
   $('settings-view').classList.toggle('cloud-connection-pending',pending);
   $('cloud-pending-status').textContent=pending?progress:'';
   const refresh=$<HTMLButtonElement>('cloud-live-refresh');
@@ -937,7 +940,7 @@ function syncCloudGate():void {
   $<HTMLButtonElement>('cloud-new-vault').disabled=opening;
   $<HTMLButtonElement>('cloud-live-migrate').disabled=opening;
   syncFinanceCloudGates({
-    blocked:!liveVault?.unlocked||!!liveVault?.recoveryOnly,
+    blocked:loadingPayroll||!liveVault?.unlocked||!!liveVault?.recoveryOnly,
     recovery:!!liveVault?.recoveryOnly,
     locked:!!liveVault?.exists&&!liveVault.recoveryOnly&&vaultDiscoveryCompleted&&notice.kind==='connected',
     checking,progress,
@@ -950,6 +953,7 @@ function syncCloudGate():void {
 }
 
 function render(): void {
+  if(initialPayrollVault&&initialPayrollVault===liveVault)return;
   // While parsing a batch, preserve draft state but defer expensive full
   // rebuilds until it finishes. Revision confirmation remains interactive.
   if(filesBusy&&!revisionBusy){
@@ -996,7 +1000,7 @@ function replaceCloudRecords(records: VaultRecordView[],redraw=true): void {
   if(statements.length)activeIndex=0;
   if(redraw)render();
 }
-function appendCloudRecordsKeepingDrafts(records:VaultRecordView[]):void {
+function appendCloudRecordsKeepingDrafts(records:VaultRecordView[],redraw=true):void {
   const drafts=statements.filter(hasUnsavedChanges);
   statements.splice(0);
   for(const record of records) {
@@ -1013,7 +1017,32 @@ function appendCloudRecordsKeepingDrafts(records:VaultRecordView[]):void {
     if(!statements.some(record=>savedIds.get(record)===savedIds.get(draft)&&savedIds.has(draft))) statements.unshift(draft);
   }
   activeIndex=statements.length?0:-1;
-  render();
+  if(redraw)render();
+}
+/** Open Finance and load its linked income before exposing the first snapshot. */
+async function completeVaultOpening(vault:LiveVault,records:VaultRecordView[],payrollHint?:PayrollCredentialHint):Promise<boolean>{
+  const epoch=lockSequence;
+  initialPayrollVault=vault;
+  syncCloudGate();
+  try{
+    appendCloudRecordsKeepingDrafts(records,false);lastCloudCheckAt=Date.now();
+    if(!vault.recoveryOnly){
+      try{await assetsUi?.refreshPayroll(payrollHint);}
+      catch{if(epoch===lockSequence&&liveVault===vault&&vault.unlocked)operationResult('給与データを取得できませんでした。設定から再接続してください。','warn');}
+    }
+  }finally{
+    if(initialPayrollVault===vault&&epoch===lockSequence){
+      initialPayrollVault=null;
+      if(liveVault===vault&&vault.unlocked){
+        if(!$('assets-page').classList.contains('hidden')||!$('settings-view').classList.contains('hidden'))assetsUi?.render();
+        if(!$('settings-view').classList.contains('hidden'))cardSettingsUi?.render();
+        render();
+        if(!$('reports-view').classList.contains('hidden'))reportsUi?.render();
+        updateCloudStatus();
+      }
+    }
+  }
+  return epoch===lockSequence&&liveVault===vault&&vault.unlocked;
 }
 function updateCloudStatus(message?:string):void {
   if(!liveVault?.unlocked)subscriptionsUi?.reset();
@@ -1117,7 +1146,8 @@ async function startCloud():Promise<void> {
       collisions.map(item=>({label:item.ruleId.startsWith('category:')?`カテゴリー ${item.ruleId.slice(9)}`:`利用先ルール ${item.ruleId.slice(0,16)}`,
         field:item.field,local:collisionValue(item.local),remote:collisionValue(item.remote)}))));
     assetsUi?.render();futureUi?.render();cardSettingsUi?.render();
-    const exists=await measureFinancePhase('startup.discover',()=>liveVault!.discover());
+    const {exists,index:discoveredIndex}=await measureFinancePhase('startup.discover',()=>vault.discoverWithIndex());
+    if(liveVault!==vault)return;
     vaultDiscoveryCompleted=true;
     clearTimeout(slowNotice);
     finishActivity('OneDrive');
@@ -1126,25 +1156,23 @@ async function startCloud():Promise<void> {
       const browserContext=browserKeyContext();
       const local=localStorageSafe();
       // Fail closed when the manual-lock preference cannot be inspected.
-      const allowAutomatic=!!local&&!isManuallyLocked(local);
+      const allowAutomatic=!!local&&!isManuallyLocked(local)&&lockSequence===startedWithLockSequence;
       let restored=false;
       if(allowAutomatic&&browserContext){
         try {
           const checkSharedLock=browserLockEpoch(local!);
           const remembered=await readBrowserKey(browserContext);
           checkSharedLock();
+          if(liveVault!==vault||lockSequence!==startedWithLockSequence)return;
           if(remembered){
             $('cloud-live-status').textContent='自動復号中';
             syncCloudGate();
             showActivity('OneDriveの保管庫を自動復号中…','working');
-            await liveVault.unlockBrowserKey(remembered);
-            try{checkSharedLock();}catch{liveVault.lock();return;}
-            if(lockSequence!==startedWithLockSequence||isManuallyLocked(local!)){liveVault.lock();return;}
+            await vault.unlockBrowserKey(remembered,discoveredIndex??undefined);
+            try{checkSharedLock();}catch{vault.lock();return;}
+            if(liveVault!==vault||lockSequence!==startedWithLockSequence||isManuallyLocked(local!)){vault.lock();return;}
             const restoredRecords=liveVault.records();
-            appendCloudRecordsKeepingDrafts(restoredRecords);lastCloudCheckAt=Date.now();
-            if(!$('assets-page').classList.contains('hidden')||!$('settings-view').classList.contains('hidden'))assetsUi?.render();
-            if(!$('settings-view').classList.contains('hidden'))cardSettingsUi?.render();
-            void assetsUi?.refreshPayroll();updateCloudStatus();
+            if(!await completeVaultOpening(vault,restoredRecords,vault.payrollCredentialHint()))return;
             if(liveVault.recoveryOnly)operationResult('保存ロックの復旧と最新データ取得が必要です。','warn');
             else operationResult(`このブラウザの保存鍵で自動復号しました（${restoredRecords.length}件）。`);
             restored=true;
@@ -1195,12 +1223,13 @@ async function refreshCloud():Promise<void> {
     const fresh=await current.refresh();
     // Never overwrite local state if a different vault has been connected.
     if(current!==liveVault||!current.unlocked)throw new Error('更新中に保管庫が変更されました。');
+    const payrollHint=current.payrollCredentialHint();
     replaceCloudRecords(fresh);
     // Assets also owns the NISA/Payroll controls on the settings page.
     if(!$('assets-page').classList.contains('hidden')||!$('settings-view').classList.contains('hidden'))assetsUi?.render();
     if(!$('settings-view').classList.contains('hidden'))cardSettingsUi?.render();
     lastCloudCheckAt=Date.now();
-    void assetsUi?.refreshPayroll();
+    void assetsUi?.refreshPayroll(payrollHint);
     updateCloudStatus('OneDriveから最新の明細を取得しました。');
   } finally { cloudRefreshing=false; }
     });
@@ -1480,17 +1509,19 @@ function showView(view: FinanceView): void {
   if (view === 'import' && !importActive()) {
     activeIndex = statements.findIndex(s => importStaged.has(s));
   }
-  if (view === 'manage') renderManager();
-  if (view === 'import') render();
-  if (view === 'rules') {renderRules();}
-  if (view === 'assets') {assetsUi?.render();homeUi?.renderFundingHistory();}
-  if (view === 'settings') {assetsUi?.render();cardSettingsUi?.render();}
-  if (view === 'future') futureUi?.render();
-  if (view === 'summary') summaryUi?.render();
-  if (view === 'analysis') analysisUi?.render();
-  if (view === 'reports') reportsUi?.render();
-  if (view === 'subscriptions') subscriptionsUi?.render();
-  if (view === 'home') homeUi?.render();
+  if(!(initialPayrollVault&&initialPayrollVault===liveVault)){
+    if (view === 'manage') renderManager();
+    if (view === 'import') render();
+    if (view === 'rules') {renderRules();}
+    if (view === 'assets') {assetsUi?.render();homeUi?.renderFundingHistory();}
+    if (view === 'settings') {assetsUi?.render();cardSettingsUi?.render();}
+    if (view === 'future') futureUi?.render();
+    if (view === 'summary') summaryUi?.render();
+    if (view === 'analysis') analysisUi?.render();
+    if (view === 'reports') reportsUi?.render();
+    if (view === 'subscriptions') subscriptionsUi?.render();
+    if (view === 'home') homeUi?.render();
+  }
   syncCloudGate();
   // Switching menus always starts the destination at its top. Explicit
   // 'back to summary' navigation restores its captured position afterward.
@@ -1712,7 +1743,7 @@ function renderManager(): void {
       if (aria === '金額') td.classList.add('amount-cell');
     }
     const td = document.createElement('td');td.dataset.label='操作';
-    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'manage-row-delete danger-action'; remove.textContent = '×';
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'manage-row-delete danger-action'; remove.textContent = '削除';
     remove.setAttribute('aria-label','この取引を削除');remove.title='この取引を削除';
     remove.disabled=batchBusy||filesBusy||cloudRefreshing||yearConflict;
     remove.addEventListener('click', () => {
@@ -2797,6 +2828,7 @@ function init(): void {
     render();
   },()=>{render();},id=>{showView('subscriptions');if(id)subscriptionsUi?.openFixedCost(id);});
   const homeSource=()=>{
+    if(initialPayrollVault&&initialPayrollVault===liveVault)return null;
     if(!liveVault?.unlocked||liveVault.recoveryOnly)return null;
     return {records:liveVault.readonlyRecords(),rules:liveVault.merchantRules(),
       categories:liveVault.merchantCategories(),assets:liveVault.assetSettings(),fixedCostMigrations:liveVault.fixedCostMigrations(),
@@ -2840,7 +2872,7 @@ function init(): void {
       if(!$('analysis-view').classList.contains('hidden'))analysisUi?.render();
       if(!$('assets-page').classList.contains('hidden'))assetsUi?.render();
     },openAccountSettings:()=>showView('assets'),openCardRule:target=>{void openCardFixedRule(target);}});
-  reportsUi=initMonthlyReports({source:homeSource,vault:()=>liveVault,openMonth:(period)=>{summaryUi?.setPeriod(period);showView('summary');}});
+  reportsUi=initMonthlyReports({source:homeSource,vault:()=>liveVault});
   summaryUi=initMonthlySummary({
     source:homeSource,
     openCardSettings,
@@ -3282,13 +3314,10 @@ function init(): void {
         }
         try{checkRetention();if(!browserSaveFailure)sharedRetention?.resume();}catch(error){originalVault?.lock();throw error;}
         if(browserSaveFailure)$('cloud-remember-status').textContent=browserSaveFailure;
-        modalClose(true);
         const unlockedRecords=liveVault.records();
-        appendCloudRecordsKeepingDrafts(unlockedRecords);lastCloudCheckAt=Date.now();
-        if(!$('assets-page').classList.contains('hidden')||!$('settings-view').classList.contains('hidden'))assetsUi?.render();
-        if(!$('settings-view').classList.contains('hidden'))cardSettingsUi?.render();
-        void assetsUi?.refreshPayroll();
-        updateCloudStatus();
+        const opening=completeVaultOpening(liveVault,unlockedRecords);
+        modalClose(true);
+        if(!await opening)return;
         await refreshVaultControls();
         if(browserSaveFailure)operationResult(browserSaveFailure,'bad');
         else if(liveVault.recoveryOnly)operationResult('保存ロックの復旧と最新データ取得が必要です。','warn');

@@ -27,7 +27,7 @@
 .import-inline-entry>.import-panel{width:100%;min-height:0!important;margin:0!important}
 #import-view:not(.has-import-drafts)>.results-grid,
 #import-view:not(.has-import-drafts)>.batch-bar{display:none!important}
-#import-view:not(.has-import-drafts) .import-inline-entry .dropzone{min-height:156px!important;height:auto!important;padding:22px 18px}
+@media(min-width:801px){#import-view:not(.has-import-drafts) .import-inline-entry .dropzone{min-height:156px!important;height:auto!important;padding:22px 18px}}
 #import-view:not(.has-import-drafts):not(.hidden){min-height:0!important;height:auto!important;display:block!important}
 .import-page-heading{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:10px}
 .import-page-heading .import-add-open{width:auto;flex:0 0 auto;min-height:33px;margin:0;padding:7px 12px;font-size:12px;font-weight:700;white-space:nowrap;border-radius:9px}
@@ -44,7 +44,7 @@
 .import-add-body{padding:20px 22px 23px;overflow-y:auto;min-height:0;overscroll-behavior:contain}
 .import-add-body>.import-panel{padding:0!important;min-height:0!important;border:0!important;box-shadow:none!important;margin:0!important;overflow:visible}
 .import-add-body>.import-panel>.panel-heading{display:none}
-.import-add-body .dropzone{min-height:165px!important;height:auto!important;padding:22px 12px}
+@media(min-width:801px){.import-add-body .dropzone{min-height:165px!important;height:auto!important;padding:22px 12px}}
 .import-upload-feedback{border:1px solid color-mix(in srgb,#c45b5b 25%,var(--line));border-radius:9px;padding:10px 12px;
   background:color-mix(in srgb,#c45b5b 8%,var(--panel));color:var(--ink);font-size:12px;line-height:1.6;
   white-space:pre-line;overflow-wrap:anywhere;margin-top:12px}
@@ -53,7 +53,6 @@
 @media(max-width:630px){
   .import-page-heading{align-items:center}
   .import-page-heading .import-add-open{min-height:32px;padding:6px 10px;font-size:11px}
-  .import-add-body .dropzone{min-height:145px!important}
 }
 
 /* After the first import, an empty queue remains a quiet workspace, not an onboarding wizard. */

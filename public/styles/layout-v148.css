@@ -127,6 +127,5 @@
   .manage-editor .manage-merchant-input-row{flex-direction:column;align-items:stretch}
   .manage-editor .manage-merchant-input-row>input{width:100%;flex:auto}
   .manage-editor .manage-rule-action{align-self:flex-start}
-  .settings-view .cloud-client-id-inline{grid-template-columns:minmax(0,1fr)!important}
   .settings-view .cloud-troubleshooting .cloud-tool-check{grid-template-columns:minmax(0,1fr)!important}
 }

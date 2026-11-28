@@ -202,3 +202,21 @@ test('M202: an invalidated committed remember is removed, but a newer key is not
   assert.deepEqual(new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv},latest.key,encrypted)),plain);
   await forgetBrowserKey(alpha);
 });
+
+test('startup reuses discovered encrypted index; closing fence rejects a changed generation',async()=>{
+  const api=mockClient(),original=new LiveVault(api);
+  await original.create('synthetic passphrase for startup verification');
+  const remembered=original.verifiedBrowserKey();let reads=0;
+  const get=api.readFinanceIndex.bind(api);api.readFinanceIndex=async(...args)=>{reads++;return get(...args);};
+  const next=new LiveVault(api),discovery=await next.discoverWithIndex();
+  assert.equal(discovery.exists,true);
+  await next.unlockBrowserKey(remembered,discovery.index);
+  assert.equal(reads,2,'discovery plus closing fence, no duplicate opening index read');
+  assert.equal(next.unlocked,true);
+  const stale=new LiveVault(api),old=await stale.discoverWithIndex();
+  const salt=freshSalt(),key=await deriveCloudKey('synthetic changed startup key',salt);
+  api.files.set('index',{id:'index',etag:'"2"',text:await encryptIndex({format:'finance-cloud-index-v1',years:[]},key,salt,crypto.randomUUID())});
+  await assert.rejects(stale.unlockBrowserKey(remembered,old.index),/取得中にOneDrive保管庫が更新/);
+  assert.equal(stale.unlocked,false);
+  assert.equal(remembered.key.extractable,false);
+});

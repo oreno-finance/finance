@@ -22,3 +22,13 @@
 
 :is(#home-view,#assets-funding-history) .home-funding-prior{border-color:var(--danger,#bf4c51)}
 :is(#home-view,#assets-funding-history) .home-funding-prior .home-funding-state{color:var(--danger,#bf4c51)}
+
+/* Income detail remains part of the existing linked KPI, not another card. */
+.home-income-parts{display:grid;gap:3px;width:100%;min-width:0;margin-top:2px;padding-top:7px;border-top:1px solid var(--line)}
+.home-income-part{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:2px 6px;font-size:11px;line-height:1.4}
+.home-income-part .home-income-amount{font-weight:650;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;margin-left:auto}
+@media(max-width:800px){
+ :is(#home-view,#assets-funding-history) .home-funding-body{flex-direction:column;align-items:stretch;gap:10px}
+ :is(#home-view,#assets-funding-history) .home-funding-controls{width:100%;max-width:none;margin:0;flex:0 0 auto;justify-content:flex-end}
+ :is(#home-view,#assets-funding-history) .home-funding-controls button{flex:0 0 auto;white-space:nowrap;overflow-wrap:normal;padding:7px 10px}
+}

@@ -647,7 +647,6 @@ body{overflow:hidden}
   .cloud-overview-label{font-size:10px}
   .cloud-overview-info{grid-template-columns:1fr;gap:10px}
   .cloud-status-cell{padding:12px 14px}
-  .cloud-account-actions{justify-content:flex-start}
   .cloud-account-actions .cloud-link-action{min-height:40px;padding:9px 0}
   .cloud-advanced>summary{padding:15px 13px}
   .cloud-advanced-content{padding:3px 11px 13px}
@@ -1039,12 +1038,13 @@ body{overflow:hidden}
 .vault-retention-options .vault-tab-option strong{font-size:12px}
 .vault-retention-options .vault-tab-option small{font-size:11px}
 .vault-retention-help{font-size:11px;line-height:1.55;color:var(--muted);margin:7px 0 0}
-.cloud-remember-controls{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:14px 0 0;border-top:1px solid var(--border,rgba(115,133,160,.24));margin-top:14px}
-.cloud-remember-copy{flex:1 1 270px;min-width:0}
+.cloud-remember-controls{display:grid;gap:9px;padding:14px 0 0;border-top:1px solid var(--border,rgba(115,133,160,.24));margin-top:14px}
+.cloud-remember-copy{min-width:0}
 .cloud-remember-controls strong{font-size:13px}
 .cloud-remember-controls p{margin:5px 0 0;font-size:12px;line-height:1.6;color:var(--ink)}
 .cloud-remember-copy small{display:block;margin-top:5px;font-size:11px;line-height:1.5;color:var(--muted)}
-.cloud-remember-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.cloud-remember-actions{display:flex;align-items:center;justify-content:flex-start;flex-wrap:wrap;gap:8px}
+.cloud-remember-actions:not(:has(button:not(.hidden))){display:none}
 /* The shared cloud-link-action rules only apply inside .cloud-primary-actions.
    This settings control must be fully styled in *both* remembered states. */
 .cloud-remember-actions button{
@@ -1062,7 +1062,7 @@ body{overflow:hidden}
 .cloud-remember-actions #cloud-remember-forget:hover{background:var(--bg);border-color:var(--muted)}
 .cloud-remember-actions button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .cloud-remember-actions button:disabled{opacity:.5;cursor:not-allowed}
-@media(max-width:600px){.cloud-remember-actions{width:100%}.cloud-remember-actions button{width:100%}}
+
 @media(prefers-reduced-motion:reduce){.cloud-remember-actions button{transition:none}}
 
 /* Finance MSAL status: kept separate from financial-vault lock state. */

@@ -1,5 +1,10 @@
 /* Finance 1.8.4: interactive daily Rakuten Bank timeline; no financial data changes. */
 .monthly-chart-plot{min-width:0;overflow:visible}
+.monthly-chart{padding:12px!important}
+.monthly-chart-plot>.monthly-balance-svg{display:block;width:100%!important;height:auto!important;max-height:none!important;min-height:0!important}
+.monthly-chart-plot .monthly-chart-grid{stroke-width:1;opacity:.7}
+.monthly-chart-plot .monthly-chart-path{stroke-width:2.5;vector-effect:non-scaling-stroke}
+.monthly-chart-plot .monthly-chart-label{font-size:13px}
 .monthly-chart-marker{cursor:pointer}
 .monthly-chart-hit{fill:transparent;pointer-events:all;stroke:transparent;stroke-width:0}
 .monthly-chart-marker:hover .monthly-chart-point,
@@ -31,7 +36,7 @@
 @media(max-width:800px){
  .monthly-chart{overflow:visible!important}
  .monthly-chart-plot{overflow-x:auto;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
- .monthly-chart-plot>.monthly-balance-svg{width:520px!important;min-width:520px!important;max-height:150px!important}
+ .monthly-chart-plot>.monthly-balance-svg{width:100%!important;min-width:460px!important;max-height:none!important}
 }
 @media(max-width:570px){
  .monthly-chart-detail{padding:11px}

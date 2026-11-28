@@ -32,8 +32,6 @@
   html,body{overflow-x:clip!important;overflow-y:visible!important}
   #finance-sidebar.sidebar{position:sticky!important;top:0!important;z-index:80!important;
     box-shadow:0 2px 8px rgba(10,22,40,.12)}
-  #pdf-pane .dropzone{display:flex!important;width:100%!important;max-width:none!important;
-    min-width:0!important;box-sizing:border-box!important;align-self:stretch!important}
   #manage-view .manage-index{min-height:0!important;align-self:stretch!important}
   #manage-view .manage-index .statement-list{height:auto!important;max-height:none!important;min-height:0!important;
     overflow:visible!important;overscroll-behavior:auto!important;padding-right:0!important}
