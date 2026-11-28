@@ -114,17 +114,17 @@ export function initMonthlyReports(deps) {
     async function fetch() {
         return traceFinanceOperation('report-read', async () => {
             const vault = deps.vault();
-            if (!vault?.unlocked)
+            if (!vault?.unlocked || busy)
                 return;
-            const id = ++request;
+            const period = selected, id = ++request;
             busy = true;
             message = '';
             loadFailed = false;
             showActivity('月次レポートを読み込み中…', 'working');
             render();
             try {
-                const [list, document] = await vault.loadArchivedReports(selected);
-                if (id !== request)
+                const [list, document] = await vault.loadArchivedReports(period);
+                if (id !== request || vault !== deps.vault() || !vault.unlocked)
                     return;
                 periods = list;
                 archive = document;
@@ -142,16 +142,18 @@ export function initMonthlyReports(deps) {
                 message = '';
             }
             catch (error) {
-                if (id !== request)
+                if (id !== request || vault !== deps.vault() || !vault.unlocked)
                     return;
-                loadedPeriod = selected;
                 loadFailed = true;
-                archive = null;
-                periods = [];
                 message = `取得失敗：${error instanceof Error ? error.message : 'レポートを取得できませんでした。'}`;
             }
             finally {
                 if (id === request) {
+                    if (vault !== deps.vault() || !vault.unlocked) {
+                        reset();
+                        finishActivity('月次レポート');
+                        return;
+                    }
                     busy = false;
                     finishActivity('月次レポート');
                     if (loadFailed)
@@ -166,7 +168,7 @@ export function initMonthlyReports(deps) {
     async function save(noteOnly = false) {
         return traceFinanceOperation('report-save', async () => {
             const vault = deps.vault();
-            if (!vault?.unlocked || busy || loadFailed || draftConflict || loadedPeriod !== selected)
+            if (!vault?.unlocked || busy || loadFailed || draftConflict || chosenRevision || loadedPeriod !== selected || (noteOnly && (!archive || draft === archive.current.note)))
                 return;
             const id = ++request;
             let saved = false;
@@ -189,7 +191,7 @@ export function initMonthlyReports(deps) {
                     const snapshot = reportSnapshot(selected, source);
                     result = await vault.saveArchivedReport(snapshot, draft, archive?.current.id ?? null);
                 }
-                if (id !== request)
+                if (id !== request || vault !== deps.vault() || !vault.unlocked)
                     return;
                 archive = result;
                 loadedPeriod = selected;
@@ -206,7 +208,7 @@ export function initMonthlyReports(deps) {
                 showActivity(noteOnly ? 'メモを保存しました。' : '月次レポートを保存しました。', 'good');
             }
             catch (error) {
-                if (id !== request)
+                if (id !== request || vault !== deps.vault() || !vault.unlocked)
                     return;
                 if (!noteOnly && archive)
                     comparison = 'unavailable';
@@ -215,6 +217,11 @@ export function initMonthlyReports(deps) {
             }
             finally {
                 if (id === request) {
+                    if (vault !== deps.vault() || !vault.unlocked) {
+                        reset();
+                        finishActivity('月次レポート');
+                        return;
+                    }
                     busy = false;
                     saving = false;
                     render();
@@ -260,9 +267,6 @@ export function initMonthlyReports(deps) {
     }
     function syncSourceNotice() {
         const notice = container.querySelector('.reports-source-changed');
-        const memoOnly = container.querySelector('.reports-note-only');
-        if (memoOnly)
-            memoOnly.hidden = comparison !== 'unavailable';
         if (!notice)
             return;
         notice.hidden = comparison !== 'changed' && comparison !== 'unavailable' && comparison !== 'checking';
@@ -292,42 +296,51 @@ export function initMonthlyReports(deps) {
         ++comparisonRequest;
         return true;
     }
+    let renderedPeriod = '';
     function render() {
+        const openDetails = renderedPeriod === selected ? Array.from(container.querySelectorAll('details.reports-detail')).map(node => node.open) : [];
+        renderedPeriod = selected;
         container.replaceChildren();
         if (!active()) {
             container.append(el('div', 'panel reports-locked', 'OneDrive保管庫を解除してください。'));
-            return;
-        }
-        if (busy) {
-            const pending = el('p', 'reports-muted', saving ? '保存中…' : '読み込み中…');
-            pending.setAttribute('role', 'status');
-            container.append(pending);
             return;
         }
         const top = el('div', 'reports-controls');
         const choosePeriod = (period) => { if (selectPeriod(period))
             void fetch(); };
         const nav = monthNavigator(selected, choosePeriod, { label: 'レポート対象年月', min: '1900-02', max: '2199-12', today: today() });
-        const refresh = button('最新を取得', () => { void fetch(); });
+        const refresh = button('最新を取得', () => { if (refresh.isConnected)
+            void fetch(); });
+        refresh.disabled = busy;
+        if (saving)
+            for (const control of nav.querySelectorAll('button,input'))
+                control.disabled = true;
         top.append(nav, refresh);
         container.append(top, el('p', 'reports-purpose', '保存時点の収支・メモを記録'));
         // Suggest preserving the previous month's point-in-time view after rollover;
         // never create an archive without a deliberate Save action.
         const current = today(), previous = (() => { const [y, m] = current.split('-').map(Number); const d = new Date(Date.UTC(y, m - 2, 1)); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`; })();
-        if (!busy && !loadFailed && loadedPeriod === selected && selected === current && !periods.includes(previous)) {
+        if (!loadFailed && loadedPeriod === selected && selected === current && !periods.includes(previous)) {
             const reminder = el('div', 'reports-previous-reminder');
-            reminder.append(el('span', 'reports-muted', '前月：未保存'), button(`${month(previous)}を開く`, () => choosePeriod(previous), 'monthly-link'));
+            const openPrevious = button(`${month(previous)}を開く`, () => choosePeriod(previous), 'monthly-link');
+            openPrevious.disabled = saving;
+            reminder.append(el('span', 'reports-muted', '前月：未保存'), openPrevious);
             container.append(reminder);
         }
         // Keep failures beside the operation, even after the activity card expires.
-        if (loadFailed) {
-            const error = el('p', 'reports-feedback-error', message);
-            error.setAttribute('role', 'alert');
-            container.append(error);
-            return;
-        }
         if (loadedPeriod !== selected) {
-            void fetch();
+            if (loadFailed) {
+                const error = el('p', 'reports-feedback-error', message);
+                error.setAttribute('role', 'alert');
+                container.append(error);
+            }
+            else if (busy) {
+                const pending = el('p', 'reports-muted', '読み込み中…');
+                pending.setAttribute('role', 'status');
+                container.append(pending);
+            }
+            else
+                void fetch();
             return;
         }
         if (periods.length) {
@@ -343,6 +356,7 @@ export function initMonthlyReports(deps) {
                 yearSelect.append(new Option(`${year}年（${count}か月）`, year));
             }
             yearSelect.value = archiveYear;
+            yearSelect.disabled = saving;
             yearSelect.addEventListener('change', () => {
                 archiveYear = yearSelect.value;
                 render();
@@ -354,6 +368,7 @@ export function initMonthlyReports(deps) {
                 const item = button(`${Number(period.slice(5))}月`, () => { if (selectPeriod(period))
                     void fetch(); }, 'reports-period-button' + (period === selected ? ' selected' : ''));
                 item.setAttribute('aria-pressed', String(period === selected));
+                item.disabled = saving;
                 months.append(item);
             }
             list.append(months);
@@ -363,7 +378,7 @@ export function initMonthlyReports(deps) {
         if (message) {
             const error = el('p', 'reports-feedback-error', message);
             error.setAttribute('role', 'alert');
-            control.body.append(error);
+            container.append(error);
         }
         const state = archive?.current;
         if (state) {
@@ -373,7 +388,7 @@ export function initMonthlyReports(deps) {
         }
         if (draftConflict) {
             control.body.append(el('p', 'reports-quality', '別の端末でメモが更新されました。編集中の内容を確認してください。'));
-            control.body.append(button('編集を破棄', async () => {
+            const discard = button('編集を破棄', async () => {
                 const id = request, period = selected, vault = deps.vault(), note = draft, revision = archive?.current.id;
                 if (!await requestConfirmation({ owner: confirmationOwner, title: '編集中のメモを破棄しますか？', message: '保存済みの最新レポートを表示します。', acceptLabel: '破棄する', destructive: true }))
                     return;
@@ -383,7 +398,9 @@ export function initMonthlyReports(deps) {
                 draftConflict = false;
                 draft = archive?.current.note ?? '';
                 render();
-            }));
+            });
+            discard.disabled = busy;
+            control.body.append(discard);
         }
         const noteLabel = el('label', 'reports-memo-label', 'メモ');
         noteLabel.htmlFor = 'reports-memo';
@@ -393,6 +410,7 @@ export function initMonthlyReports(deps) {
         memo.rows = 3;
         memo.maxLength = 2000;
         memo.value = draft;
+        memo.disabled = busy;
         memo.placeholder = '今月の振り返り';
         memo.addEventListener('input', () => {
             if (!memo.isConnected || busy || !active() || loadedPeriod !== selected)
@@ -405,15 +423,17 @@ export function initMonthlyReports(deps) {
                 const held = drafts.get(selected);
                 drafts.set(selected, { note: draft, revision: held ? held.revision : archive?.current.id ?? null });
             }
+            const noteOnly = container.querySelector('.reports-note-only');
+            if (noteOnly)
+                noteOnly.disabled = busy || loadFailed || draftConflict || draft === archive?.current.note;
         });
         control.body.append(memo);
         const submit = button(state ? 'レポートを更新' : 'レポートを作成', () => { void save(); }, 'save-action');
-        submit.disabled = draftConflict;
+        submit.disabled = busy || loadFailed || draftConflict;
         control.body.append(submit);
         if (state) {
             const noteOnly = button('メモのみ保存', () => { void save(true); }, 'secondary-action reports-note-only');
-            noteOnly.disabled = draftConflict;
-            noteOnly.hidden = comparison !== 'unavailable';
+            noteOnly.disabled = busy || loadFailed || draftConflict || draft === state.note;
             control.body.append(noteOnly);
         }
         const revision = chosenRevision ? archive?.history.find(item => item.id === chosenRevision) ?? state : state;
@@ -435,8 +455,12 @@ export function initMonthlyReports(deps) {
             heading.append(el('strong', '', `${month(selected)} · ${chosenRevision ? '過去の版' : revision ? '保存済み' : '未保存プレビュー'}`));
             if (revision)
                 heading.append(el('span', 'reports-muted', `保存：${formatDateTime(revision.savedAt, true)}`));
-            if (chosenRevision)
-                heading.append(button('最新版へ戻る', () => { chosenRevision = null; comparison = 'unchecked'; render(); void compareSource(); }));
+            if (chosenRevision) {
+                const latest = button('最新版へ戻る', () => { if (busy)
+                    return; chosenRevision = null; comparison = 'unchecked'; render(); void compareSource(); });
+                latest.disabled = busy;
+                heading.append(latest);
+            }
             container.append(heading);
             container.append(reportMetrics(snapshot));
             if (snapshot.quality.length)
@@ -462,11 +486,16 @@ export function initMonthlyReports(deps) {
             const history = el('details', 'reports-detail reports-history');
             history.append(el('summary', '', `保存履歴（${archive.history.length}件）`));
             const inner = el('div', 'reports-history-body');
-            for (const version of archive.history)
-                inner.append(button(formatDateTime(version.savedAt, true), () => { chosenRevision = version.id; ++comparisonRequest; comparison = 'unchecked'; render(); }, 'reports-history-button'));
+            for (const version of archive.history) {
+                const item = button(formatDateTime(version.savedAt, true), () => { if (busy)
+                    return; chosenRevision = version.id; ++comparisonRequest; comparison = 'unchecked'; render(); }, 'reports-history-button');
+                item.disabled = busy;
+                inner.append(item);
+            }
             history.append(inner);
             container.append(history);
         }
+        Array.from(container.querySelectorAll('details.reports-detail')).forEach((node, index) => { node.open = openDetails[index] ?? false; });
         syncSourceNotice();
     }
     function openPeriod(period) {

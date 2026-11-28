@@ -670,7 +670,8 @@ body{overflow:hidden}
 .rules-workspace .panel-heading{margin-bottom:18px}
 .rules-lock-message{padding:24px;color:var(--muted);font-size:13px}
 .rules-field{display:flex;flex-direction:column;gap:7px;font-size:11px;font-weight:700;color:var(--muted);min-width:0;margin-bottom:17px}
-.rules-field input,.rules-field select{width:100%;min-width:0;height:42px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink);font:inherit;font-size:12px}
+:is(.rules-field,.fixed-cost-field) :is(input:not([type=checkbox]):not([type=radio]),select,textarea){box-sizing:border-box;width:100%;max-width:100%;min-width:0;min-height:var(--finance-action-height);padding:9px 12px;border:1px solid var(--line);border-radius:var(--radius-control);background-color:var(--panel);color:var(--ink);font:inherit;font-size:13px}
+:is(.rules-field,.fixed-cost-field) :is(input:not([type=checkbox]):not([type=radio]),select){height:var(--finance-action-height)}
 .rules-field input:focus,.rules-field select:focus{outline:2px solid var(--accent);outline-offset:1px}
 .rules-form-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}
 .rules-advanced{border:1px solid var(--line);border-radius:10px;margin:0 0 17px;background:var(--bg);overflow:hidden}

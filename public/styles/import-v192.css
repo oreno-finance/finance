@@ -59,3 +59,7 @@
 .import-compact-empty{margin:10px 0;padding:20px 16px;border:1px solid var(--line);border-radius:12px;
   background:var(--panel);color:var(--muted);font-size:12px;text-align:center}
 .import-compact-empty.hidden{display:none!important}
+
+.dropzone[aria-disabled="true"]{cursor:wait}
+.dropzone[aria-disabled="true"] .drop-desktop-label{display:none!important}
+#import-file-progress.hidden{display:none!important}

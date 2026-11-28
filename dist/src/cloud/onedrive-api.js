@@ -13,6 +13,10 @@ export class GraphError extends Error {
         this.code = code;
     }
 }
+/** Only raised before the final chunk is sent; the target cannot yet be committed. */
+export class UploadChunkTimeoutError extends Error {
+    constructor() { super('OneDriveへのアップロードが時間内に完了しませんでした。再試行してください。'); this.name = 'UploadChunkTimeoutError'; }
+}
 /** This is an empty coordination folder, never a data file. Folder creation
  * uses conflictBehavior=fail, not an upload session or a read-then-write lock.
  * No lease expiry: a suspended tab must never regain permission after expiry. */
@@ -589,7 +593,7 @@ export class OneDriveTestClient {
                 for (let attempt = 0;; attempt++) {
                     this.checkMutationGuard();
                     let deadline;
-                    const controller = final ? new AbortController() : undefined;
+                    const controller = new AbortController();
                     try {
                         countFinanceRequest('graph.upload-chunk');
                         if (attempt > 0)
@@ -598,11 +602,14 @@ export class OneDriveTestClient {
                             const sending = this.http(uploadUrl, {
                                 method: 'PUT', credentials: 'omit',
                                 headers: { 'Content-Range': `bytes ${start}-${end - 1}/${bytes.byteLength}` },
-                                body: bytes.slice(start, end), ...(controller ? { signal: controller.signal } : {}),
+                                body: bytes.slice(start, end), signal: controller.signal,
                             });
-                            return final ? await Promise.race([sending, new Promise((_, reject) => {
-                                    deadline = setTimeout(() => { controller?.abort(); reject(new Error('OneDriveの保存応答を確認できませんでした。')); }, 120000);
-                                })]) : await sending;
+                            return await Promise.race([sending, new Promise((_, reject) => {
+                                    deadline = setTimeout(() => {
+                                        reject(final ? new Error('OneDriveの保存応答を確認できませんでした。') : new UploadChunkTimeoutError());
+                                        controller.abort();
+                                    }, 120000);
+                                })]);
                         });
                         countFinanceStatus(part.status);
                     }

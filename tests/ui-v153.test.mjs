@@ -31,7 +31,8 @@ test('bank balance chart uses dated step positions and a baseline-aware first po
   assert.match(summary,/path\.push\(`H\$\{x\(point\.day\)/);
   assert.match(summary,/const chart=bankChart\(timeline,period\)/);
   assert.doesNotMatch(summary,/残高は同日の入出金を合算した日末時点の予測です/);
-  assert.match(css,/\.monthly-chart\{overflow-x:auto/);
+  assert.match(read('public/styles/bank-chart-v184.css'),/\.monthly-balance-svg\{[^}]*min-width:0/);
+  assert.match(summary,/observeChartWidth\(svg,paint,630\)/);
 });
 test('projection defaults to cash + NISA + combined, scenario is optional',()=>{
   assert.match(html,/id="future-scenario-settings" hidden/);

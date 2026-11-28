@@ -67,10 +67,10 @@ test('a PDF read completed after vault lock or replacement cannot create a downl
  const start=main.indexOf('async function downloadManagedOriginal('),end=main.indexOf('async function clearManagerChanges(',start);
  assert.ok(start>=0&&end>start);
  for(const mode of ['locked','replaced','normal']){
-  let resolve;const s={};const btn={disabled:false};let downloads=0;
+  let resolve;const s={};const btn={disabled:false,classList:{contains:()=>true}};let downloads=0;
   const vault={unlocked:true,original:()=>new Promise(r=>resolve=r)};
   const env={traceFinanceOperation,active:()=>s,savedIds:new Map([[s,'sample']]),liveVault:vault,lockSequence:0,filesBusy:false,cloudRefreshing:false,$:()=>btn,
-    Uint8Array,downloadFile:()=>downloads++,canonicalStatementFilename:()=> 'sample.pdf',toast(){}};
+    Uint8Array,downloadFile:()=>downloads++,canonicalStatementFilename:()=> 'sample.pdf',toast(){},updateImportUploadFeedback(){}};
   const ctx=vm.createContext(env);vm.runInContext(main.slice(start,end),ctx);
   const promise=ctx.downloadManagedOriginal();
   if(mode==='locked'){ctx.lockSequence++;vault.unlocked=false;}

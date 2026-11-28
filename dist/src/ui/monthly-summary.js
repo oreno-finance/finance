@@ -1,3 +1,6 @@
+import { incomeMetricBreakdown } from './income-breakdown.js';
+import { CardNoUseRefreshRequired } from '../cloud/live-vault.js';
+import { observeChartWidth } from './chart-layout.js';
 import { statementPeriod } from '../models/types.js';
 import { requestConfirmation, confirmationPending, cancelConfirmation } from './modal.js';
 import { DATA_STATUS, financialStatusClass, formatYen as sharedYen, formatSignedYen, formatMonth, formatDate, formatShortDate, formatDateTime } from './formatters.js';
@@ -95,26 +98,15 @@ function bankChart(timeline, period) {
     const step = ([1, 2, 5, 10].find(n => n * magnitude >= rawStep) ?? 10) * magnitude;
     low = Math.floor(low / step) * step;
     high = Math.ceil(high / step) * step;
-    const range = high - low, W = 630, H = 220, L = 75, R = 18, T = 16, B = 28;
+    const range = high - low;
+    let W = 630, L = 75, R = 18;
+    const H = 220, T = 16, B = 28;
     const x = (day) => L + (day - 1) / Math.max(1, chart.lastDay - 1) * (W - L - R);
     const y = (value) => T + (high - value) / range * (H - T - B);
     const ns = 'http://www.w3.org/2000/svg';
     const node = (tag, attrs) => { const e = document.createElementNS(ns, tag); for (const [k, v] of Object.entries(attrs))
         e.setAttribute(k, v); return e; };
     const svg = node('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': '楽天銀行の月内予測残高。点をタップ、または日付選択を開いて詳細を選べます。', class: 'monthly-balance-svg' });
-    for (let i = 0; i <= Math.round(range / step); i++) {
-        const val = low + step * i, yy = y(val);
-        svg.append(node('line', { x1: String(L), x2: String(W - R), y1: String(yy), y2: String(yy), class: val === 0 ? 'monthly-chart-zero' : 'monthly-chart-grid' }));
-        const t = node('text', { x: String(L - 9), y: String(yy + 4), 'text-anchor': 'end', class: 'monthly-chart-label' });
-        t.textContent = Math.abs(step) >= 10000 ? `${(val / 10000).toLocaleString('ja-JP')}万` : `${val.toLocaleString('ja-JP')}円`;
-        svg.append(t);
-    }
-    const path = [`M${x(points[0].day).toFixed(2)} ${y(points[0].balance).toFixed(2)}`];
-    for (let i = 1; i < points.length; i++) {
-        const point = points[i];
-        path.push(`H${x(point.day).toFixed(2)}`, `V${y(point.balance).toFixed(2)}`);
-    }
-    svg.append(node('path', { d: path.join(' '), class: 'monthly-chart-path', fill: 'none' }));
     const markers = [], buttons = [];
     const section = element('div', 'monthly-chart');
     const plot = element('div', 'monthly-chart-plot');
@@ -200,22 +192,58 @@ function bankChart(timeline, period) {
         dateList.append(button);
         buttons.push(button);
     }
-    for (const day of [1, Math.ceil(chart.lastDay / 2), chart.lastDay]) {
-        const t = node('text', { x: String(x(day)), y: String(H - 10), 'text-anchor': day === 1 ? 'start' : day === chart.lastDay ? 'end' : 'middle', class: 'monthly-chart-label' });
-        t.textContent = `${day}日`;
-        svg.append(t);
-    }
     // Prefer a real event over the synthetic month-end marker on first display.
     const defaultIndex = selectable.map(p => p.kind).lastIndexOf('event');
     choose(defaultIndex >= 0 ? defaultIndex : selectable.length - 1);
-    return section;
+    const paint = (width) => {
+        const narrow = width < 560;
+        W = narrow ? width : 630;
+        R = narrow ? 10 : 18;
+        const labels = Array.from({ length: Math.round(range / step) + 1 }, (_, i) => {
+            const value = low + step * i;
+            return Math.abs(step) >= 10000 ? `${(value / 10000).toLocaleString('ja-JP')}万` : `${value.toLocaleString('ja-JP')}円`;
+        });
+        L = narrow ? Math.min(W * .48, Math.max(48, ...labels.map(label => label.length * 7 + 10))) : 75;
+        svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+        svg.classList.toggle('is-compact-chart', narrow);
+        svg.replaceChildren();
+        for (let i = 0; i <= Math.round(range / step); i++) {
+            const val = low + step * i, yy = y(val);
+            svg.append(node('line', { x1: String(L), x2: String(W - R), y1: String(yy), y2: String(yy), class: val === 0 ? 'monthly-chart-zero' : 'monthly-chart-grid' }));
+            const t = node('text', { x: String(L - 9), y: String(yy + 4), 'text-anchor': 'end', class: 'monthly-chart-label' });
+            t.textContent = Math.abs(step) >= 10000 ? `${(val / 10000).toLocaleString('ja-JP')}万` : `${val.toLocaleString('ja-JP')}円`;
+            svg.append(t);
+        }
+        const path = [`M${x(points[0].day).toFixed(2)} ${y(points[0].balance).toFixed(2)}`];
+        for (let i = 1; i < points.length; i++) {
+            const point = points[i];
+            path.push(`H${x(point.day).toFixed(2)}`, `V${y(point.balance).toFixed(2)}`);
+        }
+        svg.append(node('path', { d: path.join(' '), class: 'monthly-chart-path', fill: 'none' }));
+        for (const [index, point] of selectable.entries()) {
+            const marker = markers[index];
+            for (const circle of marker.querySelectorAll('circle')) {
+                circle.setAttribute('cx', String(x(point.day)));
+                circle.setAttribute('cy', String(y(point.balance)));
+            }
+            svg.append(marker);
+        }
+        for (const day of [1, Math.ceil(chart.lastDay / 2), chart.lastDay]) {
+            const t = node('text', { x: String(x(day)), y: String(H - 10), 'text-anchor': day === 1 ? 'start' : day === chart.lastDay ? 'end' : 'middle', class: 'monthly-chart-label' });
+            t.textContent = `${day}日`;
+            svg.append(t);
+        }
+    };
+    const stopResize = observeChartWidth(svg, paint, 630);
+    return { section, stopResize };
 }
 export function initMonthlySummary(deps) {
     const reportOpen = document.getElementById('monthly-report-open');
     reportOpen?.addEventListener('click', () => deps.openReport?.(period));
     let period = localPeriod();
+    let stopBankChartResize = () => { };
     const confirmationOwner = {};
-    let epoch = 0, cardCheckBusy = false, cardCheckError = null, cardCheckErrorPeriod = null;
+    let epoch = 0, cardCheckBusy = false, cardCheckError = null, cardCheckErrorPeriod = null, cardCheckRefresh = false;
     const picker = document.getElementById('monthly-period');
     const main = document.getElementById('monthly-content');
     const label = document.getElementById('monthly-heading-period');
@@ -230,6 +258,7 @@ export function initMonthlySummary(deps) {
         if (detail)
             box.append(element('small', 'monthly-muted', detail));
         grid.append(box);
+        return box;
     }
     function section(title) {
         const box = element('section', 'panel monthly-panel');
@@ -240,6 +269,8 @@ export function initMonthlySummary(deps) {
         return { box, body };
     }
     function render() {
+        stopBankChartResize();
+        stopBankChartResize = () => { };
         syncPeriod();
         label.textContent = periodDisplay(period);
         main.replaceChildren();
@@ -261,13 +292,14 @@ export function initMonthlySummary(deps) {
         const grid = element('div', 'monthly-metrics');
         main.append(grid);
         const cashflow = monthlyCashflow(report);
-        metric(grid, '収入', yen(report.income), [report.recurringIncome > 0 ? '入金予定含む' : '', report.incomeEstimates.length ? '給与見込みを含む' : ''].filter(Boolean).join(' · '));
-        // Keep KPI cards compact. Detailed components remain in the breakdown below.
+        const incomeMetric = metric(grid, '収入', yen(report.income), source.payroll.loading ? '給与を読み込み中…' : [report.recurringIncome > 0 ? '入金予定含む' : '', report.incomeEstimates.length ? '給与見込みを含む' : ''].filter(Boolean).join(' · '));
+        incomeMetric.append(incomeMetricBreakdown(report));
+        // Detailed transactions remain in the breakdown below.
         metric(grid, '支出', report.cardOutflow === null ? DATA_STATUS.unavailable : yen(cashflow.expense), report.cardNoUseConfirmed ? '利用なし確認済み' : report.cardOutflow === null ? (report.cardLines.length ? '一部カード未取得' : '明細未取得') : cashflow.coverage === 'provisional' ? '暫定明細を含む' : cashflow.coverage === 'review' ? '明細要確認' : report.nisaOutflow > 0 ? 'NISA積立を含む' : '');
         const delta = report.monthlyBalance === null || prev.monthlyBalance === null ? null : report.monthlyBalance - prev.monthlyBalance;
         metric(grid, '収支', report.monthlyBalance === null ? DATA_STATUS.unavailable : yen(report.monthlyBalance), `前月比：${delta === null ? '比較不可' : formatSignedYen(delta)}`, report.monthlyBalance === null ? '' : report.monthlyBalance < 0 ? 'cashflow-negative' : 'cashflow-positive');
         const alert = element('div', 'monthly-alert');
-        const status = statusText(report);
+        const status = source.payroll.loading ? '給与を読み込み中…' : statusText(report);
         if (status)
             alert.append(element('p', '', status));
         if (report.cardOutflow === null)
@@ -319,6 +351,7 @@ export function initMonthlySummary(deps) {
                 cardCheckBusy = true;
                 cardCheckError = null;
                 cardCheckErrorPeriod = null;
+                cardCheckRefresh = false;
                 render();
                 try {
                     await deps.saveCardNoUseMonth(target, !confirmed);
@@ -327,6 +360,7 @@ export function initMonthlySummary(deps) {
                     if (started === epoch) {
                         cardCheckError = error instanceof Error ? error.message : '確認を保存できませんでした。';
                         cardCheckErrorPeriod = target;
+                        cardCheckRefresh = error instanceof CardNoUseRefreshRequired;
                     }
                 }
                 finally {
@@ -341,6 +375,37 @@ export function initMonthlySummary(deps) {
             const warning = element('p', 'monthly-overlap-warning', cardCheckError);
             warning.setAttribute('role', 'alert');
             alert.append(warning);
+            if (cardCheckRefresh && deps.refreshCardData) {
+                const refresh = document.createElement('button');
+                refresh.type = 'button';
+                refresh.className = 'secondary-action';
+                refresh.textContent = '最新データを取得';
+                refresh.addEventListener('click', async () => {
+                    if (!refresh.isConnected || cardCheckBusy || confirmationPending())
+                        return;
+                    const started = epoch, target = period;
+                    refresh.disabled = true;
+                    try {
+                        await deps.refreshCardData();
+                        if (started === epoch) {
+                            cardCheckError = null;
+                            cardCheckErrorPeriod = null;
+                            cardCheckRefresh = false;
+                        }
+                    }
+                    catch (error) {
+                        if (started === epoch) {
+                            cardCheckError = error instanceof Error ? error.message : '最新データを取得できませんでした。';
+                            cardCheckErrorPeriod = target;
+                        }
+                    }
+                    finally {
+                        if (started === epoch)
+                            render();
+                    }
+                });
+                alert.append(refresh);
+            }
         }
         if (report.payrollOneTimeOverlap)
             alert.append(element('p', '', '単発給与とPayrollの対応が不明です。重複候補を含む参考値です。'));
@@ -419,8 +484,10 @@ export function initMonthlySummary(deps) {
             bankMetric('月末の予測残高', yen(timeline.endBalance), timeline.endBalance !== null && timeline.endBalance < 0 ? 'monthly-negative' : '');
             bankMetric('期間内の最低残高', yen(timeline.minimum), timeline.minimum !== null && timeline.minimum < 0 ? 'monthly-negative' : '');
             const chart = bankChart(timeline, period);
-            if (chart)
-                bank.body.append(chart);
+            if (chart) {
+                bank.body.append(chart.section);
+                stopBankChartResize = chart.stopResize;
+            }
             if (timeline.warning)
                 bank.body.append(element('p', 'monthly-bank-notice', timeline.warning));
             if (timeline.missingCardAccounts.length) {
@@ -472,7 +539,7 @@ export function initMonthlySummary(deps) {
         };
         const incomes = addPair('収入内訳');
         if (!report.payrollReady)
-            empty(incomes, 'Payroll未同期。設定から連携状態を確認してください。');
+            empty(incomes, source.payroll.loading ? '給与を読み込み中…' : 'Payroll未同期。設定から連携状態を確認してください。');
         else if (!report.incomeLines.length && !report.incomeEstimates.length)
             empty(incomes, '給与実績なし');
         else
@@ -558,5 +625,5 @@ export function initMonthlySummary(deps) {
             main.append(qualityBox);
     }
     return { render, isBusy: () => cardCheckBusy || confirmationPending(confirmationOwner), setPeriod: (next) => { if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(next))
-            throw new Error("年月が不正です。"); go(next); }, reset: () => { epoch++; cancelConfirmation(confirmationOwner); cardCheckError = null; cardCheckErrorPeriod = null; period = localPeriod(); syncPeriod(); main.replaceChildren(); label.textContent = periodDisplay(period); } };
+            throw new Error("年月が不正です。"); go(next); }, reset: () => { stopBankChartResize(); stopBankChartResize = () => { }; epoch++; cancelConfirmation(confirmationOwner); cardCheckError = null; cardCheckErrorPeriod = null; cardCheckRefresh = false; period = localPeriod(); syncPeriod(); main.replaceChildren(); label.textContent = periodDisplay(period); } };
 }

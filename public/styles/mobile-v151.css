@@ -77,6 +77,8 @@
   #pdf-pane .dropzone>span,#pdf-pane .dropzone>small{display:none!important}
   #pdf-pane .dropzone .drop-mobile-label{display:inline!important;font-size:13px!important;
     line-height:1.3;font-weight:750;color:#fff}
+  #pdf-pane .dropzone[aria-disabled="true"] .drop-mobile-label{display:none!important}
+  #pdf-pane .dropzone>#import-file-progress:not(.hidden){display:inline!important;font-size:13px;font-weight:750;color:#fff}
   #pdf-pane .dropzone:focus-visible{outline:3px solid var(--accent)!important;outline-offset:3px}
 }
 @media (prefers-reduced-motion:reduce){

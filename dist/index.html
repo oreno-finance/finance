@@ -57,7 +57,7 @@
             </svg>
           </button>
         </div>
-        <div class="sidebar-meta"><span><button type="button" id="release-history-open" aria-haspopup="dialog" aria-controls="release-history-dialog" title="アップデート履歴">Finance v2.2.3</button></span><time id="app-updated-at" datetime="2026-11-28">ビルド 2026/11/28 JST</time></div>
+        <div class="sidebar-meta"><span><button type="button" id="release-history-open" aria-haspopup="dialog" aria-controls="release-history-dialog" title="アップデート履歴">Finance v2.2.4</button></span><time id="app-updated-at" datetime="2026-11-28">ビルド 2026/11/28 JST</time></div>
       </div>
       </div>
     </aside>
@@ -77,7 +77,7 @@
           <div class="import-methods">
             <div id="pdf-pane" class="import-method" role="group" aria-label="CSV・PDFファイルの追加">
               <label id="dropzone" class="dropzone" for="file-input" tabindex="0">
-                <div class="drop-icon">↑</div><b class="drop-desktop-label">CSV・PDFをここへドロップ</b><b class="drop-mobile-label">CSV・PDFを選択</b><span>またはクリックしてファイルを選択</span>
+                <div class="drop-icon">↑</div><b class="drop-desktop-label">CSV・PDFをここへドロップ</b><b class="drop-mobile-label">CSV・PDFを選択</b><span id="import-file-hint">またはクリックしてファイルを選択</span><span id="import-file-progress" class="hidden" role="status" aria-live="polite">明細を解析中…</span>
               </label>
               <input id="file-input" type="file" accept="application/pdf,.pdf,text/csv,.csv" multiple hidden>
             </div>

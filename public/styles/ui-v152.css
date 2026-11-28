@@ -25,7 +25,7 @@ details[open] > summary::after{
 .assets-history > summary{width:100%}
 
 /* The old two-line input had min-height:88px. One merchant = one line. */
-.rules-form-panel input#rule-pattern{height:39px!important;min-height:39px!important;max-height:39px!important;resize:none!important;padding:8px 12px!important;line-height:1.4!important}
+.rules-form-panel input#rule-pattern{height:var(--finance-action-height)!important;min-height:var(--finance-action-height)!important;resize:none!important;padding:8px 12px!important;line-height:1.4!important}
 .rules-form-panel #rule-pattern-help{padding:0!important;margin:1px 0 3px!important;max-width:100%;font-size:11px;line-height:1.5}
 
 /* Category creation is a draft action at the top; cloud saving remains in the footer. */

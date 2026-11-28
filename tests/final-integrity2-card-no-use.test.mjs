@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
-import {LiveVault,CloudWriteUncertainError} from './helpers/coordinated-vault.mjs';
+import {LiveVault,CloudWriteUncertainError,CardNoUseRefreshRequired} from './helpers/coordinated-vault.mjs';
 import {GraphError,OneDriveTestClient} from '../dist/src/cloud/onedrive-api.js';
 import {monthlyReport} from '../dist/src/summary/monthly-summary.js';
 import {emptyAssets} from '../dist/src/cloud/assets.js';
@@ -45,8 +45,8 @@ test('②-B: 古い端末の明細登録は別端末の新しい確認と独立�
 });
 test('②-B: 古い端末の利用なし操作は別端末の既存明細・登録削除済み明細の両方で停止する',async()=>{
  const {a,b,state}=await fixture();await b.unlock(phrase);await save(a);
- await assert.rejects(b.setCardNoUseMonth(month,true),/明細がある月/);
- await a.delete('bill-a');await assert.rejects(b.setCardNoUseMonth(month,true),/別端末で更新/);
+ await assert.rejects(b.setCardNoUseMonth(month,true),e=>e instanceof CardNoUseRefreshRequired&&/明細がある月/.test(e.message));
+ await a.delete('bill-a');await assert.rejects(b.setCardNoUseMonth(month,true),e=>e instanceof CardNoUseRefreshRequired&&/別端末で更新/.test(e.message));
  assert.deepEqual(flags(await reopen(state)),[]);await b.refresh();await b.setCardNoUseMonth(month,true);assert.deepEqual(flags(await reopen(state)),[month]);
 });
 test('②-B: 利用なし取消の拒否時に明細は一件も書かない',async()=>{

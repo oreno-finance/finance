@@ -43,7 +43,7 @@ test('Payroll同期状況は件数と最終同期だけ。未同期では0件と
   assert.match(section,/id="assets-payroll-last"/);
   assert.doesNotMatch(section,/assets-payroll-months|取得履歴/);
   assert.doesNotMatch(payroll,/incomeByMonth|assets-payroll-months/);
-  assert.match(payroll,/haveLast\?`\$\{payrollIncome\.length\}件`:'0件'/);
+  assert.match(payroll,/haveLast\?`\$\{payrollIncome\.length\}件`:payrollBusy\?'—':'0件'/);
   assert.match(payroll,/payrollStale\?'（更新失敗・古いデータ）'/);
   assert.match(section,/class="settings-payroll-metrics"/);
   assert.doesNotMatch(section,/assets-payroll-history-card/);
