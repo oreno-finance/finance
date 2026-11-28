@@ -256,6 +256,7 @@ window.financeImportTest={
                       financeImportTest.prepare([{id:'stored-first',statement:{...s,cardId:'rakuten-etc'}},{id:'stored-second',statement:{...s,cardId:'rakuten-mizuho',confirmation:'provisional'}}]);
                       await financeImportTest.add(raw);
                     }""",raw)
+                    self.assertFalse(page.locator('#toast').evaluate("el=>el.classList.contains('visible')"))
                     state=lambda:page.evaluate('financeImportTest.state()')
                     radios=page.locator('#import-rakuten-choice')
                     radios.locator('input[value="rakuten-etc"]').check(force=True)
@@ -283,6 +284,8 @@ window.financeImportTest={
                     radios.locator('input[value="rakuten-mizuho"]').check(force=True)
                     page.locator('#import-revision-accept').click()
                     self.assertEqual(state(),[{'card':'rakuten-mizuho','status':'confirmed','collision':None,'source':True,'id':'stored-second'}])
+                    self.assertFalse(page.locator('#toast').evaluate("el=>el.classList.contains('visible')"))
+                    page.locator('#batch-import').click(trial=True)
                     self.assertTrue(page.locator('#batch-import').is_enabled())
                     page.locator('#statement-list .statement-remove').click()
                     self.assertEqual(state(),[])
@@ -1128,6 +1131,38 @@ window.financeImportTest={
                     expect(checklist.locator('.home-funding')).to_be_visible();expect(checklist).to_contain_text('明細確定待ち')
                     expect(checklist).not_to_contain_text('現在、確認することはありません。')
                     page.evaluate('checklist.source.payroll.ready=false;checklist.home.render()');expect(checklist).to_contain_text('Payrollの同期を確認')
+                    self.assertFalse(errors,errors)
+                finally:context.close()
+
+    def test_home_per_card_statement_reminders(self):
+        from datetime import datetime, timezone
+        from playwright.sync_api import expect
+        html=self.offline_document()
+        for width,mobile in ((1100,False),(390,True)):
+            with self.subTest(width=width):
+                context=self.browser.new_context(viewport={'width':width,'height':850},is_mobile=mobile,has_touch=mobile,timezone_id='Asia/Tokyo')
+                try:
+                    page=context.new_page();errors=[]
+                    page.on('pageerror',lambda exc:errors.append(str(exc)))
+                    page.clock.set_fixed_time(datetime(2026,11,4,3,tzinfo=timezone.utc))
+                    page.route('**/*',lambda route:route.abort());page.set_content(html)
+                    page.evaluate('''async()=>{
+                      const {emptyAssets}=await import('finance-fixture/cloud/assets.js');
+                      const {initHome}=await import('finance-fixture/ui/home.js');
+                      const assets=emptyAssets();assets.cardPreferences={'smbc-nl':{name:'カードA',review:{monthOffset:0,day:5}},amazon:{name:'カードB',review:{monthOffset:0,day:5}}};
+                      const source={records:[],rules:[],categories:[],assets,payroll:{ready:true,syncedAt:1000,entries:[]}};
+                      for(const n of document.querySelectorAll('.workspace .content > :is(section,div)[id]'))n.classList.toggle('hidden',n.id!=='home-view');
+                      const destinations=[];const home=initHome({source:()=>source,navigate:(target)=>destinations.push(target)});home.render();
+                      window.reminders={home,source,destinations,confirm(){source.records.push({id:'a',statement:{provider:'smbc',cardId:'smbc-nl',sourceKind:'paste',sourceName:'sample',billingMonth:'2026-11',paymentDate:'2026-11-26',statedTotal:100,confirmation:'confirmed',warnings:[],rows:[{id:'row-a',usedOn:'2026-10-01',merchant:'TEST',amount:100}]}});home.render()}};
+                    }''')
+                    checklist=page.locator('#home-content .home-section').filter(has=page.get_by_role('heading',name='確認すること',exact=True))
+                    a=checklist.locator('.home-action').filter(has_text='カードA 11月支払分の確定明細を登録')
+                    b=checklist.locator('.home-action').filter(has_text='カードB 11月支払分の確定明細を登録')
+                    expect(a).to_have_count(0);expect(b).to_have_count(0)
+                    page.clock.set_fixed_time(datetime(2026,11,5,3,tzinfo=timezone.utc));page.evaluate('reminders.home.render()')
+                    expect(a).to_be_visible();expect(b).to_be_visible();a.click()
+                    self.assertEqual(page.evaluate('reminders.destinations'),['import'])
+                    page.evaluate('reminders.confirm()');expect(a).to_have_count(0);expect(b).to_be_visible()
                     self.assertFalse(errors,errors)
                 finally:context.close()
 

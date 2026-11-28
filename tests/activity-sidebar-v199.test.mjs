@@ -31,7 +31,8 @@ test('only the floating bottom-right card owns global save and loading feedback'
  assert.match(css,/translateX\(24px\)/);
  assert.match(css,/prefers-reduced-motion:reduce/);
  assert.match(main,/operationResult\([^)]*[\s\S]*?showActivity\(message,kind\)/);
- assert.match(main,/showActivity\('明細を読み込み中…','working'\)/);
+ assert.doesNotMatch(main,/showActivity\([^\n]*明細を読み込み中/);
+ assert.match(main,/operationResult\(`\$\{candidates.length\}件の明細をOneDriveへ暗号化保存中…`, 'working'\)/);
  assert.match(cards,/showActivity\('カード設定を保存中…','working'\)/);
  assert.match(assets,/simpleActivity\(message,error\)/);
  assert.match(cloud,/if\(text\)simpleActivity\(text,kind==='error'\)/);

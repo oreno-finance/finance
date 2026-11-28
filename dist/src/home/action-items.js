@@ -1,6 +1,7 @@
 /** P0 notices are derived, never persisted and never modify financial records. */
-import { getCard } from '../models/types.js';
+import { CARDS, getCard, statementPeriod } from '../models/types.js';
 import { BALANCE_WARNING_ACCOUNTS } from '../cloud/assets.js';
+import { changePeriod } from '../summary/monthly-summary.js';
 import { shiftedDay } from './account-events.js';
 const dayValid = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v + 'T00:00:00Z')) && new Date(v + 'T00:00:00Z').toISOString().slice(0, 10) === v;
 /** Issuer dates are approximate action thresholds, never online confirmation.
@@ -127,12 +128,53 @@ export function homeActions(source, report, forecast, today) {
         if (today < checkDate)
             continue;
         add({ id: `provisional:${key}`, kind: 'provisional', severity: 'medium',
-            title: `${preference?.name ?? getCard(s.cardId)?.name ?? 'カード'} ${s.billingMonth.slice(5)}月分の確定明細を確認`,
-            detail: '確定明細の公開時期の目安に達しました', target: 'import' });
+            title: `${preference?.name ?? getCard(s.cardId)?.name ?? 'カード'} ${Number(s.paymentDate.slice(5, 7))}月支払分の確定明細を登録`,
+            detail: '確定明細の公開時期の目安に達しました · 暫定明細あり', target: 'import' });
     }
-    if (report.cardLines.length === 0 && source.records.length > 0) {
-        add({ id: `missing-statements:${report.period}`, kind: 'missing-statements', severity: 'low',
-            title: '今月のカード明細が未登録です', detail: '利用がある場合は取り込んでください', target: 'import' });
+    // Missing statements need a payment-month schedule, even when no PDF/CSV exists.
+    // Only cards with evidence of use or explicit configuration are candidates.
+    const observed = new Map();
+    const registered = new Set();
+    const observedPeriods = new Set();
+    for (const { statement: s } of source.records) {
+        if (!s.cardId)
+            continue;
+        const date = dayValid(s.paymentDate ?? '') ? s.paymentDate : '';
+        if (!observed.has(s.cardId) || date > observed.get(s.cardId))
+            observed.set(s.cardId, date);
+        const period = statementPeriod(s);
+        if (period) {
+            registered.add(`${s.cardId}|${period}`);
+            observedPeriods.add(period);
+        }
+    }
+    const periods = [today.slice(0, 7), changePeriod(today.slice(0, 7), 1)];
+    for (const card of CARDS) {
+        const preference = source.assets.cardPreferences?.[card.id];
+        if (preference?.review === null)
+            continue;
+        if (!observed.has(card.id) && !source.assets.cardDebitAccounts?.[card.id] && !preference?.review && !preference?.payment)
+            continue;
+        for (const period of periods) {
+            if (registered.has(`${card.id}|${period}`))
+                continue;
+            // A month explicitly confirmed as having no card charges needs no reminders.
+            if (source.assets.cardNoUseMonths?.includes(period) && !observedPeriods.has(period))
+                continue;
+            // Only SMBC's automatic rule depends on the payment day. Prefer the
+            // contractual day, otherwise use the observed day, or the later standard
+            // review threshold (26-day payment) when neither is available.
+            const latest = observed.get(card.id);
+            const day = preference?.payment?.day ?? (latest ? Number(latest.slice(8)) : 26);
+            const last = new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5)), 0)).getUTCDate();
+            const nominal = `${period}-${String(Math.min(day, last)).padStart(2, '0')}`;
+            const threshold = statementReviewDate(card.id, nominal, preference);
+            if (!threshold || today < threshold)
+                continue;
+            add({ id: `missing-statements:${card.id}|${period}`, kind: 'missing-statements', severity: 'medium',
+                title: `${preference?.name ?? card.name} ${Number(period.slice(5))}月支払分の確定明細を登録`,
+                detail: '確定明細の公開時期の目安に達しました · 未登録', target: 'import' });
+        }
     }
     for (const account of forecast.accounts) {
         if (!account.observed)

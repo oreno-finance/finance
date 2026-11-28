@@ -95,3 +95,44 @@ test('UI removes home shortcuts and centered max width, adds conditional return 
  assert.match(main,/homeNavigationPending=true;showView\(destination\)/);
  assert.match(main,/returnToHome=fromHome/);
 });
+
+test('missing statement reminders are per card, start on its review day, and stop only for that card',()=>{
+ const s=source({'smbc-nl':{review:{monthOffset:0,day:5}},'amazon':{review:{monthOffset:0,day:5}}});
+ s.records=[];
+ const notices=day=>homeOverview(s,day).actions.filter(a=>['provisional','missing-statements'].includes(a.kind));
+ assert.equal(notices('2026-11-04').length,0);
+ assert.deepEqual(notices('2026-11-05').map(a=>a.id),['missing-statements:amazon|2026-11','missing-statements:smbc-nl|2026-11']);
+ assert.ok(notices('2026-11-05').every(a=>a.target==='import'));
+ s.records.push(rawRecord());
+ assert.deepEqual(notices('2026-11-05').map(a=>a.id),['missing-statements:amazon|2026-11','provisional:smbc-nl|2026-10']);
+ s.records[0].statement.confirmation='confirmed';
+ assert.deepEqual(notices('2026-11-05').map(a=>a.id),['missing-statements:amazon|2026-11']);
+ s.assets.cardPreferences.amazon.review=null;
+ assert.equal(notices('2026-11-05').length,0);
+});
+
+test('next payment month reminders use previous-month schedule, including year rollover',()=>{
+ const s=source({'recruit-jcb':{review:{monthOffset:-1,day:25}},'smbc-nl':{payment:{monthOffset:0,day:10}}});
+ s.records=[];
+ const has=(day,card,period)=>homeOverview(s,day).actions.some(a=>a.id===`missing-statements:${card}|${period}`);
+ assert.equal(has('2026-12-24','recruit-jcb','2027-01'),false);
+ assert.equal(has('2026-12-25','recruit-jcb','2027-01'),true);
+ assert.equal(has('2026-12-25','smbc-nl','2027-01'),false);
+ assert.equal(has('2026-12-26','smbc-nl','2027-01'),true);
+ s.assets.cardNoUseMonths=['2027-01'];
+ assert.equal(has('2026-12-26','smbc-nl','2027-01'),false);
+ assert.equal(has('2026-12-26','recruit-jcb','2027-01'),false);
+});
+
+test('missing reminders require use or configuration, respect no-use, and avoid phantom missing cards',()=>{
+ const s=source();s.records=[];
+ const missing=()=>homeOverview(s,'2026-11-18').actions.filter(a=>a.kind==='missing-statements');
+ assert.equal(missing().length,0);
+ s.assets.cardDebitAccounts={'rakuten-mizuho':'mizuho-bank'};
+ assert.deepEqual(missing().map(a=>a.id),['missing-statements:rakuten-mizuho|2026-11']);
+ s.assets.cardNoUseMonths=['2026-11'];assert.equal(missing().length,0);
+ s.assets.cardNoUseMonths=[];
+ s.records.push({id:'zero',statement:{cardId:'rakuten-mizuho',provider:'rakuten',sourceKind:'pdf',sourceName:'sample',billingMonth:'2026-11',paymentDate:null,statedTotal:0,confirmation:'confirmed',zeroUsage:true,warnings:[],rows:[]}});
+ assert.equal(missing().length,0);
+ s.assets.cardPreferences={'rakuten-mizuho':{review:null}};assert.equal(missing().length,0);
+});
