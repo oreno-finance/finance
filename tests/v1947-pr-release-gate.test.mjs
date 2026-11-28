@@ -131,6 +131,19 @@ test('real GitHub merge committer is narrowly permitted; arbitrary GitHub commit
   assert.notEqual(f.audit().status,0,'nonmerge GH committer is never accepted');
 });
 
+test('an unreviewed custom-subject GitHub merge is still rejected',()=>{
+  const f=setup();
+  f.git('switch','-qc','feature');
+  writeFileSync(join(f.cwd,'feature.md'),'feature');f.git('add','feature.md');f.git('commit','-qm','feature');
+  f.git('switch','main');
+  const env={...f.env,GIT_COMMITTER_NAME:'GitHub',GIT_COMMITTER_EMAIL:['noreply','github.com'].join('@')};
+  const merge=spawnSync('git',['merge','--no-ff','-m','Finance v2.2.2：操作性の改善とOneDrive通信の最適化','feature'],{cwd:f.cwd,env,encoding:'utf8'});
+  assert.equal(merge.status,0,merge.stderr);
+  const result=f.audit(['--commit',f.git('rev-parse','HEAD')]);
+  assert.notEqual(result.status,0,'custom subject alone does not permit a GitHub committer');
+  assert.match(result.stderr,/コミット履歴のCommitter/);
+});
+
 test('an actual pre-commit Git hook rejects staged PII without revealing the value',()=>{
   const f=setup();f.git('config','core.hooksPath','.githooks');
   const sensitive=['06','1234','5678'].join('-');
