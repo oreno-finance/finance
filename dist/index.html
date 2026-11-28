@@ -57,7 +57,7 @@
             </svg>
           </button>
         </div>
-        <div class="sidebar-meta"><span><button type="button" id="release-history-open" aria-haspopup="dialog" aria-controls="release-history-dialog" title="アップデート履歴">Finance v2.1.2</button></span><time id="app-updated-at" datetime="2026-11-26">ビルド 2026/11/26 JST</time></div>
+        <div class="sidebar-meta"><span><button type="button" id="release-history-open" aria-haspopup="dialog" aria-controls="release-history-dialog" title="アップデート履歴">Finance v2.2.0</button></span><time id="app-updated-at" datetime="2026-11-28">ビルド 2026/11/28 JST</time></div>
       </div>
       </div>
     </aside>
@@ -222,7 +222,7 @@
                 <div id="manage-points" class="manage-statement-points"><span>推定ポイント</span><strong>—</strong></div>
                 <div class="manage-toolbar"><h3>取引明細</h3><div class="manage-toolbar-actions"><button type="button" id="manage-clear-changes" class="secondary-action" disabled>変更をクリア</button><button type="button" id="manage-add-row" class="secondary-action">＋ 行を追加</button></div></div>
                 <div class="table-scroll"><table class="transaction-table"><colgroup><col class="col-date"><col class="col-merchant"><col class="col-amount"><col class="col-note"><col class="col-operation"></colgroup><thead><tr><th aria-sort="none"><button type="button" id="manage-sort-date" class="sort-button" aria-label="利用日を昇順に並べ替え"><span>利用日</span><span class="sort-arrow" aria-hidden="true">↕</span></button></th><th>利用先</th><th class="amount-column" aria-sort="none"><button type="button" id="manage-sort-amount" class="sort-button sort-button-amount" aria-label="当月請求額を昇順に並べ替え"><span>当月請求額</span><span class="sort-arrow" aria-hidden="true">↕</span></button></th><th>補足</th><th>操作</th></tr></thead><tbody id="manage-rows"></tbody></table></div>
-                <div class="manage-foot"><p id="manage-validation"></p><button type="button" id="manage-delete" class="danger-action">削除</button><button type="button" id="manage-original-download" class="secondary-action hidden" disabled>原本PDFをダウンロード</button><button type="button" id="manage-confirm-statement" class="secondary-action hidden">確定に更新</button><button type="button" id="manage-save" class="save-action">保存</button></div>
+                <div class="manage-foot"><p id="manage-validation"></p><button type="button" id="manage-delete" class="danger-action">削除</button><button type="button" id="manage-original-download" class="secondary-action hidden" disabled>原本PDFをダウンロード</button><button type="button" id="manage-confirm-statement" class="secondary-action hidden">確定に更新</button><button type="button" id="manage-resolve-year" class="secondary-action hidden">この明細を保持</button><button type="button" id="manage-save" class="save-action">保存</button></div>
               </div>
             </section>
           </div>
@@ -611,8 +611,9 @@
                   <label class="rules-field" for="assets-nisa-merchant">元の利用先に含まれる文字<input id="assets-nisa-merchant" maxlength="90" placeholder="楽天証券" autocomplete="off"></label>
                   <button type="submit" id="assets-nisa-save" class="save-action">保存</button>
                 </div>
+                <label class="rules-field" for="assets-nisa-funding">銀行積立との関係<select id="assets-nisa-funding"><option value="">未確認</option></select></label>
                 <div class="assets-nisa-actions"><button type="button" id="assets-nisa-disable" class="text-button">連携を解除</button><span id="assets-nisa-match-count" class="assets-nisa-count" hidden></span></div>
-                <p class="assets-help settings-nisa-warning">カード積立と定期入金を重複登録しないようご確認ください。</p>
+                <p class="assets-help settings-nisa-warning">同じ積立を銀行の定期振替にも登録している場合は、該当する予定を選択してください。</p>
                 <p id="assets-nisa-status" class="assets-operation-status" role="status" aria-live="polite"></p>
               </form>
               </section>

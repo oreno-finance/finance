@@ -48,7 +48,8 @@ test('one-off validation rejects unsafe amount, invalid date, same-account trans
 test('one-off planned expense and done income appear after the baseline, without changing stored snapshots',()=>{
   const assets=doc();assets.oneTime=[once('once-exp',{status:'planned',date:'2026-11-18',amount:12000}),once('once-inc',{kind:'income',name:'臨時入金',status:'done',date:'2026-11-19',fromAccountId:null,toAccountId:'rakuten-bank',amount:4000})];
   const report=forecastAssets(assets,'2026-11-19');
-  assert.equal(report['rakuten-bank'].balance,92000);
+  assert.equal(report['rakuten-bank'].balance,104000);
+  assert.deepEqual(report['rakuten-bank'].overdue,{count:1,delta:-12000,debit:-12000});
   assert.equal(assets.snapshots[0].balance,100000);
   assets.snapshots.push(snap('new-bank','rakuten-bank',85000,'2026-11-19T13:00:00+09:00'));
   assert.equal(forecastAssets(assets,'2026-11-19')['rakuten-bank'].balance,85000);
@@ -158,8 +159,9 @@ test('dedicated actual funding save refuses a stale second-device duplicate, pre
  const store=new Map(),vault=new LiveVault(new Graph(store));await vault.create(secret);
  await vault.setMizuhoTransferPlan({enabled:true,leadDays:3,extraForSmallBills:true});
  const second=new LiveVault(new Graph(store));await second.unlock(secret);
- const snapshot={billId:'invoice-demo',paymentDate:'2025-11-27',billAmount:24245,transferAmount:30000};
- const movement=once('actual-funding-a',{date:'2025-11-26',kind:'transfer',name:'送金',amount:28000,fromAccountId:'rakuten-bank',toAccountId:'mizuho-bank',cardFunding:true});
+ const today=new Date().toLocaleDateString('sv-SE');
+ const snapshot={billId:'invoice-demo',paymentDate:today,billAmount:24245,transferAmount:30000};
+ const movement=once('actual-funding-a',{date:today,kind:'transfer',name:'送金',amount:28000,fromAccountId:'rakuten-bank',toAccountId:'mizuho-bank',cardFunding:true});
  await vault.upsertOneTime(movement,snapshot);
  const encrypted=store.get('assets').text;
  await assert.rejects(second.upsertOneTime({...movement,id:'actual-funding-b',amount:31000},snapshot),/振替が登録/);
@@ -167,4 +169,55 @@ test('dedicated actual funding save refuses a stale second-device duplicate, pre
  await second.refresh();assert.deepEqual(second.assetSettings().oneTime.map(e=>[e.id,e.amount]),[['actual-funding-a',28000]]);
  assert.equal(second.assetSettings().mizuhoFundingChecks,undefined);
  await second.upsertOneTime(once('independent-entry'));assert.equal(second.assetSettings().oneTime.length,2);
+});
+
+test('M301: overdue credit cannot cover unconfirmed debits; reference, alternative and home warnings agree',async()=>{
+ const {homeOverview}=await import('../dist/src/home/overview.js');
+ const {expenseComparable}=await import('../dist/src/summary/monthly-summary.js');
+ const assets={...doc(),snapshots:[snap('bank-r','rakuten-bank',50000,'2026-11-01T00:00:00Z')],cardNoUseMonths:['2026-11']};
+ assets.oneTime=[once('overdue-income',{date:'2026-11-04',status:'planned',kind:'income',fromAccountId:null,toAccountId:'rakuten-bank',amount:100000}),once('overdue-expense',{date:'2026-11-05',status:'planned',amount:60000}),once('future-expense',{date:'2026-11-27',status:'planned',amount:10000})];
+ const before=structuredClone(assets),today='2026-11-20';
+ const f=forecastBankBalances(assets,'2026-11-30',[],[],null,today).accounts['rakuten-bank'];
+ assert.equal(f.balance,40000);assert.deepEqual(f.overdue,{count:2,delta:40000,debit:-60000});
+ assert.equal(f.balance+f.overdue.delta,80000);
+ const s={...source(assets),currentDay:today,payroll:{ready:true,syncedAt:Date.parse(today+'T00:00:00Z'),entries:[]}};
+ const home=homeOverview(s,today),account=home.forecast.accounts.find(a=>a.accountId==='rakuten-bank');
+ assert.equal(account.projected,40000);assert.equal(account.reliable,false);
+ assert.ok(home.actions.some(a=>a.kind==='shortage'&&/可能性/.test(a.title)));
+ assert.ok(home.actions.some(a=>a.kind==='overdue-movement'));
+ const timeline=bankTimeline('2026-11',s,today);assert.equal(timeline.endBalance,40000);assert.match(timeline.warning,/80,000円/);
+ const report=monthlyReport('2026-11',s);assert.equal(report.pastUnconfirmedOneTime,2);assert.equal(report.pastUnconfirmedExpense,1);assert.equal(report.oneTimeExpense,0);assert.equal(expenseComparable(report),false);
+ assert.deepEqual(assets,before);
+ assets.oneTime=assets.oneTime.map(e=>e.date<today?{...e,status:'done'}:e);
+ const done=forecastBankBalances(assets,'2026-11-30',[],[],null,today).accounts['rakuten-bank'];assert.equal(done.balance,80000);assert.equal(done.overdue,undefined);
+});
+
+test('M301: overdue transfer respects each observation day and a unique recurring match is not replayed twice',()=>{
+ const assets={...doc(),snapshots:[snap('bank-r','rakuten-bank',100000,'2026-11-01T00:00:00Z'),snap('bank-m','mizuho-bank',30000,'2026-11-10T00:00:00Z')]};
+ assets.oneTime=[once('overdue-transfer',{date:'2026-11-05',kind:'transfer',status:'planned',fromAccountId:'rakuten-bank',toAccountId:'mizuho-bank',amount:30000}),once('overdue-rec',{date:'2026-11-20',name:'定期保険',status:'planned',amount:6000})];
+ assets.recurring=[entry()];
+ const result=forecastAssets(assets,'2026-11-30',[],[],null,undefined,'2026-11-21');
+ assert.equal(result['rakuten-bank'].balance,100000);
+ assert.deepEqual(result['rakuten-bank'].overdue,{count:2,delta:-36000,debit:-36000});
+ assert.equal(result['mizuho-bank'].balance,30000);assert.equal(result['mizuho-bank'].overdue,undefined);
+ // Due today is still a plan and is reflected in the projection, not overdue.
+ const today=forecastAssets(assets,'2026-11-30',[],[],null,undefined,'2026-11-20');
+ assert.equal(today['rakuten-bank'].balance,94000);assert.equal(today['rakuten-bank'].overdue.count,1);
+});
+
+test('M301 integration: mixed done/planned matches are ambiguous in both monthly and bank calculations',async()=>{
+ const {forecastAccounts}=await import('../dist/src/home/account-events.js');
+ const assets=doc();assets.recurring=[entry()];assets.oneTime=[once('done-rec',{name:'定期保険',amount:6000}),once('planned-rec',{name:'定期保険',amount:6000,status:'planned'})];
+ const s={...source(assets),currentDay:'2026-11-17'};
+ const report=monthlyReport('2026-11',s);assert.equal(report.recurringOneTimeOverlap,1);assert.equal(report.recurringExpense,6000);assert.equal(report.oneTimeExpense,6000);
+ const balance=forecastAssets(assets,'2026-11-30',[],[],null,undefined,'2026-11-17');assert.match(balance['rakuten-bank'].warning,/対応が不明/);
+ assert.match(bankTimeline('2026-11',s,'2026-11-17').warning,/対応が不明/);
+ const home=forecastAccounts(s,'2026-11-17');assert.equal(home.accounts.find(a=>a.accountId==='rakuten-bank').reason,'possible-duplicate');
+});
+
+test('M301 integration: an overdue debit can cause a mid-month shortage despite a positive ending balance',()=>{
+ const assets=doc();assets.snapshots=[snap('bank-r','rakuten-bank',1000)];
+ assets.oneTime=[once('unconfirmed-debit',{date:'2026-11-18',amount:3000,status:'planned'}),once('later-income',{date:'2026-11-25',kind:'income',fromAccountId:null,toAccountId:'rakuten-bank',amount:5000,status:'done'})];
+ const timeline=bankTimeline('2026-11',{...source(assets),payroll:{ready:false,entries:[],syncedAt:null}},'2026-11-30');
+ assert.equal(timeline.endBalance,6000);assert.equal(timeline.minimum,1000);assert.match(timeline.warning,/残高が不足する可能性/);
 });

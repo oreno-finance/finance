@@ -337,6 +337,8 @@ export function initMonthlySummary(deps) {
             warning.setAttribute('role', 'alert');
             alert.append(warning);
         }
+        if (report.payrollOneTimeOverlap)
+            alert.append(element('p', '', '単発給与とPayrollの対応が不明です。重複候補を含む参考値です。'));
         if (report.recurringOneTimeOverlap)
             alert.append(element('p', '', `単発入出金と定期予定の対応が曖昧な項目が${report.recurringOneTimeOverlap}件あります。自動除外せず表示しています。`));
         if (report.recurringCardOverlap) {
@@ -494,6 +496,8 @@ export function initMonthlySummary(deps) {
             line(cards, 'NISA積立を除いた金額', yen(report.livingOutflow));
         }
         const debits = { body: addPair('入出金予定') };
+        if (report.nisaOverlapCount)
+            debits.body.append(element('p', 'monthly-muted', 'NISA積立と銀行振替の対応が未確認です。両方を含む参考表示です。'));
         const expenseItems = report.recurringLines.filter(e => e.kind === 'expense');
         if (!report.recurringLines.some(e => e.kind !== 'income') && !report.oneTimeLines.some(e => e.kind !== 'income'))
             empty(debits.body, 'この月の支出・振替予定はありません。');

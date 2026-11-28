@@ -34,20 +34,20 @@ export async function encryptIndex(index, key, salt, dataSetId = null, coordinat
     if (dataSetId !== null && !validDataSetId(dataSetId))
         throw new Error('保管庫世代IDが不正です。');
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: coordinated ? enc.encode(`Finance OneDrive index v3:${dataSetId ?? 'root'}`) : INDEX_DOMAIN }, key, enc.encode(JSON.stringify(validateIndex(index))));
-    return JSON.stringify({ format: coordinated ? 'finance-cloud-index-envelope-v3' : dataSetId ? 'finance-cloud-index-envelope-v2' : 'finance-cloud-index-envelope-v1', salt, iterations: ITERATIONS, iv: b64(iv), data: b64(new Uint8Array(data)), ...(dataSetId ? { dataSetId } : {}) });
+    const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: coordinated ? enc.encode(`Finance OneDrive index ${coordinated === 'v4' ? 'v4' : 'v3'}:${dataSetId ?? 'root'}`) : INDEX_DOMAIN }, key, enc.encode(JSON.stringify(validateIndex(index))));
+    return JSON.stringify({ format: coordinated === 'v4' ? 'finance-cloud-index-envelope-v4' : coordinated ? 'finance-cloud-index-envelope-v3' : dataSetId ? 'finance-cloud-index-envelope-v2' : 'finance-cloud-index-envelope-v1', salt, iterations: ITERATIONS, iv: b64(iv), data: b64(new Uint8Array(data)), ...(dataSetId ? { dataSetId } : {}) });
 }
 export function parseIndexEnvelope(text) {
     if (text.length > 1_000_000)
         throw new Error('クラウド索引がサイズ上限を超えています。');
     const result = JSON.parse(text);
-    if ((result?.format !== 'finance-cloud-index-envelope-v1' && result?.format !== 'finance-cloud-index-envelope-v2' && result?.format !== 'finance-cloud-index-envelope-v3') || result.iterations !== ITERATIONS || un64(result.salt).length !== 16 || un64(result.iv).length !== 12 || (result.format === 'finance-cloud-index-envelope-v2' ? !validDataSetId(result.dataSetId) : result.format === 'finance-cloud-index-envelope-v3' ? (result.dataSetId !== undefined && !validDataSetId(result.dataSetId)) : result.dataSetId !== undefined))
+    if ((result?.format !== 'finance-cloud-index-envelope-v1' && result?.format !== 'finance-cloud-index-envelope-v2' && result?.format !== 'finance-cloud-index-envelope-v3' && result?.format !== 'finance-cloud-index-envelope-v4') || result.iterations !== ITERATIONS || un64(result.salt).length !== 16 || un64(result.iv).length !== 12 || (result.format === 'finance-cloud-index-envelope-v2' ? !validDataSetId(result.dataSetId) : (result.format === 'finance-cloud-index-envelope-v3' || result.format === 'finance-cloud-index-envelope-v4') ? (result.dataSetId !== undefined && !validDataSetId(result.dataSetId)) : result.dataSetId !== undefined))
         throw new Error('対応していないクラウド索引形式です。');
     return result;
 }
 export async function decryptIndex(env, key) {
     try {
-        const data = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: un64(env.iv), additionalData: env.format === 'finance-cloud-index-envelope-v3' ? enc.encode(`Finance OneDrive index v3:${env.dataSetId ?? 'root'}`) : INDEX_DOMAIN }, key, un64(env.data));
+        const data = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: un64(env.iv), additionalData: (env.format === 'finance-cloud-index-envelope-v3' || env.format === 'finance-cloud-index-envelope-v4') ? enc.encode(`Finance OneDrive index ${env.format.endsWith('v4') ? 'v4' : 'v3'}:${env.dataSetId ?? 'root'}`) : INDEX_DOMAIN }, key, un64(env.data));
         return validateIndex(JSON.parse(dec.decode(data)));
     }
     catch {
@@ -82,6 +82,14 @@ export async function decryptOriginal(text, key) {
         throw new Error('PDF原本の暗号形式が不正です。');
     const result = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: un64(env.iv), additionalData: ORIGINAL_DOMAIN }, key, un64(env.data));
     return new Uint8Array(result);
+}
+/** Plain PDF identity is stored only inside the encrypted statement. */
+export async function originalDigest(bytes) {
+    return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(bytes))), b => b.toString(16).padStart(2, '0')).join('');
+}
+export async function verifyOriginalDigest(bytes, expected) {
+    if (expected !== undefined && await originalDigest(bytes) !== expected)
+        throw new Error('PDF原本が明細の登録内容と一致しません。OneDriveの原本を確認してください。');
 }
 export { emptyDocument };
 /** Rules have independent authenticated context. Old Finance ciphertext stays untouched. */

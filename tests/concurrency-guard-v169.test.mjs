@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
-import {LiveVault,CloudWriteUncertainError} from './helpers/coordinated-vault.mjs';
+import {LiveVault,CloudWriteUncertainError,CloudEditCancelledError} from './helpers/coordinated-vault.mjs';
 import {GraphError} from '../dist/src/cloud/onedrive-api.js';
 import {emptyDocument,detectDocumentEditCollisions} from '../dist/src/cloud/merge.js';
 import {emptyRules,detectRuleEditCollisions} from '../dist/src/cloud/merchant-rules.js';
@@ -105,13 +105,13 @@ test('rule collisions match exact field; independent rule changes are harmless',
 
 test('a confirmed year write followed by refresh outage is success-with-warning, not failure',async()=>{
  const {a,b,state,aGraph}=await pair();await a.saveBatch([{id:'stmt',statement:statement()}]);
- aGraph.failNextList=true;
+ // Fault must occur after the actual write, not in the new pre-write scope check.
+ const write=aGraph.writeYearVault.bind(aGraph);aGraph.writeYearVault=async(...args)=>{const receipt=await write(...args);aGraph.failNextList=true;return receipt;};
  const ids=await a.saveBatch([{id:'stmt',statement:statement(199)}]);
  assert.deepEqual(ids,['stmt']);
  assert.match(a.takeMutationWarning(),/保存は確認できました/);
  const c=new LiveVault(new Graph(state));await c.unlock(password);assert.equal(c.records()[0].statement.rows[0].amount,199);
  await b.unlock(password);
- aGraph.failNextList=true;
  await a.delete('stmt');
  assert.match(a.takeMutationWarning(),/削除は確認できました/);
  await b.refresh();assert.equal(b.records().length,0);
@@ -172,17 +172,18 @@ test('explicit approval honors local rule and asset deletion against remote edit
  const d=new LiveVault(new Graph(state));await d.unlock(password);assert.equal(d.assetSettings().oneTime.length,0);
 });
 
-test('a prior confirmed year plus a cancelled collision is classified as partial/uncertain',async()=>{
+test('H201: a rejected batch conflict stops all years before the first write',async()=>{
  const {a,b,state}=await pair();
  await a.saveBatch([{id:'older',statement:statement(100,'a','2027-01')}]);
  await b.unlock(password);
  await a.saveBatch([{id:'older',statement:statement(120,'a','2027-01')}]);
- b.setStatementConflictResolver(()=>false);
+ const before=structuredClone(state);let calls=0;
+ b.setStatementConflictResolver(()=>{calls++;return false;});
  await assert.rejects(b.saveBatch([
   {id:'other',statement:statement(100,'new','2026-01')},
   {id:'older',statement:statement(140,'a','2027-01')},
- ]),error=>error instanceof CloudWriteUncertainError&&/保存済みの可能性/.test(error.message));
- assert.ok(state.has(bucket('2026')));
+ ]),CloudEditCancelledError);
+ assert.equal(calls,1);assert.deepEqual(state,before);assert.equal(b.hasPendingYearBatch,false);
 });
 
 test('concurrent edits to a category definition detect name conflict, independent colors merge',()=>{
@@ -309,3 +310,58 @@ for(const domain of ['assets','rules']){
    await b.refresh();check(b);
  });
 }
+
+ test('H201: failure of pre-write cross-year scope verification stops without changing ciphertext',async()=>{
+ const {a,state,aGraph}=await pair();await a.saveBatch([{id:'stmt',statement:statement()}]);
+ const before=structuredClone(state);aGraph.failNextList=true;
+ await assert.rejects(a.saveBatch([{id:'stmt',statement:statement(199)}]),/最新の年度明細/);
+ assert.deepEqual(state,before);aGraph.failNextList=true;await assert.rejects(a.delete('stmt'),/最新の年度明細/);assert.deepEqual(state,before);
+ });
+
+async function multiYearApprovalFixture(){
+ const f=await pair(),{a,b}=f;
+ await a.saveBatch([{id:'older',statement:statement(100,'a','2027-01')}]);await b.unlock(password);
+ await a.saveBatch([{id:'older',statement:statement(120,'a','2027-01')}]);
+ const items=[{id:'other',statement:statement(100,'new','2026-01')},{id:'older',statement:statement(140,'a','2027-01')}];
+ return {...f,items};
+}
+test('H201: batch approval outside lock preserves independent changes and applies reviewed edits once',async()=>{
+ const {a,b,state,items}=await multiYearApprovalFixture(),approval=deferredApproval();let calls=0;
+ b.setStatementConflictResolver(items=>{calls++;assert.ok(items.every(c=>c.recordId==='older'));return approval.resolver();});
+ const operation=b.saveBatch(items);await approval.waiting;
+ assert.equal(state.has(bucket('2026')),false);
+ // A second device can obtain the same lock while the user is considering the review.
+ await a.saveBatch([{id:'unrelated',statement:statement(90,'other','2028-01')}]);
+ approval.release(true);await operation;assert.equal(calls,1);
+ await a.refresh();assert.deepEqual(a.records().map(r=>r.id).sort(),['older','other','unrelated']);
+ assert.equal(a.records().find(r=>r.id==='older').statement.statedTotal,140);
+});
+test('H201: batch approval cannot be reused after the approved revision changes',async()=>{
+ const {a,b,state,items}=await multiYearApprovalFixture(),approval=deferredApproval();
+ b.setStatementConflictResolver(approval.resolver);
+ const operation=b.saveBatch(items);const rejected=assert.rejects(operation,/承認した競合内容が変更/);
+ await approval.waiting;await a.saveBatch([{id:'older',statement:statement(130,'a','2027-01')}]);
+ const before=structuredClone(state);approval.release(true);await rejected;
+ assert.deepEqual(state,before);assert.equal(b.hasPendingYearBatch,false);
+});
+test('H201: locking and unlocking during batch approval invalidates old edit',async()=>{
+ const {b,state,items}=await multiYearApprovalFixture(),approval=deferredApproval();
+ b.setStatementConflictResolver(approval.resolver);
+ const operation=b.saveBatch(items);const rejected=assert.rejects(operation,/保管庫が変更/);
+ await approval.waiting;b.lock();await b.unlock(password);const before=structuredClone(state);
+ approval.release(true);await rejected;assert.deepEqual(state,before);assert.equal(b.hasPendingYearBatch,false);
+});
+test('H201: after approval a later year write failure keeps the first committed year recoverable',async()=>{
+ const {b,bGraph,state,items}=await multiYearApprovalFixture();b.setStatementConflictResolver(()=>true);bGraph.failYear='2027';
+ await assert.rejects(b.saveBatch(items),CloudWriteUncertainError);assert.ok(state.has(bucket('2026')));assert.equal(b.hasPendingYearBatch,true);
+ bGraph.failYear=null;const result=await b.inspectPendingYearBatch();assert.equal(result.find(r=>r.id==='other').status,'saved');assert.equal(result.find(r=>r.id==='older').status,'conflict');
+ await b.resumePendingYearBatch(()=>true);assert.equal(b.hasPendingYearBatch,false);
+});
+
+test('H201: changing the local draft while approval is pending requires a new review',async()=>{
+ const {b,state,items}=await multiYearApprovalFixture(),approval=deferredApproval();
+ b.setStatementConflictResolver(approval.resolver);
+ const operation=b.saveBatch(items);const rejected=assert.rejects(operation,/承認中に編集内容が変更/);
+ await approval.waiting;items[0].statement.sourceName='changed draft';const before=structuredClone(state);
+ approval.release(true);await rejected;assert.deepEqual(state,before);assert.equal(b.hasPendingYearBatch,false);
+});

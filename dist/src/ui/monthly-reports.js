@@ -102,13 +102,14 @@ export function initMonthlyReports(deps) {
     let draft = '';
     let chosenRevision = null;
     let request = 0;
-    let changed = false;
+    let comparisonRequest = 0;
+    let comparison = 'unchecked';
     let loadFailed = false;
     let draftConflict = false;
     const confirmationOwner = {};
     const drafts = new Map();
     const active = () => deps.vault()?.unlocked === true;
-    function reset() { ++request; cancelConfirmation(confirmationOwner); selected = today(); archiveYear = selected.slice(0, 4); loadedPeriod = ''; archive = null; periods = []; busy = false; saving = false; message = ''; draft = ''; changed = false; loadFailed = false; draftConflict = false; chosenRevision = null; drafts.clear(); container.replaceChildren(); }
+    function reset() { ++request; cancelConfirmation(confirmationOwner); selected = today(); archiveYear = selected.slice(0, 4); loadedPeriod = ''; archive = null; periods = []; busy = false; saving = false; message = ''; draft = ''; comparison = 'unchecked'; ++comparisonRequest; loadFailed = false; draftConflict = false; chosenRevision = null; drafts.clear(); container.replaceChildren(); }
     async function fetch() {
         const vault = deps.vault();
         if (!vault?.unlocked)
@@ -131,7 +132,8 @@ export function initMonthlyReports(deps) {
             const held = drafts.get(selected);
             draftConflict = !!held && held.revision !== (document?.current.id ?? null);
             draft = held?.note ?? document?.current.note ?? '';
-            changed = false;
+            comparison = 'unchecked';
+            ++comparisonRequest;
             loadFailed = false;
             chosenRevision = null;
             // Only decrypted in the unlocked session. Do not cache report bodies in browser storage.
@@ -158,36 +160,52 @@ export function initMonthlyReports(deps) {
             }
         }
     }
-    async function save() {
-        const vault = deps.vault(), source = deps.source();
-        if (!vault?.unlocked || !source || busy || loadFailed || draftConflict || loadedPeriod !== selected)
+    async function save(noteOnly = false) {
+        const vault = deps.vault();
+        if (!vault?.unlocked || busy || loadFailed || draftConflict || loadedPeriod !== selected)
             return;
         const id = ++request;
+        let saved = false;
         busy = true;
         saving = true;
         message = '';
         showActivity('月次レポートを保存中…', 'working');
         render();
         try {
-            const snapshot = reportSnapshot(selected, source);
-            const result = await vault.saveArchivedReport(snapshot, draft, archive?.current.id ?? null);
+            let result;
+            if (noteOnly) {
+                if (!archive)
+                    throw new Error('保存済みレポートがありません。');
+                result = await vault.saveArchivedReportNote(selected, draft, archive.current.id);
+            }
+            else {
+                const source = deps.source();
+                if (!source)
+                    throw new Error('現在の集計データを確認できません。');
+                const snapshot = reportSnapshot(selected, source);
+                result = await vault.saveArchivedReport(snapshot, draft, archive?.current.id ?? null);
+            }
             if (id !== request)
                 return;
             archive = result;
             loadedPeriod = selected;
             draft = result.current.note;
             drafts.delete(selected);
-            changed = false;
+            comparison = 'unchecked';
+            ++comparisonRequest;
             draftConflict = false;
             chosenRevision = null;
             if (!periods.includes(selected))
                 periods = [selected, ...periods].sort().reverse();
+            saved = true;
             message = '';
-            showActivity('月次レポートを保存しました。', 'good');
+            showActivity(noteOnly ? 'メモを保存しました。' : '月次レポートを保存しました。', 'good');
         }
         catch (error) {
             if (id !== request)
                 return;
+            if (!noteOnly && archive)
+                comparison = 'unavailable';
             message = `${error instanceof CloudWriteUncertainError ? '保存結果未確認' : '保存失敗'}：${error instanceof Error ? error.message : '保存できませんでした。'}`;
             showActivity(message, 'bad');
         }
@@ -196,32 +214,55 @@ export function initMonthlyReports(deps) {
                 busy = false;
                 saving = false;
                 render();
+                if (saved && archive)
+                    void compareSource();
             }
         }
     }
     async function compareSource() {
-        const id = request;
-        const source = deps.source();
-        if (!source || !archive)
+        const id = request, job = ++comparisonRequest, vault = deps.vault(), revision = archive?.current, period = selected;
+        if (!revision || chosenRevision || !vault?.unlocked)
             return;
+        const valid = () => id === request && job === comparisonRequest && vault === deps.vault() && vault.unlocked &&
+            revision === archive?.current && period === selected && !chosenRevision;
+        comparison = 'checking';
+        syncSourceNotice();
         try {
-            const hash = await snapshotHash(reportSnapshot(selected, source));
-            if (id === request) {
-                changed = hash !== archive.current.sourceHash;
+            const source = deps.source();
+            if (!source)
+                throw new Error('集計データ未取得');
+            const snapshot = reportSnapshot(period, source);
+            const hash = await snapshotHash(snapshot);
+            if (!valid())
+                return;
+            // Source updates normally start a new comparison through render(). Also
+            // reject a changed snapshot when a source update has not rendered yet.
+            const latest = deps.source();
+            if (!latest || JSON.stringify(reportSnapshot(period, latest)) !== JSON.stringify(snapshot)) {
+                comparison = 'unavailable';
                 syncSourceNotice();
+                return;
             }
+            comparison = hash === revision.sourceHash ? 'unchanged' : 'changed';
+            syncSourceNotice();
         }
         catch {
-            if (id === request) {
-                changed = false;
+            if (valid()) {
+                comparison = 'unavailable';
                 syncSourceNotice();
             }
         }
     }
     function syncSourceNotice() {
         const notice = container.querySelector('.reports-source-changed');
-        if (notice)
-            notice.hidden = !changed;
+        const memoOnly = container.querySelector('.reports-note-only');
+        if (memoOnly)
+            memoOnly.hidden = comparison !== 'unavailable';
+        if (!notice)
+            return;
+        notice.hidden = comparison !== 'changed' && comparison !== 'unavailable' && comparison !== 'checking';
+        notice.textContent = comparison === 'changed' ? '明細や設定に変更があります。レポートを更新できます。' :
+            comparison === 'checking' ? '現在の集計結果を確認中…' : comparison === 'unavailable' ? '現在のデータとの一致を確認できません。' : '';
     }
     function selectPeriod(period) {
         // A cloud save must finish against its original month. Loading requests may
@@ -242,7 +283,8 @@ export function initMonthlyReports(deps) {
         message = '';
         loadFailed = false;
         draftConflict = false;
-        changed = false;
+        comparison = 'unchecked';
+        ++comparisonRequest;
         return true;
     }
     function render() {
@@ -320,8 +362,8 @@ export function initMonthlyReports(deps) {
         }
         const state = archive?.current;
         if (state) {
-            const notice = el('p', 'reports-quality reports-source-changed', '明細や設定に変更があります。レポートを更新できます。');
-            notice.hidden = !changed;
+            const notice = el('p', 'reports-quality reports-source-changed');
+            notice.setAttribute('role', 'status');
             control.body.append(notice);
         }
         if (draftConflict) {
@@ -363,6 +405,12 @@ export function initMonthlyReports(deps) {
         const submit = button(state ? 'レポートを更新' : 'レポートを作成', () => { void save(); }, 'save-action');
         submit.disabled = draftConflict;
         control.body.append(submit);
+        if (state) {
+            const noteOnly = button('メモのみ保存', () => { void save(true); }, 'secondary-action reports-note-only');
+            noteOnly.disabled = draftConflict;
+            noteOnly.hidden = comparison !== 'unavailable';
+            control.body.append(noteOnly);
+        }
         control.body.append(button('月別サマリー', () => deps.openMonth(selected)));
         const revision = chosenRevision ? archive?.history.find(item => item.id === chosenRevision) ?? state : state;
         let preview = null;
@@ -384,7 +432,7 @@ export function initMonthlyReports(deps) {
             if (revision)
                 heading.append(el('span', 'reports-muted', `保存：${formatDateTime(revision.savedAt, true)}`));
             if (chosenRevision)
-                heading.append(button('最新版へ戻る', () => { chosenRevision = null; render(); }));
+                heading.append(button('最新版へ戻る', () => { chosenRevision = null; comparison = 'unchecked'; render(); void compareSource(); }));
             container.append(heading);
             container.append(reportMetrics(snapshot));
             if (snapshot.quality.length)
@@ -411,10 +459,11 @@ export function initMonthlyReports(deps) {
             history.append(el('summary', '', `保存履歴（${archive.history.length}件）`));
             const inner = el('div', 'reports-history-body');
             for (const version of archive.history)
-                inner.append(button(formatDateTime(version.savedAt, true), () => { chosenRevision = version.id; render(); }, 'reports-history-button'));
+                inner.append(button(formatDateTime(version.savedAt, true), () => { chosenRevision = version.id; ++comparisonRequest; comparison = 'unchecked'; render(); }, 'reports-history-button'));
             history.append(inner);
             container.append(history);
         }
+        syncSourceNotice();
     }
     function openPeriod(period) {
         if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))

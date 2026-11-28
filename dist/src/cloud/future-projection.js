@@ -1,8 +1,9 @@
+import { nisaBankFundingIndependent, reconcileNisaMovements } from './nisa-movements.js';
 import { recurringForCalculation } from '../fixed-costs/payment-history.js';
 /** Long-term savings outlook. Scenario changes are read-only and never written to assets.enc.
  * Existing balance snapshots remain the financial baseline; card/recurring inputs
  * are *scheduled*, not bank-confirmed. No actual NISA returns are inferred. */
-import { recurringCoveredByOneTime } from './assets.js';
+import { nisaRuleOnDay, recurringCoveredByOneTime } from './assets.js';
 import { forecastAssets, matchingNisaRows } from './asset-projection.js';
 import { recurringEffectiveAmount, recurringInMonth } from './recurring-schedule.js';
 import { fixedCostState, monthlyEquivalent } from '../fixed-costs/contracts.js';
@@ -36,14 +37,25 @@ function nisaScheduleInMonth(rules, month) {
 export function currentSavingMonthly(doc, today, cardMonthly) {
     const cashRules = savingRulesFor(doc, 'cash-savings'), nisaRules = savingRulesFor(doc, 'nisa');
     const monthly = (rules) => Math.round(rules.reduce((sum, e) => sum + (fixedCostState({ ...e, pauses: e.pauses ?? [] }, today) === 'active' ? monthlyEquivalent({ frequency: e.frequency, amount: recurringEffectiveAmount(e, today) }) : 0), 0));
-    return { cash: monthly(cashRules), nisa: nisaRules.some(e => overlaps(e, today, today)) ? monthly(nisaRules) : cardMonthly };
+    return { cash: monthly(cashRules), nisa: nisaRules.some(e => overlaps(e, today, today)) ? monthly(nisaRules) + (nisaBankFundingIndependent(doc, today) ? cardMonthly : 0) : cardMonthly };
 }
 /** Historic classification is preserved; only samples in the current active
  * card-rule period may seed future contributions. */
 export function suggestedNisaMonthly(doc, records, today, nisaMatches) {
     if (!doc.nisaCardRule?.enabled)
         return { amount: 0, source: 'NISAカード積立が未設定または無効です' };
-    const cutoff = doc.nisaCardRuleHistory?.at(-1)?.effectiveOn;
+    // Funding correspondence is not a merchant/card classification change.
+    // Preserve the existing sample window when only that relationship changes.
+    const classification = (r) => JSON.stringify(r ? { cardId: r.cardId, merchantContains: r.merchantContains, enabled: r.enabled } : null);
+    const history = doc.nisaCardRuleHistory ?? [];
+    let cutoff;
+    for (let i = history.length - 1; i >= 0; i--) {
+        const entry = history[i];
+        if (classification(entry.previous) !== classification(doc.nisaCardRule)) {
+            cutoff = entry.effectiveOn;
+            break;
+        }
+    }
     const matches = (nisaMatches ?? matchingNisaRows(doc, records)).filter(row => row.date <= today && (!cutoff || row.date >= cutoff));
     const perMonth = new Map();
     for (const row of matches)
@@ -74,12 +86,19 @@ export function futureProjection(doc, records, options, nisaMatches) {
     const nisaRules = savingRulesFor(doc, 'nisa');
     const hasNisaSchedule = nisaRules.some(e => overlaps(e, today, today));
     const matches = nisaMatches ?? matchingNisaRows(doc, records);
-    let conflictingNisaSources = hasNisaSchedule && nisaMonthly > 0;
+    const unresolvedFunding = (date, rules) => {
+        if (nisaBankFundingIndependent(doc, date))
+            return false;
+        const funding = nisaRuleOnDay(doc, date)?.bankFunding;
+        return funding?.kind !== 'same' || rules.some(r => r.id !== funding.recurringId);
+    };
+    let conflictingNisaSources = hasNisaSchedule && nisaMonthly > 0 && unresolvedFunding(today, nisaRules.filter(r => overlaps(r, today, today)));
     const starting = forecastAssets(doc, today, records, [], null, matches);
     // forecastAssets returns null when a confirmed balance snapshot is unavailable.
     // If no snapshot is present, never manufacture a 0-yen starting balance.
     const cashStart = starting['cash-savings'].balance;
     const nisaStart = starting.nisa.balance;
+    conflictingNisaSources ||= !!starting.nisa.nisaOverlap;
     let cash = cashStart, cashScenario = cashStart, nisa = nisaStart, nisaScenario = nisaStart;
     const growth = (1 + nisaAnnualReturn) ** (1 / 12);
     const points = [];
@@ -90,6 +109,7 @@ export function futureProjection(doc, records, options, nisaMatches) {
     const currentPeriod = today.slice(0, 7);
     let current = currentPeriod;
     const recurring = recurringForCalculation(doc);
+    const nisaPlan = reconcileNisaMovements(doc, matches, today, recurring);
     for (let i = 0; i <= months; i++) {
         const replacingCash = cashScenarioMonthly !== null && current >= changeMonth && current > currentPeriod;
         const replacingNisa = nisaScenarioMonthly !== null && current >= changeMonth && current > currentPeriod;
@@ -98,7 +118,7 @@ export function futureProjection(doc, records, options, nisaMatches) {
             if (event.date <= today)
                 continue;
             const e = event.entry;
-            if (recurringCoveredByOneTime(e, event.date, doc.oneTime, undefined, recurring))
+            if (nisaPlan.excludesRecurring(e.id, event.date) || recurringCoveredByOneTime(e, event.date, doc.oneTime, undefined, recurring))
                 continue;
             const cashDelta = (e.toAccountId === 'cash-savings' ? e.amount : 0) - (e.fromAccountId === 'cash-savings' ? e.amount : 0);
             // Legacy single-rule scenario remains supported for prior saved/test integrations.
@@ -119,7 +139,7 @@ export function futureProjection(doc, records, options, nisaMatches) {
         // One-off future transfers contribute once. They are not recurring principal,
         // so a hypothetical change to monthly saving never alters these records.
         for (const entry of doc.oneTime ?? []) {
-            if (entry.date <= today || entry.date.slice(0, 7) !== current)
+            if (entry.date <= today || entry.date.slice(0, 7) !== current || nisaPlan.excludesOneTime(entry.id))
                 continue;
             const cashDelta = (entry.toAccountId === 'cash-savings' ? entry.amount : 0) - (entry.fromAccountId === 'cash-savings' ? entry.amount : 0);
             const nisaDelta = (entry.toAccountId === 'nisa' ? entry.amount : 0) - (entry.fromAccountId === 'nisa' ? entry.amount : 0);
@@ -138,8 +158,9 @@ export function futureProjection(doc, records, options, nisaMatches) {
             cashScenario = sum(cashScenario, cashScenarioMonthly);
         if (current > currentPeriod) {
             const scheduled = nisaScheduleInMonth(nisaRules, current);
-            const cardPrincipal = scheduled ? 0 : nisaMonthly;
-            if (scheduled && nisaMonthly > 0)
+            const independent = nisaBankFundingIndependent(doc, `${current}-01`);
+            const cardPrincipal = scheduled && !independent ? 0 : nisaMonthly;
+            if (scheduled && nisaMonthly > 0 && unresolvedFunding(`${current}-01`, nisaRules.filter(r => nisaScheduleInMonth([r], current))))
                 conflictingNisaSources = true;
             if (nisa !== null)
                 nisa = Math.round((nisa + cardPrincipal) * growth);
@@ -151,7 +172,7 @@ export function futureProjection(doc, records, options, nisaMatches) {
         addPoint(current);
         current = stepMonth(current);
     }
-    return { points, cashStart, nisaStart, savingRules, hasNisaSchedule, conflictingNisaSources, target: points[points.length - 1] };
+    return { points, cashStart, nisaStart, savingRules, hasNisaSchedule, conflictingNisaSources, ...(starting['cash-savings'].oneTimeOverlap || starting.nisa.oneTimeOverlap ? { oneTimeOverlapStartingBalance: true } : {}), overdueStartingBalance: !!(starting['cash-savings'].overdue?.count || starting.nisa.overdue?.count), target: points[points.length - 1] };
 }
 /** Age is a calendar-month approximation: the 40th birthday month is birth year+40. */
 export function targetMonthForAge(birthMonth, age) {

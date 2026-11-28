@@ -78,7 +78,7 @@ test('②-B: 明細書込みの操作権保持中は別端末による利用な�
 });
 test('②-B: 先行refreshの遅延結果は明細保存後の取消を巻き戻さない',async()=>{
  const {a,ga}=await fixture();await a.setCardNoUseMonth(month,true);const entered=deferred(),release=deferred(),read=ga.readAssetSettings.bind(ga);let once=true;
- ga.readAssetSettings=async(fresh)=>{const result=await read();if(once&&!fresh){once=false;entered.resolve();await release.promise;}return result;};
+ ga.readAssetSettings=async(fresh)=>{const result=await read();if(once){once=false;entered.resolve();await release.promise;}return result;};
  const refresh=a.refresh(),rejected=assert.rejects(refresh,/取得中/);await entered.promise;try{await save(a);}finally{release.resolve();}await rejected;assert.deepEqual(flags(a),[]);assert.equal(report(a).cardOutflow,100);
 });
 test('②-B: 別端末の古い確認と新しい削除済み年度を組み合わせるrefreshを拒否する',async()=>{
@@ -135,7 +135,7 @@ test('Phase B: display-only edit saves even if asset settings are offline',async
  ga.readAssetSettings=async(force)=>{if(force)fresh++;else ordinary++;throw new Error('offline');};
  const before=ga.writes.length;const r=a.records()[0];
  await a.saveBatch([{id:r.id,statement:{...r.statement,rows:r.statement.rows.map(row=>({...row,merchantOverride:'DISPLAY',description:'NOTE'}))}}]);
- assert.equal(fresh,0);assert.equal(ordinary,1,'only final sync may attempt settings read');assert.deepEqual(ga.writes.slice(before),['year:2024']);
+ assert.equal(fresh,1,'only final sync may attempt a fresh settings read');assert.equal(ordinary,0);assert.deepEqual(ga.writes.slice(before),['year:2024']);
  ga.readAssetSettings=read;const b=await reopen(state);assert.equal(b.records()[0].statement.rows[0].merchantOverride,'DISPLAY');
 });
 test('Phase B: adding another card for an existing payment month still requires current assets',async()=>{

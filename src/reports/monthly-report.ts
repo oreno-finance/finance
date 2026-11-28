@@ -1,7 +1,7 @@
 import {localDay} from '../cloud/asset-projection.js';
 /** Archived monthly snapshots. Generated solely from Finance's existing payment-month summary. */
 import { ASSET_ACCOUNTS } from '../cloud/assets.js';
-import { changePeriod, isValidPeriod, monthlyReport, monthlyCashflow, hasScheduledSalary, type MonthlySource } from '../summary/monthly-summary.js';
+import { changePeriod, isValidPeriod, monthlyReport, monthlyCashflow, expenseComparable, hasScheduledSalary, type MonthlySource } from '../summary/monthly-summary.js';
 import { monthlyPointBenefits, type PointBenefits } from '../summary/point-benefits.js';
 
 export interface ReportAmount { name:string; amount:number }
@@ -51,7 +51,7 @@ export function reportSnapshot(period:string,source:MonthlySource):ReportSnapsho
   const expense=monthlyCashflow(now).expense;
   const previousExpense=monthlyCashflow(prev).expense;
   // Known subtotals from incomplete months are visible, but cannot establish a change.
-  const expenseComparable=now.cardOutflow!==null&&prev.cardOutflow!==null;
+  const comparable=expenseComparable(now)&&expenseComparable(prev);
   const cardMap=new Map<string,number>();
   for(const card of now.cardLines)cardMap.set(card.name,(cardMap.get(card.name)??0)+card.amount);
   const cards=[...cardMap].map(([name,amount])=>({name,amount})).sort((a,b)=>b.amount-a.amount||a.name.localeCompare(b.name,'ja'));
@@ -73,24 +73,31 @@ export function reportSnapshot(period:string,source:MonthlySource):ReportSnapsho
   if(now.unclassifiedCount)quality.push(`未分類 ${now.unclassifiedCount}件`);
   if(now.recurringCardOverlap)quality.push('定期支出とカード請求の重複候補あり');
   if(now.recurringOneTimeOverlap)quality.push('単発入出金と定期予定の対応を要確認');
+  if(now.payrollOneTimeOverlap)quality.push('単発給与とPayrollの対応を要確認');
+  if(now.nisaOverlapCount)quality.push('NISA積立と銀行振替の対応を要確認');
   if(now.income===null)quality.push('収入未取得');
   if(now.incomeEstimates.length)quality.push('給与見込みを含む');
   if(hasScheduledSalary(now))quality.push('手動の給与入金予定を含む');
   if(!now.payrollReady)quality.push('Payroll未同期');
+  if(!expenseComparable(now))quality.push('当月の支出は確定的な比較に利用できません');
+  if(!expenseComparable(prev))quality.push(previousExpense===null?'前月の支出未取得':'前月の支出は参考値・比較不可');
   const reasons:string[]=[];
-  if(expenseComparable&&expense!==null&&previousExpense!==null){
+  if(comparable&&expense!==null&&previousExpense!==null){
     const difference=expense-previousExpense;
     if(difference!==0)reasons.push(`前月より支出が${Math.abs(difference).toLocaleString('ja-JP')}円${difference>0?'増加':'減少'}`);
-    const old=new Map(prev.categories.map(item=>[item.name,item.amount]));
-    const candidates=categories.map(item=>({name:item.name,delta:item.amount-(old.get(item.name)??0)}));
-    const direction=difference>0?1:-1;
-    const major=candidates.filter(item=>item.delta*direction>0).sort((a,b)=>b.delta*direction-a.delta*direction)[0];
-    if(major)reasons.push(`${major.name}：前月比 ${major.delta>0?'+':''}${major.delta.toLocaleString('ja-JP')}円`);
+    if(difference!==0){
+      const old=new Map(prev.categories.map(item=>[item.id,item]));
+      const current=new Map(now.categories.map(item=>[item.id,item]));
+      const candidates=[...new Set([...old.keys(),...current.keys()])].map(id=>({name:(current.get(id)??old.get(id))!.name,delta:(current.get(id)?.amount??0)-(old.get(id)?.amount??0)}));
+      const direction=difference>0?1:-1;
+      const major=candidates.filter(item=>item.delta*direction>0).sort((a,b)=>b.delta*direction-a.delta*direction)[0];
+      if(major)reasons.push(`${major.name}：前月比 ${major.delta>0?'+':''}${major.delta.toLocaleString('ja-JP')}円`);
+    }
   }
   if(categories[0])reasons.push(`最大カテゴリー：${categories[0].name}`);
   return {period,income:now.income,expense,balance:now.monthlyBalance,
     cardOutflow:now.cardOutflow,nisaOutflow:now.nisaOutflow,livingOutflow:now.livingOutflow,
-    cards,categories,merchants,points:monthlyPointBenefits(period,source),previousExpense,expenseChange:expenseComparable&&expense!==null&&previousExpense!==null?expense-previousExpense:null,
+    cards,categories,merchants,points:monthlyPointBenefits(period,source),previousExpense,expenseChange:comparable&&expense!==null&&previousExpense!==null?expense-previousExpense:null,
     reasons,quality,balances};
 }
 export async function snapshotHash(snapshot:ReportSnapshot):Promise<string> {

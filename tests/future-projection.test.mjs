@@ -95,18 +95,18 @@ test('unknown cards generate safe filename and valid date fallback',()=>{
 });
 test('latest matching NISA card month can seed an editable assumption',()=>{
   const d=base();d.nisaCardRule={cardId:'rakuten-mizuho',merchantContains:'楽天証券',enabled:true};
-  const records=[{id:'card-1',statement:{cardId:'rakuten-mizuho',rows:[{id:'row-1',usedOn:'2026-10-20',merchant:'楽天証券',amount:20000}]}}];
+  const records=[{id:'card-1',statement:{cardId:'rakuten-mizuho',provider:'rakuten',sourceKind:'paste',sourceName:'synthetic',billingMonth:'2026-10',paymentDate:'2026-10-27',confirmation:'confirmed',statedTotal:20000,warnings:[],rows:[{id:'row-1',usedOn:'2026-10-20',merchant:'楽天証券',amount:20000}]}}];
   const suggested=suggestedNisaMonthly(d,records,now);
   assert.equal(suggested.amount,20000);
 });
 test('old card samples are not projected forever',()=>{
   const d=base();d.nisaCardRule={cardId:'rakuten-mizuho',merchantContains:'楽天証券',enabled:true};
-  const records=[{id:'card-1',statement:{cardId:'rakuten-mizuho',rows:[{id:'row-1',usedOn:'2025-01-20',merchant:'楽天証券',amount:20000}]}}];
+  const records=[{id:'card-1',statement:{cardId:'rakuten-mizuho',provider:'rakuten',sourceKind:'paste',sourceName:'synthetic',billingMonth:'2025-01',paymentDate:'2025-01-27',confirmation:'confirmed',statedTotal:20000,warnings:[],rows:[{id:'row-1',usedOn:'2025-01-20',merchant:'楽天証券',amount:20000}]}}];
   assert.equal(suggestedNisaMonthly(d,records,now).amount,0);
 });
 
 const cardRule={cardId:'rakuten-mizuho',merchantContains:'Synthetic investment',enabled:true};
-const cardSample=(date,amount=20000,id='row-1')=>({id,statement:{cardId:cardRule.cardId,rows:[{id:'sample',usedOn:date,merchant:cardRule.merchantContains,amount}]}});
+const cardSample=(date,amount=20000,id='row-1')=>({id,statement:{cardId:cardRule.cardId,provider:'rakuten',sourceKind:'paste',sourceName:'synthetic',billingMonth:date.slice(0,7),paymentDate:date.slice(0,7)+'-27',confirmation:'confirmed',statedTotal:amount,warnings:[],rows:[{id:'sample',usedOn:date,merchant:cardRule.merchantContains,amount}]}});
 const nisaDeposit=(overrides={})=>({...deposit('Synthetic recurring NISA',15000),id:'nisa-transfer-001',toAccountId:'nisa',...overrides});
 
 test('expired bank NISA schedule does not suppress current card contributions or hint',()=>{
@@ -164,7 +164,8 @@ test('disabled or removed card rule preserves historical contributions but stops
 });
 test('changed or re-enabled card rule only infers from its current effective period',()=>{
   const d=base();d.nisaCardRule=cardRule;
-  const records=[cardSample('2026-11-10'),cardSample('2026-11-18',30000,'row-2')];
+  const combined=cardSample('2026-11-10');combined.statement.rows.push({...cardSample('2026-11-18',30000,'row-2').statement.rows[0],id:'sample-2'});combined.statement.statedTotal+=30000;
+  const records=[combined];
   const removed=withUpdatedNisaCardRule(d,null,'2026-11-12');
   const enabled=withUpdatedNisaCardRule(removed,cardRule,'2026-11-17');
   assert.equal(suggestedNisaMonthly(enabled,records,'2026-11-17').amount,0);

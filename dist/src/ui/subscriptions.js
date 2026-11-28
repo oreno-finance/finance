@@ -1,5 +1,4 @@
-import { fixedCostRuleViews, migratedCardCostIds, migratableCardCost, latestFixedEvidence } from '../fixed-costs/rule-fixed-costs.js';
-import { fixedRuleKey } from '../cloud/merchant-rules.js';
+import { fixedCostRuleViews, migratedCardCostIds, migratableCardCost, latestFixedEvidence, ruleOverlapsContract } from '../fixed-costs/rule-fixed-costs.js';
 import { bindModalDismiss, modalHeader, requestConfirmation, confirmationPending, cancelConfirmation } from './modal.js';
 import { formatYen as sharedYen, formatDate, formatMonth } from './formatters.js';
 /** One management screen for card subscriptions, bank standing orders, and cash commitments. */
@@ -122,7 +121,7 @@ export function initSubscriptions(deps) {
     field('day', '支払日', 'select', [['0', '末日'], ...Array.from({ length: 31 }, (_, i) => [String(i + 1), `${i + 1}日`])]);
     field('weekday', '支払曜日', 'select', [['0', '日曜日'], ['1', '月曜日'], ['2', '火曜日'], ['3', '水曜日'], ['4', '木曜日'], ['5', '金曜日'], ['6', '土曜日']]);
     field('status', '契約状態の変更', 'select', [['', '変更しない'], ['active', '再開'], ['paused', '一時停止'], ['ended', '契約終了']]);
-    field('statusDate', '適用日', 'date');
+    const statusDateField = field('statusDate', '適用日', 'date');
     field('note', 'メモ', 'textarea');
     const context = el('p', 'fixed-cost-equivalent');
     header.after(context);
@@ -270,6 +269,7 @@ export function initSubscriptions(deps) {
             shown.add('status');
             if (get('status'))
                 shown.add('statusDate');
+            statusDateField.querySelector('span').textContent = get('status') === 'active' ? '再開日' : '最終有効日';
             if (futurePaymentDate)
                 shown.add('paymentAction');
             if (futurePriceDate)
@@ -434,7 +434,7 @@ export function initSubscriptions(deps) {
         set('day', String(terms?.dayOfMonth ?? new Date().getDate()));
         set('weekday', String(terms?.weekday ?? new Date().getDay()));
         set('status', '');
-        set('statusDate', today < (existing?.startOn ?? today) ? existing.startOn : today);
+        set('statusDate', today);
         input('statusDate').min = get('statusDate');
         set('note', existing?.note ?? '');
         input('startOn').readOnly = !!existing || !!legacy;
@@ -461,13 +461,13 @@ export function initSubscriptions(deps) {
         const registeredKeys = contractMerchantKeys(source.assets);
         for (const key of fixedRuleRegisteredKeys(source))
             registeredKeys.add(key);
-        const migrated = migratedCardCostIds(source), ruleKeys = new Set(source.rules.filter(r => r.fixedCost).map(fixedRuleKey));
+        const migrated = migratedCardCostIds(source);
         const evidence = fixedCostEvidence(source, today);
         const historyEvidence = contractCardEvidence(source, today);
         for (const bank of source.assets.recurring) {
             if (bank.kind !== 'expense')
                 continue;
-            const status = bank.endOn !== null && bank.endOn < today ? 'ended' : bank.startOn > today ? 'scheduled' : !bank.enabled ||
+            const status = bank.endOn !== null && (bank.endOn < today || bank.endOn < bank.startOn && bank.endOn === today) ? 'ended' : bank.startOn > today ? 'scheduled' : !bank.enabled ||
                 (bank.pauses ?? []).some(p => today >= p.startOn && (p.endOn === null || today <= p.endOn)) ? 'paused' : 'active';
             const terms = paymentTermsOn(bank, today), last = latestEvidence(bank, historyEvidence(bank));
             list.push({ kind: terms.payment, id: bank.id, name: bank.name, amount: bank.amount, currentAmount: priceOnDay(bank.pricing ?? [], today, bank.amount), frequency: terms.frequency, payment: paymentLabel(terms, source),
@@ -476,7 +476,7 @@ export function initSubscriptions(deps) {
         const decisions = source.assets.cardRecurringDecisions ?? {};
         for (const contract of contracts) {
             const automatic = migratableCardCost(contract);
-            if (automatic && (migrated.has(contract.id) || ruleKeys.has(contract.merchantKey)))
+            if (automatic && (migrated.has(contract.id) || source.rules.some(rule => ruleOverlapsContract(rule, contract))))
                 continue;
             const charge = automatic && contract.merchantKey ? latestFixedEvidence(evidence.get(contract.merchantKey) ?? [], contract.frequency) : null;
             const terms = paymentTermsOn(contract, today);
@@ -490,7 +490,7 @@ export function initSubscriptions(deps) {
         for (const { rule, charge, categoryId, status } of fixedCostRuleViews(source, today)) {
             const categoryName = source.categories.find(c => c.id === categoryId)?.name ?? '未分類';
             list.push({ kind: 'card', id: rule.fixedCost.legacyId ?? rule.id, name: rule.displayName, amount: charge?.amount ?? 0, frequency: rule.fixedCost.frequency,
-                payment: source.assets.cardPreferences?.[rule.cardId ?? '']?.name ?? CARDS.find(c => c.id === rule.cardId)?.name ?? 'カード', status, priceKind: 'fixed', rule, automatic: true, unknownAmount: !charge, usedOn: charge?.usedOn, categoryName });
+                payment: source.assets.cardPreferences?.[rule.cardId ?? '']?.name ?? CARDS.find(c => c.id === rule.cardId)?.name ?? 'カード', status, priceKind: 'fixed', rule, automatic: true, unknownAmount: !charge, usedOn: charge?.usedOn, previousRoute: charge?.previousRoute, categoryName });
         }
         for (const [key, decision] of Object.entries(decisions)) {
             if (decision.state !== 'registered' || registeredKeys.has(key) || candidates.some(c => matchedCardRecurringDecision(decisions, c) === key && registeredKeys.has(c.key)))
@@ -759,7 +759,7 @@ export function initSubscriptions(deps) {
                     if (item.categoryName)
                         info.append(el('small', '', item.categoryName));
                     if (item.usedOn)
-                        info.append(el('small', '', `直近の利用：${formatDate(item.usedOn)}`));
+                        info.append(el('small', '', `${item.previousRoute ? '変更前の利用（見込みの根拠）' : '直近の利用'}：${formatDate(item.usedOn)}`));
                 }
                 else if (item.priceKind === 'variable' || item.status === 'scheduled' || !origin)
                     price.append(el('small', '', priceLabel(item)));

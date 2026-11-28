@@ -1,6 +1,6 @@
 import {fixedCostCalculationAssets} from '../fixed-costs/rule-fixed-costs.js';
 /** Home uses the unchanged monthlyReport as its only household cashflow source. */
-import { ASSET_ACCOUNTS, type AssetAccountId, type BalanceSnapshot } from '../cloud/assets.js';
+import { cardDebitAccountOnDay, ASSET_ACCOUNTS, type AssetAccountId, type BalanceSnapshot } from '../cloud/assets.js';
 import { changePeriod, monthlyReport, monthlyCashflow, type MonthlyReport, type MonthlySource } from '../summary/monthly-summary.js';
 import { prepareBankForecast, forecastBankBalances } from '../cloud/salary-projection.js';
 import { forecastAccounts, type AccountForecasts } from './account-events.js';
@@ -23,7 +23,7 @@ export function homeOverview(source:MonthlySource,today:string):HomeOverview {
   const assets=fixedCostCalculationAssets(source,today);
   const work=prepareBankForecast(source.records,assets);
   const prepared=work.prepared;
-  const adjusted={...source,currentPeriod};
+  const adjusted={...source,currentPeriod,currentDay:today};
   const byMonth=new Map<string,MonthlyReport>();
   const reportForMonth=(period:string):MonthlyReport=>{
     let report=byMonth.get(period);
@@ -31,13 +31,13 @@ export function homeOverview(source:MonthlySource,today:string):HomeOverview {
     return report;
   };
   const report=reportForMonth(currentPeriod);
-  const forecast=forecastAccounts(source,today,45,reportForMonth);
+  const forecast=forecastAccounts(source,today,45,reportForMonth,work.nisaRows);
   const previousPeriod=changePeriod(currentPeriod,-1);
   const previousReport=reportForMonth(previousPeriod);
   const balanceDelta=report.monthlyBalance===null||previousReport.monthlyBalance===null?null:report.monthlyBalance-previousReport.monthlyBalance;
   // Even a prior 'done' needs revalidation after a bill has changed.
   const priorFundingReport=source.assets.mizuhoTransferPlan?.enabled&&
-    source.assets.cardDebitAccounts?.['rakuten-mizuho']==='mizuho-bank'
+    (previousReport.cardLines.some(card=>card.cardId==='rakuten-mizuho'&&cardDebitAccountOnDay(source.assets,card.cardId,card.paymentDate)==='mizuho-bank')||cardDebitAccountOnDay(source.assets,'rakuten-mizuho',today)==='mizuho-bank')
       ?previousReport:null;
   const cashflow=monthlyCashflow(report);
   const coverage:HomeCoverage=cashflow.coverage==='review'?'needs-review':cashflow.coverage;

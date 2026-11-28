@@ -42,11 +42,11 @@ async function vaultDriver(){
   return {state,driver,key,salt,vault};
 }
 
-test('refresh verifies index once and still rejects cross-generation changes',async()=>{
+test('refresh verifies both index boundaries and still rejects cross-generation changes',async()=>{
   const {vault,state,driver,key,salt}=await vaultDriver();
   state.indexReads=0;
   await vault.refresh();
-  assert.equal(state.indexReads,1,'no redundant generation-check GET before readCurrent');
+  assert.equal(state.indexReads,2,'opening index and closing metadata fence (mock read fallback)');
   const otherSalt=freshSalt();
   state.index=await encryptIndex(emptyIndex(),key,otherSalt);
   await assert.rejects(vault.refresh(),/異なる保管庫|パスフレーズ|世代/);
@@ -151,6 +151,6 @@ test('phase two never disables generation checks, encryption, write uncertainty 
   assert.match(source,/this\.uncertainWrite\('assets',error\)/);
   assert.match(source,/this\.uncertainWrite\('rules',error\)/);
   assert.match(source,/const encrypted=await encryptDocument\(expected,key,salt\);guard\(\);await this\.client\.writeYearVault\(year,encrypted,null\)/);
-  assert.match(api,/uploadSession\(path,bytes,existing\?\.etag\)/);
+  assert.match(api,/uploadSession\(path,bytes,existing\?\.etag,existing\?\.id\)/);
   assert.match(api,/'If-Match':etag/);
 });

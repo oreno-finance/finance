@@ -131,7 +131,7 @@ test('UI maintains both opt-in choices, account status controls, and fail-safe h
   assert.doesNotMatch(html,/id="vault-browser-keep"[^>]*checked/);
   assert.match(main,/if\(allowAutomatic&&browserContext\)/);
   assert.match(main,/setManualLock\(local\)/);
-  assert.match(main,/await forgetBrowserKey\(rememberedContext\)/);
+  assert.match(main,/await forgetBrowserKey\(rememberedContext,operation.check\)/);
   assert.match(main,/if\(rememberBrowser\)/);
   assert.match(main,/保管庫は解除できましたが、このブラウザを記憶できませんでした/);
   assert.match(settings,/export function activeMicrosoftAccountId/);
@@ -161,5 +161,44 @@ test('failed key deletion must reject every-time choice rather than claiming suc
     await assert.rejects(applyBrowserRetentionChoice(alpha,false),/blocked IndexedDB/);
   } finally {globalThis.indexedDB=prior;}
   assert.ok(await readBrowserKey(alpha),'failed revocation must not be reported as completed');
+  await forgetBrowserKey(alpha);
+});
+
+test('M202: shared lock epoch and latest retention intent supersede old async operations',async()=>{
+  const {beginBrowserRetention,notifyOtherFinanceTabs,browserLockEpoch}=await import('../dist/src/cloud/remembered-browser.js');
+  const shared=storage(),key=await secret();
+  const old=beginBrowserRetention(shared);
+  await rememberBrowserKey(alpha,{key,salt,dataSetId:null},old.check);
+  notifyOtherFinanceTabs(shared);
+  assert.throws(old.resume,/ロック/);assert.equal(isManuallyLocked(shared),true);
+  const fresh=beginBrowserRetention(shared);await rememberBrowserKey(alpha,{key,salt,dataSetId:null},fresh.check);fresh.resume();
+  assert.equal(isManuallyLocked(shared),false);
+  const auto=browserLockEpoch(shared),previous=beginBrowserRetention(shared),latest=beginBrowserRetention(shared);
+  await assert.rejects(forgetBrowserKey(alpha,previous.check),/中止/);
+  assert.ok(await readBrowserKey(alpha));latest.resume();assert.throws(auto,/ロック/);
+  notifyOtherFinanceTabs(shared);assert.equal(isManuallyLocked(shared),true,'epoch mismatch must stop auto unlock even if the manual flag is cleared');
+  clearManualLock(shared);assert.equal(isManuallyLocked(shared),true);
+  await forgetBrowserKey(alpha);
+});
+
+test('M202: an invalidated committed remember is removed, but a newer key is not',async()=>{
+  const key=await secret();
+  let checks=0;
+  await assert.rejects(rememberBrowserKey(alpha,{key,salt,dataSetId:null},()=>{
+    if(++checks===3)throw Error('superseded after commit');
+  }),/superseded/);
+  assert.equal(await readBrowserKey(alpha),null);
+  const latestKey=await secret();checks=0;
+  await assert.rejects(rememberBrowserKey(alpha,{key,salt,dataSetId:null},()=>{
+    if(++checks===3){
+      const [id,entry]=[...database.entries()][0];
+      database.set(id,{...entry,key:latestKey,operationId:crypto.randomUUID()});
+      throw Error('superseded by newer commit');
+    }
+  }),/superseded/);
+  const latest=await readBrowserKey(alpha);
+  const iv=new Uint8Array(12),plain=new Uint8Array([1,2,3]);
+  const encrypted=await crypto.subtle.encrypt({name:'AES-GCM',iv},latestKey,plain);
+  assert.deepEqual(new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv},latest.key,encrypted)),plain);
   await forgetBrowserKey(alpha);
 });

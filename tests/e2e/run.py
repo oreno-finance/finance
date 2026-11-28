@@ -1590,7 +1590,7 @@ window.financeImportTest={
                       assets.recurring=[{id:'cash-test-rule',name:'Synthetic savings',kind:'transfer',fromAccountId:'rakuten-bank',toAccountId:'cash-savings',amount:24000,frequency:'monthly',dayOfMonth:20,monthOfYear:null,weekday:null,startOn:'2026-01-01',endOn:null,categoryId:null,enabled:true,pricing:[{effectiveOn:'2026-01-01',amount:12000},{effectiveOn:'2026-12-01',amount:24000}]},
                         {id:'nisa-test-rule',name:'Synthetic NISA',kind:'transfer',fromAccountId:'rakuten-bank',toAccountId:'nisa',amount:15000,frequency:'monthly',dayOfMonth:20,monthOfYear:null,weekday:null,startOn:'2026-01-01',endOn:'2026-10-31',categoryId:null,enabled:true}];
                       assets.recurring.push({...assets.recurring[0],id:'cash-ended',name:'Synthetic ended savings',amount:20000,pricing:undefined,endOn:'2026-10-31'});
-                      const records=[{id:'sample-record',statement:{cardId:'rakuten-mizuho',rows:[{id:'sample-row',usedOn:'2026-11-10',merchant:'Synthetic investment',amount:20000}]}}];
+                      const records=[{id:'sample-record',statement:{provider:'rakuten',sourceKind:'paste',sourceName:'synthetic',billingMonth:'2026-11',paymentDate:'2026-11-27',statedTotal:20000,confirmation:'confirmed',warnings:[],cardId:'rakuten-mizuho',rows:[{id:'sample-row',usedOn:'2026-11-10',merchant:'Synthetic investment',amount:20000}]}}];
                       document.getElementById('future-view').classList.remove('hidden');
                       const ui=initFutureProjection(()=>({assets,records}));ui.render();
                       window.nisaLifecycle={remove(){assets=withUpdatedNisaCardRule(assets,null,'2026-11-17');ui.render();},
@@ -2533,6 +2533,87 @@ window.financeImportTest={
             self.assertFalse(errors, errors)
         finally:
             context.close()
+
+
+    def test_payroll_revocation_and_late_results(self):
+        html=self.offline_document()
+        for width,mobile in ((1100,False),(390,True)):
+            with self.subTest(width=width):
+                context=self.browser.new_context(viewport={'width':width,'height':850},is_mobile=mobile,has_touch=mobile)
+                try:
+                    page=context.new_page();errors=[]
+                    page.on('pageerror',lambda exc:errors.append(str(exc)))
+                    page.route('**/*',lambda route:route.abort());page.set_content(html)
+                    page.evaluate('''async()=>{
+                      const {emptyAssets}=await import('finance-fixture/cloud/assets.js');
+                      const {initAssetsSettings}=await import('finance-fixture/ui/assets-settings.js');
+                      const {PayrollReadSession}=await import('finance-fixture/cloud/payroll-bridge.js');
+                      const data=emptyAssets();data.payrollAutoPassphrase='synthetic-credential-a';
+                      let remote=data.payrollAutoPassphrase,revision=0,pending=null,changes=0;
+                      const connects=[];
+                      const vault={unlocked:true,assetSettings:()=>structuredClone(data),merchantRules:()=>[],fixedCostMigrations:()=>[],readonlyRecords:()=>[],
+                        payrollOperationGuard(){const at=revision;return ()=>{if(revision!==at||!vault.unlocked)throw Error('changed vault');};},
+                        async readPayrollCredential(){return remote;},payrollReadClient(){return {};}};
+                      const result={id:'fixture-income',employerId:'fixture',job:'main',paidOn:'2026-11-27',payPeriod:'2026-11',netPay:200000,grossPay:null,taxablePay:null,currency:'JPY',kind:'salary',revision:1};
+                      PayrollReadSession.connect=async(_,credential)=>{connects.push(credential);return {refresh:()=>new Promise(resolve=>pending=()=>{pending=null;resolve([result]);})};};
+                      const ui=initAssetsSettings(()=>vault,()=>[],()=>{},()=>{changes++;});ui.render();
+                      let task;
+                      window.payrollRace={start(){task=ui.refreshPayroll();},finish(){pending();},waiting:()=>!!pending,settled:()=>task,
+                        remote(value){remote=value;},local(value){data.payrollAutoPassphrase=value;ui.render();},
+                        lock(){revision++;vault.unlocked=false;ui.reset();vault.unlocked=true;ui.render();},
+                        snapshot:()=>ui.payrollSnapshot(),connects,changes:()=>changes};
+                    }''')
+                    page.evaluate('payrollRace.start()');page.wait_for_function('payrollRace.waiting()')
+                    page.evaluate('payrollRace.finish()');page.evaluate('payrollRace.settled()')
+                    self.assertTrue(page.evaluate('payrollRace.snapshot().ready'))
+                    self.assertEqual(page.locator('#assets-payroll-count').text_content(),'1件')
+                    # A latest local settings refresh must clear old income and its success message.
+                    page.evaluate('payrollRace.local(null);payrollRace.remote(null)')
+                    self.assertFalse(page.evaluate('payrollRace.snapshot().ready'))
+                    self.assertEqual(page.locator('#assets-payroll-count').text_content(),'0件')
+                    self.assertNotIn('取得しました',page.locator('#assets-payroll-status').text_content())
+                    # New credentials, then revoke remotely during a delayed Payroll read.
+                    page.evaluate("payrollRace.local('synthetic-credential-b');payrollRace.remote('synthetic-credential-b');payrollRace.start()")
+                    page.wait_for_function('payrollRace.waiting()')
+                    page.evaluate('payrollRace.remote(null);payrollRace.finish()');page.evaluate('payrollRace.settled()')
+                    self.assertFalse(page.evaluate('payrollRace.snapshot().ready'))
+                    self.assertEqual(page.locator('#assets-payroll-count').text_content(),'0件')
+                    # Lock and re-unlock the same instance before the old response arrives.
+                    page.evaluate("payrollRace.local('synthetic-credential-c');payrollRace.remote('synthetic-credential-c');payrollRace.start()")
+                    page.wait_for_function('payrollRace.waiting()')
+                    page.evaluate('payrollRace.lock();payrollRace.finish()');page.evaluate('payrollRace.settled()')
+                    self.assertFalse(page.evaluate('payrollRace.snapshot().ready'))
+                    self.assertEqual(page.locator('#assets-payroll-count').text_content(),'0件')
+                    page.evaluate('payrollRace.start()');page.wait_for_function('payrollRace.waiting()')
+                    page.evaluate('payrollRace.finish()');page.evaluate('payrollRace.settled()')
+                    self.assertTrue(page.evaluate('payrollRace.snapshot().ready'))
+                    self.assertEqual(page.evaluate('payrollRace.connects'),['synthetic-credential-a','synthetic-credential-b','synthetic-credential-c','synthetic-credential-c'])
+                    self.assertFalse(errors,errors)
+                finally:context.close()
+
+    def test_remembered_browser_cross_tab_lock_after_commit(self):
+        # Same-origin secure-context IndexedDB and storage events; no account or Finance data.
+        page,context,errors=self.create_page()
+        try:
+            other=context.new_page();other.goto(self.base+'/tests/e2e/finance-fixture.html')
+            page.evaluate('''async()=>{
+              const mod=await import('/dist/src/cloud/remembered-browser.js');
+              const key=await crypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+              const context={clientId:'78a9834b-ab02-4123-ad31-37ad28ee2050',homeAccountId:'synthetic-browser-e2e'};
+              const record={key,salt:btoa(String.fromCharCode(...new Uint8Array(16).fill(6))),dataSetId:null};
+              const op=mod.beginBrowserRetention(localStorage);
+              window.race={mod,context,record,op,events:0};
+              window.addEventListener('storage',e=>{if(e.key===mod.CROSS_TAB_LOCK_KEY)race.events++;});
+              await mod.rememberBrowserKey(context,record,op.check);
+            }''')
+            other.evaluate('''async()=>{const mod=await import('/dist/src/cloud/remembered-browser.js');mod.setManualLock(localStorage);mod.notifyOtherFinanceTabs(localStorage);}''')
+            page.wait_for_function('race.events===1')
+            self.assertTrue(page.evaluate('''()=>{try{race.op.resume();return false;}catch{return race.mod.isManuallyLocked(localStorage);}}'''))
+            page.evaluate('''async()=>{const op=race.mod.beginBrowserRetention(localStorage);await race.mod.rememberBrowserKey(race.context,race.record,op.check);op.resume();}''')
+            self.assertFalse(other.evaluate('''async()=>{const mod=await import('/dist/src/cloud/remembered-browser.js');return mod.isManuallyLocked(localStorage);}'''))
+            self.assertTrue(page.evaluate('''async()=>!(await race.mod.readBrowserKey(race.context)).key.extractable'''))
+            self.assertFalse(errors,errors)
+        finally:context.close()
 
 
 if __name__ == '__main__':

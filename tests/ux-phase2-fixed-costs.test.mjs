@@ -28,18 +28,18 @@ test('停止・再開・終了は過去の支払と料金履歴を維持し、�
   const paused={...base,...changeFixedCostState(base,'paused','2026-03-01')};
   assert.equal(nextFixedCostDate(paused,'2026-03-01'),null);
   const resumed={...paused,...changeFixedCostState(paused,'active','2026-05-01')};
-  assert.deepEqual(resumed.pauses,[{startOn:'2026-03-01',endOn:'2026-04-30'}]);
+  assert.deepEqual(resumed.pauses,[{startOn:'2026-03-02',endOn:'2026-04-30'}]);
   assert.equal(fixedCostOccurrences('2026-02',[resumed])[0].amount,1000);
   assert.equal(fixedCostOccurrences('2026-04',[resumed]).length,0);
   assert.equal(nextFixedCostDate(resumed,'2026-05-01'),'2026-05-31');
   const ended={...resumed,...changeFixedCostState(resumed,'ended','2026-06-15')};
   const renewed={...ended,...changeFixedCostState(ended,'active','2026-08-01')};
-  assert.deepEqual(renewed.pauses,[{startOn:'2026-03-01',endOn:'2026-04-30'},{startOn:'2026-06-16',endOn:'2026-07-31'}]);
+  assert.deepEqual(renewed.pauses,[{startOn:'2026-03-02',endOn:'2026-04-30'},{startOn:'2026-06-16',endOn:'2026-07-31'}]);
   assert.equal(fixedCostOccurrences('2026-07',[renewed]).length,0);
   assert.deepEqual(base,snapshot);assert.deepEqual(renewed.pricing,base.pricing);
   assert.throws(()=>changeFixedCostState(base,'','2026-03-01'));
   assert.throws(()=>changeFixedCostState(base,'paused','2026-02-31'));
-  assert.throws(()=>changeFixedCostState(base,'ended','2025-01-01'));
+  assert.equal(changeFixedCostState(base,'ended','2025-01-01').endOn,'2025-01-01'); // cancelled before start
 });
 test('旧形式の停止フラグは明示的に再開した場合だけ解除し、過去を復活させない',()=>{
   const old={...bank,enabled:false};
@@ -60,4 +60,32 @@ test('口座管理の登録と編集は入金・振替だけに限定し、支�
   assert.match(ui,/if\(busy\|\|confirming\(\)\|\|item.kind==='expense'\|\|!vault\?\.unlocked\)return/);
   assert.match(main,/if\(entryId.startsWith\('cash:'\)\)\{[\s\S]*?subscriptionsUi\?\.openFixedCost\(id\);return;/);
   assert.match(main,/if\(entry.kind==='expense'\)\{showView\('subscriptions'\);subscriptionsUi\?\.openFixedCost\(entryId\);return;\}/);
+});
+
+
+test('M03: 停止当日・終了当日は有効、同日再開と開始前の停止・終了でも不正な期間を作らない',()=>{
+  const item={...base,dayOfMonth:10};
+  const paused={...item,...changeFixedCostState(item,'paused','2026-11-10')};
+  assert.deepEqual(paused.pauses,[{startOn:'2026-11-11',endOn:null}]);
+  assert.equal(fixedCostOccurrences('2026-11',[paused]).length,1);
+  assert.equal(fixedCostOccurrences('2026-12',[paused]).length,0);
+  const resumed={...paused,...changeFixedCostState(paused,'active','2026-11-10')};
+  assert.deepEqual(resumed.pauses,[]);
+  const ended={...item,...changeFixedCostState(item,'ended','2026-11-10')};
+  assert.equal(fixedCostOccurrences('2026-11',[ended]).length,1);
+  assert.equal(fixedCostOccurrences('2026-12',[ended]).length,0);
+  const scheduled={...item,startOn:'2027-01-01'};
+  const cancelled={...scheduled,...changeFixedCostState(scheduled,'ended','2026-11-10')};
+  assert.equal(fixedCostState(cancelled,'2026-11-10'),'ended');
+  assert.equal(nextFixedCostDate(cancelled,'2026-11-10'),null);
+  assert.equal(fixedCostOccurrences('2027-01',[cancelled]).length,0);
+  const beforeStart={...cancelled,...changeFixedCostState(cancelled,'active','2026-12-01')};
+  assert.deepEqual(beforeStart.pauses,[]);
+  assert.equal(nextFixedCostDate(beforeStart,'2026-12-01'),'2027-01-10');
+  const later={...cancelled,...changeFixedCostState(cancelled,'active','2027-02-01')};
+  assert.deepEqual(later.pauses,[{startOn:'2027-01-01',endOn:'2027-01-31'}]);
+  assert.equal(nextFixedCostDate(later,'2027-01-01'),'2027-02-10');
+  const prePause={...scheduled,...changeFixedCostState(scheduled,'paused','2026-12-01')};
+  assert.deepEqual(prePause.pauses,[{startOn:'2027-01-01',endOn:null}]);
+  assert.equal(nextFixedCostDate(prePause,'2026-12-01'),null);
 });

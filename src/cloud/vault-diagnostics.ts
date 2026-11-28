@@ -108,7 +108,7 @@ export async function diagnoseVaultFiles(client: OneDriveTestClient, passphrase 
     onProgress?.(`${label}を検査中…`);
     try {
       const file = await method();
-      if (!file) {lines.push(`${label}：未作成（問題なし）`);continue;}
+      if (!file) {lines.push(`${label}：ファイルなし（初回利用か消失かは判定できません）`);continue;}
       // If the index failed, read each file's own salt; this avoids treating
       // an index-only salt error as a universal password mismatch.
       const fileSalt = indexDecryptionFailed

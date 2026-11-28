@@ -152,7 +152,7 @@ export function contractMerchantKeys(doc:ContractSource):Set<string>{
 export function validateHistoricalMerchantRoutes(doc:ContractSource):void {
   const routes=new Map<string,FixedCostEntry[]>();
   for(const item of fixedCostsForCalculation(doc)){
-    if(item.payment!=='card'||!item.merchantKey)continue;
+    if(item.payment!=='card'||!item.merchantKey||(item.endOn!==null&&item.endOn<item.startOn))continue;
     const key=`${item.cardId}|${item.merchantKey}`;
     const entries=routes.get(key)??[];entries.push(item);routes.set(key,entries);
   }

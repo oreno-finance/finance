@@ -97,7 +97,7 @@ test('統合編集は料金・支払条件・基本情報・契約状態を一�
  await a.editContract(expected,{name:'更新した契約',categoryId:null,priceKind:'variable',note:'変更内容',price:{amount:2300,effectiveOn:today()},payment:{terms:route,effectiveOn:today()},state:{action:'paused',effectiveOn:tomorrow()}});
  assert.equal(graph.writes,n+1);const changed=a.assetSettings().recurring[0];assert.equal(changed.id,bank.id);assert.equal(changed.fromAccountId,bank.fromAccountId);
  assert.equal(changed.name,'更新した契約');assert.equal(changed.note,'変更内容');assert.equal(changed.priceKind,'variable');assert.equal(changed.amount,2300);assert.deepEqual(changed.pricing,[{effectiveOn:bank.startOn,amount:1000},{effectiveOn:today(),amount:2300}]);
- assert.equal(paymentTermsOn(changed,bank.startOn).payment,'bank');assert.equal(paymentTermsOn(changed,today()).payment,'card');assert.deepEqual(changed.pauses,[{startOn:tomorrow(),endOn:null}]);assert.equal(a.assetSettings().format,'finance-assets-v2');
+ assert.equal(paymentTermsOn(changed,bank.startOn).payment,'bank');assert.equal(paymentTermsOn(changed,today()).payment,'card');assert.deepEqual(changed.pauses,[{startOn:new Date(Date.parse(tomorrow()+'T00:00:00Z')+86400000).toISOString().slice(0,10),endOn:null}]);assert.equal(a.assetSettings().format,'finance-assets-v2');
  const b=new LiveVault(graph);await b.unlock(secret);assert.deepEqual(b.assetSettings(),JSON.parse(JSON.stringify(a.assetSettings())));
  assert.doesNotMatch(graph.read('assets').text,/変更内容|更新した契約|paymentHistory/);
 });
@@ -148,4 +148,28 @@ test('検出候補のカード変更は不一致や別端末の登録済み候�
  await assert.rejects(a.upsertFixedCost(changed,{...decision,state:'registered'}),/対応関係/);assert.equal(graph.writes,before);
  const b=new LiveVault(graph);await b.unlock(secret);await b.upsertFixedCost(card,{...decision,state:'registered'});
  const writes=graph.writes;await assert.rejects(a.upsertFixedCost(changed,decision),/登録・確認/);assert.equal(graph.writes,writes);await a.refresh();assert.equal(a.assetSettings().fixedCosts[0].cardId,'smbc-nl');
+});
+
+
+test('M03: 開始前の終了は暗号化保存形式を保護し、再取得後の再開でも契約履歴を維持する',async()=>{
+  const {graph,a}=await create();
+  const start=tomorrow();
+  const scheduled={...card,startOn:start,pricing:[{effectiveOn:start,amount:card.amount}]};
+  const scheduledBank={...bank,startOn:start};
+  await a.upsertFixedCost(scheduled);await a.upsertRecurring(scheduledBank);
+  const edit=item=>({name:item.name,categoryId:item.categoryId,priceKind:'fixed',note:'',state:{action:'ended',effectiveOn:today()}});
+  await a.editContract(a.assetSettings().fixedCosts[0],edit(scheduled));
+  await a.editContract(a.assetSettings().recurring[0],edit(scheduledBank));
+  const saved=a.assetSettings();
+  assert.equal(saved.format,'finance-assets-v3');
+  assert.equal(JSON.parse(graph.read('index').text).format,'finance-cloud-index-envelope-v4');
+  assert.equal(saved.fixedCosts[0].endOn,today());assert.equal(saved.recurring[0].endOn,today());
+  assert.throws(()=>validateAssets({...saved,format:'finance-assets-v2'}),/保存形式/);
+  const b=new LiveVault(graph);await b.unlock(secret);
+  assert.deepEqual(b.assetSettings(),JSON.parse(JSON.stringify(saved)));
+  const item=b.assetSettings().fixedCosts[0];
+  await b.editContract(item,{...edit(item),state:{action:'active',effectiveOn:today()}});
+  assert.equal(b.assetSettings().fixedCosts[0].startOn,start);
+  assert.equal(b.assetSettings().fixedCosts[0].endOn,null);
+  assert.deepEqual(b.assetSettings().fixedCosts[0].pricing,scheduled.pricing);
 });

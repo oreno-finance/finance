@@ -1,7 +1,7 @@
 /** Manual monthly confirmation for Rakuten -> Mizuho card funding.
  * This is an encrypted CHECKLIST acknowledgement, never a bank transaction.
  * Never modifies cash forecasts, bank balances or the card statement itself. */
-import { DEFAULT_MIZUHO_PLAN } from '../cloud/assets.js';
+import { cardDebitAccountOnDay, DEFAULT_MIZUHO_PLAN } from '../cloud/assets.js';
 import { estimateMizuhoTransferAmount } from '../cloud/mizuho-transfer.js';
 import { shiftedDay } from './account-events.js';
 /** The card's recorded payment date is the authority for its transfer deadline.
@@ -12,7 +12,7 @@ export function mizuhoFundingStatusForMonth(source, report, today) {
         !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== today)
         throw new Error('送金確認の日付が不正です。');
     const plan = source.assets.mizuhoTransferPlan ?? DEFAULT_MIZUHO_PLAN;
-    if (!plan.enabled || source.assets.cardDebitAccounts?.['rakuten-mizuho'] !== 'mizuho-bank')
+    if (!plan.enabled)
         return null;
     const month = report.period;
     if (!/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(month) || month > today.slice(0, 7))
@@ -20,6 +20,8 @@ export function mizuhoFundingStatusForMonth(source, report, today) {
     const cards = report.cardLines.filter(c => c.cardId === 'rakuten-mizuho');
     // Multiple different bills in one payment month make the target ambiguous.
     const card = cards.length === 1 ? cards[0] : null;
+    if (cardDebitAccountOnDay(source.assets, 'rakuten-mizuho', card?.paymentDate ?? today) !== 'mizuho-bank')
+        return null;
     if (card && card.paymentDate === null && card.amount === 0 && card.confirmation === 'confirmed')
         return null;
     const dueDate = card?.paymentDate ? shiftedDay(card.paymentDate, -plan.leadDays) : null;

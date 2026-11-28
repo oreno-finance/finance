@@ -46,7 +46,7 @@ test('one NISA extraction is reused by the estimate, asset forecast and future p
  const ui=readFileSync('src/ui/future-projection.ts','utf8');
  assert.match(ui,/cachedNisa\.records!==source\.records\|\|cachedNisa\.rules!==ruleFingerprint/);
  assert.match(ui,/scheduleRender/);
- assert.match(readFileSync('src/main.ts','utf8'),/futureUi=initFutureProjection\(\(\)=>!liveVault\?\.unlocked\?null:\{assets:liveVault\.assetSettings\(\),records:liveVault\.readonlyRecords\(\)\}\)/);
+ assert.match(readFileSync('src/main.ts','utf8'),/futureUi=initFutureProjection\(\(\)=>!liveVault\?\.unlocked\|\|liveVault\.recoveryOnly\?null:\{assets:liveVault\.assetSettings\(\),records:liveVault\.readonlyRecords\(\)\}\)/);
 });
 
 test('bank forecasts share reports and source index, preserving current and next-month balances',()=>{

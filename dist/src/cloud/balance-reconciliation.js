@@ -2,7 +2,7 @@ import { recurringForCalculation } from '../fixed-costs/payment-history.js';
 /** Compare two manually confirmed balances against the forecast reconstructed
  * from the earlier snapshot. Never mutate the assets document or infer a bank
  * transaction from a discrepancy. */
-import { ASSET_ACCOUNTS, oneTimeAccountDelta } from './assets.js';
+import { cardDebitAccountOnDay, payrollDepositAccountOnDay, ASSET_ACCOUNTS, oneTimeAccountDelta } from './assets.js';
 import { recurringOccursOn } from './recurring-schedule.js';
 import { forecastBankBalances, prepareBankForecast } from './salary-projection.js';
 import { mizuhoTransferForBill } from './mizuho-transfer.js';
@@ -41,16 +41,21 @@ export function reconcileBalance(doc, accountId, records, payrollIncome, payroll
         return null;
     const inInterval = (date) => date > previousDay && date <= latestDay;
     const touches = (from, to) => from === accountId || to === accountId;
-    const provisionalEntries = (doc.oneTime ?? []).filter(e => e.status === 'planned' && inInterval(e.date) && oneTimeAccountDelta(e, accountId) !== 0).length;
+    // The reconstructed forecast already excludes explicitly matched NISA plans.
+    // Reuse its pending impact rather than counting the suppressed schedule again.
+    const pending = result.accounts[accountId].overdue;
+    const provisionalEntries = pending?.count ?? 0, provisionalDelta = pending?.delta ?? 0;
+    if (!Number.isSafeInteger(provisionalDelta))
+        throw Error('未確認予定の合計額が大きすぎます。');
     const sameDayEntries = (doc.oneTime ?? []).some(e => e.date === latestDay && oneTimeAccountDelta(e, accountId) !== 0) ||
         recurringForCalculation(doc).some(e => e.enabled && touches(e.fromAccountId, e.toAccountId) && recurringOccursOn(e, latestDay)) ||
-        records.some(r => r.statement.paymentDate === latestDay && (r.statement.cardId !== null && doc.cardDebitAccounts?.[r.statement.cardId] === accountId)) ||
-        (payrollDepositAccount === accountId && payrollIncome.some(e => e.paidOn === latestDay)) ||
+        records.some(r => r.statement.paymentDate === latestDay && (r.statement.cardId !== null && cardDebitAccountOnDay(doc, r.statement.cardId, r.statement.paymentDate) === accountId)) ||
+        (payrollIncome.some(e => e.paidOn === latestDay && payrollDepositAccountOnDay(doc, e.paidOn, payrollDepositAccount) === accountId)) ||
         ((accountId === 'rakuten-bank' || accountId === 'mizuho-bank') && [...work.reports.values()].some(r => r.cardLines.some(c => mizuhoTransferForBill(c, doc)?.date === latestDay)));
     const unmappedCard = (accountId === 'rakuten-bank' || accountId === 'mizuho-bank') &&
-        records.some(r => inInterval(r.statement.paymentDate ?? '') && (r.statement.cardId === null || !doc.cardDebitAccounts?.[r.statement.cardId]));
+        records.some(r => inInterval(r.statement.paymentDate ?? '') && (r.statement.cardId === null || !cardDebitAccountOnDay(doc, r.statement.cardId, r.statement.paymentDate)));
     return { accountId, previous, latest, previousDay, latestDay, predicted, actual: latest.balance, difference,
-        provisionalEntries, sameDayEntries, unmappedCard: !!unmappedCard,
-        payrollNotReady: payrollDepositAccount === accountId && !payrollReady,
-        valuationMayChange: accountId === 'nisa' };
+        provisionalEntries, provisionalDelta, sameDayEntries, unmappedCard: !!unmappedCard,
+        payrollNotReady: !payrollReady && (payrollDepositAccountOnDay(doc, latestDay, payrollDepositAccount) === accountId || payrollDepositAccountOnDay(doc, previousDay, payrollDepositAccount) === accountId || !!doc.payrollDepositAccountHistory?.some(h => h.effectiveOn > previousDay && h.effectiveOn <= latestDay && h.accountId === accountId)),
+        valuationMayChange: accountId === 'nisa', ...(result.accounts[accountId].oneTimeOverlap ? { oneTimeOverlap: true } : {}), ...(result.accounts[accountId].nisaOverlap ? { nisaOverlap: true } : {}) };
 }

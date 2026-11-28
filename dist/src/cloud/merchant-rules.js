@@ -90,10 +90,21 @@ function validateRuleFixedCost(rule) {
         (f.legacyId !== undefined && (typeof f.legacyId !== 'string' || !/^[a-zA-Z0-9-]{6,80}$/.test(f.legacyId))) ||
         (f.previous !== undefined && (!Array.isArray(f.previous) || f.previous.length > 128 || f.previous.some(x => !x || typeof x.key !== 'string' || x.key.length > 240 || !CARDS.some(c => x.key.startsWith(c.id + '|')) || !x.key.slice(x.key.indexOf('|') + 1) || normalizeMerchant(x.key.slice(x.key.indexOf('|') + 1)) !== x.key.slice(x.key.indexOf('|') + 1) || !fixedDay(x.through)))))
         throw new Error('カード固定費にはカード1枚と完全一致の利用先1件を指定してください。');
-    if (f.endOn !== undefined && f.endOn !== null && (!fixedDay(f.endOn) || f.endOn < f.startOn))
+    if (f.endOn !== undefined && f.endOn !== null && (!fixedDay(f.endOn) || (f.endOn < f.startOn && f.state !== 'ended')))
         throw new Error('固定費の終了日が不正です。');
     const pauses = f.pauses === undefined ? undefined : validatePauses(f.pauses, f.startOn, f.endOn ?? null);
-    return { frequency: f.frequency, state: f.state, startOn: f.startOn, ...(f.endOn !== undefined ? { endOn: f.endOn } : {}), ...(pauses?.length ? { pauses } : {}), ...(f.previous?.length ? { previous: f.previous.map(x => ({ key: x.key, through: x.through })) } : {}), ...(f.legacyId ? { legacyId: f.legacyId } : {}) };
+    const previous = f.previous?.map((x, i) => {
+        if (x.startOn === undefined && x.frequency === undefined && x.pauses === undefined)
+            return { key: x.key, through: x.through };
+        if (!fixedDay(x.startOn) || x.startOn >= x.through || !x.frequency || !['monthly', 'yearly', 'weekly'].includes(x.frequency) || !Array.isArray(x.pauses) || x.through > f.startOn || (i > 0 && x.startOn < f.previous[i - 1].through))
+            throw new Error('固定費の旧支払期間が不正です。');
+        const end = new Date(Date.parse(x.through + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
+        const pauses = validatePauses(x.pauses, x.startOn, end);
+        if (pauses.some(p => p.endOn === null || p.endOn > end))
+            throw new Error('固定費の旧停止期間が不正です。');
+        return { key: x.key, through: x.through, startOn: x.startOn, frequency: x.frequency, pauses };
+    });
+    return { frequency: f.frequency, state: f.state, startOn: f.startOn, ...(f.endOn !== undefined ? { endOn: f.endOn } : {}), ...(pauses?.length ? { pauses } : {}), ...(f.previous?.length ? { previous } : {}), ...(f.legacyId ? { legacyId: f.legacyId } : {}) };
 }
 export function validateRule(rule) {
     if (!rule || typeof rule !== 'object' || typeof rule.id !== 'string' || !/^[a-zA-Z0-9-]{6,80}$/.test(rule.id) ||

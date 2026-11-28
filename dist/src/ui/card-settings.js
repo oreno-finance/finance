@@ -74,7 +74,7 @@ export function initCardSettings(getVault, onSaved) {
         discard.hidden = true;
         const prefs = vault?.unlocked ? vault.assetSettings().cardPreferences ?? {} : {};
         const debitAccounts = vault?.unlocked ? vault.assetSettings().cardDebitAccounts ?? {} : {};
-        configurationBaseline = JSON.stringify([prefs, debitAccounts]);
+        configurationBaseline = JSON.stringify([prefs, debitAccounts, vault?.unlocked ? vault.assetSettings().cardDebitAccountHistory ?? {} : {}]);
         list.replaceChildren();
         rows.clear();
         const picker = make('div', 'settings-card-picker');
@@ -249,7 +249,7 @@ export function initCardSettings(getVault, onSaved) {
             }
             try {
                 const settings = vault.assetSettings(), prior = settings.cardPreferences ?? {};
-                if (JSON.stringify([prior, settings.cardDebitAccounts ?? {}]) !== configurationBaseline)
+                if (JSON.stringify([prior, settings.cardDebitAccounts ?? {}, settings.cardDebitAccountHistory ?? {}]) !== configurationBaseline)
                     throw new Error('カード設定が更新されました。最新情報を確認して編集し直してください。');
                 const next = {};
                 const nextDebit = {};

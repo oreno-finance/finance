@@ -9,6 +9,7 @@ import { CloudWriteUncertainError, type LiveVault } from '../cloud/live-vault.js
 import {monthNavigator,localMonth} from './period-navigator.js';
 import { pointBenefitsSection,archivedPointCoverage } from './point-benefits.js';
 
+type ReportComparisonState='unchecked'|'checking'|'unchanged'|'changed'|'unavailable';
 export interface MonthlyReportsUi { render():void; openPeriod(period:string):void; reset():void; isBusy():boolean; isDirty():boolean }
 export interface MonthlyReportsDeps { source():MonthlySource|null; vault():LiveVault|null; openMonth(period:string):void }
 const today=localMonth;
@@ -65,11 +66,11 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
   const container:HTMLElement=root;
   let selected=today();let loadedPeriod='';let archive:MonthlyReportDocument|null=null;
   let periods:string[]=[];let archiveYear=today().slice(0,4);let busy=false;let saving=false;let message='';let draft='';let chosenRevision:string|null=null;
-  let request=0;let changed=false;let loadFailed=false;let draftConflict=false;
+  let request=0;let comparisonRequest=0;let comparison:ReportComparisonState='unchecked';let loadFailed=false;let draftConflict=false;
   const confirmationOwner={};
   const drafts=new Map<string,{note:string;revision:string|null}>();
   const active=()=>deps.vault()?.unlocked===true;
-  function reset():void {++request;cancelConfirmation(confirmationOwner);selected=today();archiveYear=selected.slice(0,4);loadedPeriod='';archive=null;periods=[];busy=false;saving=false;message='';draft='';changed=false;loadFailed=false;draftConflict=false;chosenRevision=null;drafts.clear();container.replaceChildren();}
+  function reset():void {++request;cancelConfirmation(confirmationOwner);selected=today();archiveYear=selected.slice(0,4);loadedPeriod='';archive=null;periods=[];busy=false;saving=false;message='';draft='';comparison='unchecked';++comparisonRequest;loadFailed=false;draftConflict=false;chosenRevision=null;drafts.clear();container.replaceChildren();}
   async function fetch():Promise<void>{
     const vault=deps.vault();if(!vault?.unlocked)return;
     const id=++request;busy=true;message='';loadFailed=false;showActivity('月次レポートを読み込み中…','working');render();
@@ -80,34 +81,60 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
       if(drafts.get(selected)?.note===(document?.current.note??''))drafts.delete(selected);
       const held=drafts.get(selected);
       draftConflict=!!held&&held.revision!==(document?.current.id??null);
-      draft=held?.note??document?.current.note??'';changed=false;loadFailed=false;chosenRevision=null;
+      draft=held?.note??document?.current.note??'';comparison='unchecked';++comparisonRequest;loadFailed=false;chosenRevision=null;
       // Only decrypted in the unlocked session. Do not cache report bodies in browser storage.
       message='';
     }catch(error){if(id!==request)return;loadedPeriod=selected;loadFailed=true;archive=null;periods=[];message=`取得失敗：${error instanceof Error?error.message:'レポートを取得できませんでした。'}`;}
     finally{if(id===request){busy=false;finishActivity('月次レポート');if(loadFailed)showActivity(message,'bad');render();if(!loadFailed&&archive)void compareSource();}}
   }
-  async function save():Promise<void>{
-    const vault=deps.vault(),source=deps.source();if(!vault?.unlocked||!source||busy||loadFailed||draftConflict||loadedPeriod!==selected)return;
-    const id=++request;busy=true;saving=true;message='';showActivity('月次レポートを保存中…','working');render();
+  async function save(noteOnly=false):Promise<void>{
+    const vault=deps.vault();if(!vault?.unlocked||busy||loadFailed||draftConflict||loadedPeriod!==selected)return;
+    const id=++request;let saved=false;busy=true;saving=true;message='';showActivity('月次レポートを保存中…','working');render();
     try{
-      const snapshot=reportSnapshot(selected,source);
-      const result=await vault.saveArchivedReport(snapshot,draft,archive?.current.id??null);
+      let result:MonthlyReportDocument;
+      if(noteOnly){
+        if(!archive)throw new Error('保存済みレポートがありません。');
+        result=await vault.saveArchivedReportNote(selected,draft,archive.current.id);
+      }else{
+        const source=deps.source();if(!source)throw new Error('現在の集計データを確認できません。');
+        const snapshot=reportSnapshot(selected,source);
+        result=await vault.saveArchivedReport(snapshot,draft,archive?.current.id??null);
+      }
       if(id!==request)return;
-      archive=result;loadedPeriod=selected;draft=result.current.note;drafts.delete(selected);changed=false;draftConflict=false;chosenRevision=null;
+      archive=result;loadedPeriod=selected;draft=result.current.note;drafts.delete(selected);comparison='unchecked';++comparisonRequest;draftConflict=false;chosenRevision=null;
       if(!periods.includes(selected))periods=[selected,...periods].sort().reverse();
-      message='';showActivity('月次レポートを保存しました。','good');
-    }catch(error){if(id!==request)return;message=`${error instanceof CloudWriteUncertainError?'保存結果未確認':'保存失敗'}：${error instanceof Error?error.message:'保存できませんでした。'}`;showActivity(message,'bad');}
-    finally{if(id===request){busy=false;saving=false;render();}}
+      saved=true;message='';showActivity(noteOnly?'メモを保存しました。':'月次レポートを保存しました。','good');
+    }catch(error){if(id!==request)return;if(!noteOnly&&archive)comparison='unavailable';message=`${error instanceof CloudWriteUncertainError?'保存結果未確認':'保存失敗'}：${error instanceof Error?error.message:'保存できませんでした。'}`;showActivity(message,'bad');}
+    finally{if(id===request){busy=false;saving=false;render();if(saved&&archive)void compareSource();}}
   }
   async function compareSource():Promise<void>{
-    const id=request;
-    const source=deps.source();if(!source||!archive)return;
-    try {const hash=await snapshotHash(reportSnapshot(selected,source));if(id===request){changed=hash!==archive.current.sourceHash;syncSourceNotice();}}
-    catch {if(id===request){changed=false;syncSourceNotice();}}
+    const id=request,job=++comparisonRequest,vault=deps.vault(),revision=archive?.current,period=selected;
+    if(!revision||chosenRevision||!vault?.unlocked)return;
+    const valid=()=>id===request&&job===comparisonRequest&&vault===deps.vault()&&vault.unlocked&&
+      revision===archive?.current&&period===selected&&!chosenRevision;
+    comparison='checking';syncSourceNotice();
+    try {
+      const source=deps.source();if(!source)throw new Error('集計データ未取得');
+      const snapshot=reportSnapshot(period,source);
+      const hash=await snapshotHash(snapshot);
+      if(!valid())return;
+      // Source updates normally start a new comparison through render(). Also
+      // reject a changed snapshot when a source update has not rendered yet.
+      const latest=deps.source();
+      if(!latest||JSON.stringify(reportSnapshot(period,latest))!==JSON.stringify(snapshot)){
+        comparison='unavailable';syncSourceNotice();return;
+      }
+      comparison=hash===revision.sourceHash?'unchanged':'changed';syncSourceNotice();
+    }catch {if(valid()){comparison='unavailable';syncSourceNotice();}}
   }
   function syncSourceNotice():void {
     const notice=container.querySelector<HTMLElement>('.reports-source-changed');
-    if(notice)notice.hidden=!changed;
+    const memoOnly=container.querySelector<HTMLButtonElement>('.reports-note-only');
+    if(memoOnly)memoOnly.hidden=comparison!=='unavailable';
+    if(!notice)return;
+    notice.hidden=comparison!=='changed'&&comparison!=='unavailable'&&comparison!=='checking';
+    notice.textContent=comparison==='changed'?'明細や設定に変更があります。レポートを更新できます。':
+      comparison==='checking'?'現在の集計結果を確認中…':comparison==='unavailable'?'現在のデータとの一致を確認できません。':'';
   }
   function selectPeriod(period:string):boolean {
     // A cloud save must finish against its original month. Loading requests may
@@ -116,7 +143,7 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
     ++request;
     if(busy){busy=false;finishActivity('月次レポート');}
     selected=period;archiveYear=period.slice(0,4);loadedPeriod='';archive=null;draft='';chosenRevision=null;
-    message='';loadFailed=false;draftConflict=false;changed=false;
+    message='';loadFailed=false;draftConflict=false;comparison='unchecked';++comparisonRequest;
     return true;
   }
   function render():void{
@@ -166,7 +193,7 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
     const control=section('メモ・保存');
     if(message){const error=el('p','reports-feedback-error',message);error.setAttribute('role','alert');control.body.append(error);}
     const state=archive?.current;
-    if(state){const notice=el('p','reports-quality reports-source-changed','明細や設定に変更があります。レポートを更新できます。');notice.hidden=!changed;control.body.append(notice);}
+    if(state){const notice=el('p','reports-quality reports-source-changed');notice.setAttribute('role','status');control.body.append(notice);}
     if(draftConflict){
       control.body.append(el('p','reports-quality','別の端末でメモが更新されました。編集中の内容を確認してください。'));
       control.body.append(button('編集を破棄',async()=>{
@@ -188,6 +215,10 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
     control.body.append(memo);
     const submit=button(state?'レポートを更新':'レポートを作成',()=>{void save();},'save-action');
     submit.disabled=draftConflict;control.body.append(submit);
+    if(state){
+      const noteOnly=button('メモのみ保存',()=>{void save(true);},'secondary-action reports-note-only');
+      noteOnly.disabled=draftConflict;noteOnly.hidden=comparison!=='unavailable';control.body.append(noteOnly);
+    }
     control.body.append(button('月別サマリー',()=>deps.openMonth(selected)));
     const revision=chosenRevision?archive?.history.find(item=>item.id===chosenRevision)??state:state;
     let preview:ReportSnapshot|null=null;
@@ -196,7 +227,7 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
     if(snapshot){
       const heading=el('div','reports-revision-bar');heading.append(el('strong','',`${month(selected)} · ${chosenRevision?'過去の版':revision?'保存済み':'未保存プレビュー'}`));
       if(revision)heading.append(el('span','reports-muted',`保存：${formatDateTime(revision.savedAt,true)}`));
-      if(chosenRevision)heading.append(button('最新版へ戻る',()=>{chosenRevision=null;render();}));
+      if(chosenRevision)heading.append(button('最新版へ戻る',()=>{chosenRevision=null;comparison='unchecked';render();void compareSource();}));
       container.append(heading);
       container.append(reportMetrics(snapshot));
       if(snapshot.quality.length)container.append(el('p','reports-quality',snapshot.quality.join(' · ')));
@@ -210,9 +241,10 @@ export function initMonthlyReports(deps:MonthlyReportsDeps):MonthlyReportsUi {
       const history=el('details','reports-detail reports-history');
       history.append(el('summary','',`保存履歴（${archive.history.length}件）`));
       const inner=el('div','reports-history-body');
-      for(const version of archive.history)inner.append(button(formatDateTime(version.savedAt,true),()=>{chosenRevision=version.id;render();},'reports-history-button'));
+      for(const version of archive.history)inner.append(button(formatDateTime(version.savedAt,true),()=>{chosenRevision=version.id;++comparisonRequest;comparison='unchecked';render();},'reports-history-button'));
       history.append(inner);container.append(history);
     }
+    syncSourceNotice();
   }
   function openPeriod(period:string):void {
     if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))return;

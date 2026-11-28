@@ -48,7 +48,7 @@ export function initCardSettings(getVault:()=>LiveVault|null,onSaved:()=>void):C
     owner=vault;dirty=false;discard.hidden=true;
     const prefs=vault?.unlocked?vault.assetSettings().cardPreferences??{}:{};
     const debitAccounts=vault?.unlocked?vault.assetSettings().cardDebitAccounts??{}:{};
-    configurationBaseline=JSON.stringify([prefs,debitAccounts]);
+    configurationBaseline=JSON.stringify([prefs,debitAccounts,vault?.unlocked?vault.assetSettings().cardDebitAccountHistory??{}:{}]);
     list.replaceChildren();rows.clear();
     const picker=make('div','settings-card-picker');picker.setAttribute('role','radiogroup');picker.setAttribute('aria-label','設定するカード');
     const panels=make('div','settings-card-panels');const tabs=new Map<string,HTMLInputElement>();
@@ -156,7 +156,7 @@ export function initCardSettings(getVault:()=>LiveVault|null,onSaved:()=>void):C
       const vault=getVault(),revision=epoch;if(!vault?.unlocked){simpleActivity('保管庫を解除してください。',true);return;}
       try{
         const settings=vault.assetSettings(),prior=settings.cardPreferences??{};
-        if(JSON.stringify([prior,settings.cardDebitAccounts??{}])!==configurationBaseline)throw new Error('カード設定が更新されました。最新情報を確認して編集し直してください。');
+        if(JSON.stringify([prior,settings.cardDebitAccounts??{},settings.cardDebitAccountHistory??{}])!==configurationBaseline)throw new Error('カード設定が更新されました。最新情報を確認して編集し直してください。');
         const next:Record<string,CardPreference>={};
         const nextDebit:Record<string,AssetAccountId>={};
         for(const card of CARDS){

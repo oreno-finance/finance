@@ -1,6 +1,6 @@
 /** Optional, read-only prediction of transfers from Rakuten Bank to Mizuho Bank.
  * A forecast is never marked completed and never written as a recurring entry. */
-import { DEFAULT_MIZUHO_PLAN } from './assets.js';
+import { cardDebitAccountOnDay, DEFAULT_MIZUHO_PLAN } from './assets.js';
 import { recurringOccursOn } from './recurring-schedule.js';
 export function estimateMizuhoTransferAmount(bill, extraForSmallBills = true) {
     if (!Number.isSafeInteger(bill) || bill < 0)
@@ -14,7 +14,7 @@ export function estimateMizuhoTransferAmount(bill, extraForSmallBills = true) {
 }
 export function mizuhoTransferForBill(bill, assets) {
     const plan = assets.mizuhoTransferPlan ?? DEFAULT_MIZUHO_PLAN;
-    if (!plan.enabled || bill.cardId !== 'rakuten-mizuho' || assets.cardDebitAccounts?.[bill.cardId] !== 'mizuho-bank' || bill.amount <= 0 || !bill.paymentDate)
+    if (!plan.enabled || bill.cardId !== 'rakuten-mizuho' || cardDebitAccountOnDay(assets, bill.cardId, bill.paymentDate) !== 'mizuho-bank' || bill.amount <= 0 || !bill.paymentDate)
         return null;
     const day = new Date(`${bill.paymentDate}T00:00:00Z`);
     if (Number.isNaN(day.getTime()))

@@ -144,3 +144,72 @@ test('corrupt rule file blocks unlock; cannot silently replace encrypted data',a
   await assert.rejects(b.unlock(secret));
   assert.equal(b.unlocked,false);
 });
+
+test('H01: observed merchant rules disappearing cannot reset or recreate the rules document',async()=>{
+  const store=new Map(),graph=new FakeGraph(store),vault=new LiveVault(graph);
+  await vault.create(secret);
+  await vault.upsertMerchantRule(item('rule-1','A','B'));
+  const backup=store.get('rules');store.delete('rules');
+  for(let i=0;i<2;i++){
+    await assert.rejects(vault.refresh(),/消失/);
+    assert.equal(vault.merchantRules()[0].displayName,'B');
+  }
+  await assert.rejects(vault.upsertMerchantRule(item('rule-2','C','D')),/消去|消失/);
+  assert.equal(store.has('rules'),false);
+  store.set('rules',backup);await vault.refresh();
+  assert.equal(vault.merchantRules()[0].displayName,'B');
+});
+
+function fixedGraph(store){const graph=new FakeGraph(store);graph.readAssetSettings=async()=>graph.read('assets');graph.writeAssetSettings=async(text,ref)=>graph.write('assets',text,ref);return graph;}
+const legacyCost={id:'legacy-cost-a',name:'Sample',payment:'card',cardId:'smbc-nl',merchantKey:'smbc-nl|service',categoryId:null,frequency:'monthly',dayOfMonth:1,monthOfYear:null,weekday:null,startOn:'2026-08-01',endOn:null,amount:1200,priceKind:'fixed',pricing:[{effectiveOn:'2026-08-01',amount:1200}],pauses:[],note:'',updatedAt:'2026-08-01T00:00:00Z'};
+const fixedRule={id:'fixed-rule-a',pattern:'SERVICE',mode:'exact',displayName:'Sample',cardId:'smbc-nl',enabled:true,priority:100,categoryId:null,fixedCost:{frequency:'monthly',state:'active',startOn:'2026-08-01',legacyId:legacyCost.id}};
+
+test('H03: a stale migration cannot retire a contract modified or deleted on another device',async()=>{
+ for(const remove of [false,true]){
+  const store=new Map(),a=new LiveVault(fixedGraph(store)),b=new LiveVault(fixedGraph(store));await a.create(secret);await a.upsertFixedCost(legacyCost);await b.unlock(secret);
+  if(remove)await a.deleteFixedCost(legacyCost.id);else await a.upsertFixedCost({...legacyCost,amount:1600,pricing:[{effectiveOn:legacyCost.startOn,amount:1600}]});
+  const assets=store.get('assets');await assert.rejects(b.upsertMerchantRule(fixedRule),/別端末で移行・変更/);
+  assert.strictEqual(store.get('assets'),assets);assert.equal(store.has('rules'),false);
+ }
+});
+
+test('H03: migration preserves unrelated changes; a stale old editor cannot revive a retired contract',async()=>{
+ const store=new Map(),a=new LiveVault(fixedGraph(store)),b=new LiveVault(fixedGraph(store));await a.create(secret);await a.upsertFixedCost(legacyCost);await b.unlock(secret);
+ await a.setBirthMonth('2000-01');await b.upsertMerchantRule(fixedRule);assert.equal(b.fixedCostMigrations().includes(legacyCost.id),true);
+ const assets=store.get('assets');await assert.rejects(a.upsertFixedCost({...legacyCost,note:'old edit'}),/移行済み固定費/);assert.strictEqual(store.get('assets'),assets);
+ await a.setBirthMonth('2001-01');await b.refresh();assert.equal(b.assetSettings().birthMonth,'2001-01');assert.equal(b.fixedCostMigrations().includes(legacyCost.id),true);
+ await b.removeMerchantRule(fixedRule.id);await a.refresh();assert.equal(a.fixedCostMigrations().includes(legacyCost.id),true);
+});
+
+test('H03 integration: adjacent separate contracts are not implicitly migrated or rejected',async()=>{
+ const store=new Map(),a=new LiveVault(fixedGraph(store)),b=new LiveVault(fixedGraph(store));await a.create(secret);
+ const ended={...legacyCost,endOn:'2026-09-30'};await a.upsertFixedCost(ended);await b.unlock(secret);
+ const next={...fixedRule,fixedCost:{frequency:'monthly',state:'active',startOn:'2026-10-01'}};
+ await b.upsertMerchantRule(next);assert.deepEqual(b.fixedCostMigrations(),[]);assert.equal(b.merchantRules()[0].fixedCost.legacyId,undefined);
+ await a.upsertFixedCost({...ended,note:'historical edit'});await b.refresh();assert.equal(b.assetSettings().fixedCosts[0].note,'historical edit');
+ const {fixedCostCalculationAssets}=await import('../dist/src/fixed-costs/rule-fixed-costs.js');
+ const view=fixedCostCalculationAssets({assets:b.assetSettings(),rules:b.merchantRules(),fixedCostMigrations:b.fixedCostMigrations(),records:[]},'2026-11-01');
+ assert.ok(view.fixedCosts.some(x=>x.id===ended.id));
+ await assert.rejects(a.upsertFixedCost({...ended,endOn:'2026-10-01'}),/同じ固定費/);
+});
+
+test('M304 integration: first account history save activates the same one-way writer fence, ordinary settings do not',async()=>{
+ const store=new Map(),graph=fixedGraph(store),a=new LiveVault(graph);await a.create(secret);
+ const initial=store.get('index');await a.setBirthMonth('2000-01');assert.deepEqual(store.get('index'),initial);
+ await a.setPayrollDepositAccount('rakuten-bank');const updated=store.get('index');assert.equal(JSON.parse(updated.text).format,'finance-cloud-index-envelope-v4');
+ const b=new LiveVault(fixedGraph(store));await b.unlock(secret);assert.equal(b.assetSettings().format,'finance-assets-v3');
+ await b.setBirthMonth('2001-01');assert.deepEqual(store.get('index'),updated);
+});
+
+test('INT-02: dated former card route uses the existing writer fence and survives a new client refresh',async()=>{
+ const {editRuleFixedDraft}=await import('../dist/src/fixed-costs/rule-fixed-costs.js');
+ const store=new Map(),a=new LiveVault(fixedGraph(store)),b=new LiveVault(fixedGraph(store));await a.create(secret);
+ const old={...fixedRule,fixedCost:{frequency:'monthly',state:'active',startOn:'2026-08-01',pauses:[{startOn:'2026-09-01',endOn:'2026-09-30'}]}};
+ await a.upsertMerchantRule(old);await b.unlock(secret);
+ assert.equal(JSON.parse(store.get('index').text).format,'finance-cloud-index-envelope-v3');
+ const next={...old,cardId:'amazon'};next.fixedCost=editRuleFixedDraft(next,old.fixedCost,'smbc-nl|service','active','monthly','2026-11-26');
+ await a.upsertMerchantRule(next);
+ assert.equal(JSON.parse(store.get('index').text).format,'finance-cloud-index-envelope-v4');
+ await b.refresh();assert.deepEqual(b.merchantRules()[0].fixedCost.previous,next.fixedCost.previous);
+ const reopened=new LiveVault(fixedGraph(store));await reopened.unlock(secret);assert.deepEqual(reopened.merchantRules()[0].fixedCost.previous,next.fixedCost.previous);
+});

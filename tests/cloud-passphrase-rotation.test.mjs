@@ -55,7 +55,7 @@ test('rotation stages encrypted statements, original PDF, rules and assets befor
   assert.equal(vault.merchantRules().length,1);
   assert.deepEqual(await vault.original('doc2026'),pdf);
   const index=parseIndexEnvelope((await new FakeVersionedGraph(store).readFinanceIndex()).text);
-  assert.equal(index.format,'finance-cloud-index-envelope-v3');
+  assert.equal(index.format,'finance-cloud-index-envelope-v4');
   assert.ok(index.dataSetId);
   assert.deepEqual([...oldData].filter(([k])=>k.startsWith('legacy:')&&!k.endsWith(':index')), [...store.files].filter(([k])=>k.startsWith('legacy:')&&!k.endsWith(':index')),'old ciphertext is intact');
   assert.ok([...store.files.keys()].filter(k=>k.startsWith(`${index.dataSetId}:`)).length>=5);
@@ -72,7 +72,7 @@ test('rotation stages encrypted statements, original PDF, rules and assets befor
   await second.saveBatch([{id:'newDoc',statement:statement('2027-01')}]);
   assert.ok(store.files.has(`${index.dataSetId}:year:2027`),'future writes must remain within the new generation');
   const index2=parseIndexEnvelope((await new FakeVersionedGraph(store).readFinanceIndex()).text);
-  assert.equal(index2.dataSetId,index.dataSetId);
+  assert.equal(index2.dataSetId,index.dataSetId);assert.equal(index2.format,index.format);
 });
 
 test('incorrect old password and a too-short new password do not alter OneDrive',async()=>{
@@ -128,7 +128,9 @@ test('second rotation reencrypts again, preserves originals and invalidates prev
   await vault.changePassphrase(nextPass,thirdPass);
   const second=parseIndexEnvelope((await new FakeVersionedGraph(store).readFinanceIndex()).text).dataSetId;
   assert.notEqual(first,second);
-  await assert.rejects(new LiveVault(new FakeVersionedGraph(store)).unlock(nextPass),/パスフレーズ/);
+  const rejected=new LiveVault(new FakeVersionedGraph(store));
+  await assert.rejects(rejected.unlock(nextPass),/パスフレーズ|復号または整合性確認に失敗/);
+  assert.equal(rejected.unlocked,false);
   const newer=new LiveVault(new FakeVersionedGraph(store));await newer.unlock(thirdPass);
   assert.equal(newer.assetSettings().snapshots[0].balance,123456);
 });
@@ -235,4 +237,15 @@ test('Phase 6E: 旧索引の初回管理操作はv3への切替のみ、デー�
  await assert.rejects(decryptIndex({...newIndex,format:'finance-cloud-index-envelope-v1'},key));
  await assert.rejects(decryptIndex({...newIndex,dataSetId:crypto.randomUUID()},key));
  await vault.changePassphrase(oldPass,nextPass);assert.deepEqual(vault.assetSettings().snapshots,[snapshot]);
+});
+
+test('M203: rotation refuses a swapped authenticated original before publishing the new index',async()=>{
+  const {store,graph,vault}=setup();await vault.create(oldPass);
+  await vault.saveBatch([{id:'a',statement:statement('2026-11','pdf'),source:{bytes:new Uint8Array([1,2]),mime:'application/pdf'}},{id:'b',statement:statement('2026-10','pdf'),source:{bytes:new Uint8Array([3,4]),mime:'application/pdf'}}]);
+  const a=vault.records().find(r=>r.id==='a'),b=vault.records().find(r=>r.id==='b');
+  const index=(await graph.readFinanceIndex()).text;
+  store.files.set(graph.key(`original:${a.originalMonth}:${a.originalId}`),store.files.get(graph.key(`original:${b.originalMonth}:${b.originalId}`)));
+  await assert.rejects(vault.changePassphrase(oldPass,nextPass),/一致しません/);
+  assert.equal((await graph.readFinanceIndex()).text,index);
+  const reader=new LiveVault(graph);await reader.unlock(oldPass);assert.equal(reader.records().length,2);
 });

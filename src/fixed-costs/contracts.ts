@@ -67,7 +67,7 @@ export function validateFixedCosts(raw:unknown,historicalRoutes=false):FixedCost
       (x.payment==='cash'&&x.merchantKey!==null)||
       (x.categoryId!==null&&(typeof x.categoryId!=='string'||!/^[-a-z0-9]{1,90}$/.test(x.categoryId)))||
       !['monthly','yearly','weekly'].includes(x.frequency)||!validDay(x.startOn)||
-      (x.endOn!==null&&(!validDay(x.endOn)||x.endOn<x.startOn))||!amountOk(x.amount)||
+      (x.endOn!==null&&!validDay(x.endOn))||!amountOk(x.amount)||
       !['fixed','variable'].includes(x.priceKind)||typeof x.note!=='string'||x.note.length>500||
       typeof x.updatedAt!=='string'||!Number.isFinite(Date.parse(x.updatedAt)))
       throw new Error('固定費の登録内容が不正です。');
@@ -88,6 +88,19 @@ export function priceOnDay(pricing:readonly PriceChange[],day:string,defaultAmou
   let result=pricing.length?pricing[0]!.amount:defaultAmount;
   for(const item of pricing){if(item.effectiveOn>day)break;result=item.amount;}
   return result;
+}
+/** Transient card-price evidence. Never serialized as contract pricing. */
+const cardForecastPrices=new WeakMap<FixedCostEntry,PriceChange>();
+export function withCardForecastPrice(item:FixedCostEntry,evidence:PriceChange):FixedCostEntry {
+  const view={...item};cardForecastPrices.set(view,evidence);return view;
+}
+export function cardForecastPriceOnDay(item:FixedCostEntry,day:string):number|null {
+  const evidence=cardForecastPrices.get(item);
+  const registered=item.pricing.filter(p=>p.effectiveOn<=day).at(-1);
+  if(evidence&&evidence.effectiveOn<=day&&(!registered||registered.effectiveOn<=evidence.effectiveOn))return evidence.amount;
+  if(registered)return registered.amount;
+  // Rule-only views have no registered price history. Do not invent older prices.
+  return item.pricing.length?priceOnDay(item.pricing,day,item.amount):null;
 }
 export function pausedOnDay(pauses:readonly PausePeriod[],day:string):boolean {
   return pauses.some(x=>day>=x.startOn&&(x.endOn===null||day<=x.endOn));
@@ -139,7 +152,7 @@ export function nextFixedCostDate(item:Pick<FixedCostEntry,'startOn'|'endOn'|'fr
 /** Lifecycle changes preserve completed pauses and do not rewrite unrelated fields.
  * A legacy disabled bank entry had no dated active history; restore only from the requested date. */
 export function changeFixedCostState(item:Pick<FixedCostEntry,'startOn'|'endOn'> & {pauses?:readonly PausePeriod[];enabled?:boolean},action:string,day:string):{endOn:string|null;pauses:PausePeriod[];enabled?:boolean}{
-  if(!validDay(day)||day<item.startOn||!['active','paused','ended'].includes(action))throw new Error('契約状態と適用日を確認してください。');
+  if(!validDay(day)||!['active','paused','ended'].includes(action))throw new Error('契約状態と適用日を確認してください。');
   const before=(value:string)=>new Date(Date.parse(`${value}T00:00:00Z`)-86400000).toISOString().slice(0,10);
   const after=(value:string)=>new Date(Date.parse(`${value}T00:00:00Z`)+86400000).toISOString().slice(0,10);
   let pauses=(item.pauses??[]).map(p=>({...p})),endOn=item.endOn;
@@ -150,9 +163,12 @@ export function changeFixedCostState(item:Pick<FixedCostEntry,'startOn'|'endOn'>
   }else if(action==='paused'){
     if(enabled===false||(endOn!==null&&day>endOn))throw new Error('停止・終了済みの契約は先に再開してください。');
     if(pauses.some(p=>day>=p.startOn&&(p.endOn===null||day<=p.endOn)))throw new Error('指定日はすでに停止期間です。');
+    // The selected day is the last active day; the next day starts the pause.
+    const start=after(day)>item.startOn?after(day):item.startOn;
+    if(endOn!==null&&start>endOn)throw new Error('契約終了後に停止期間は登録できません。');
     const last=pauses.at(-1);
-    if(last&&(last.endOn===null||day<=last.endOn))throw new Error('既存の停止予定と重複しています。');
-    pauses.push({startOn:day,endOn});
+    if(last&&(last.endOn===null||start<=last.endOn))throw new Error('既存の停止予定と重複しています。');
+    pauses.push({startOn:start,endOn});
   }else{
     if(enabled===false){
       // The previous flag excluded the entire contract. Retain that effect before the resume date.
@@ -168,7 +184,7 @@ export function changeFixedCostState(item:Pick<FixedCostEntry,'startOn'|'endOn'>
       }
     }
     if(endOn!==null&&endOn<day&&item.enabled!==false){
-      const gapStart=after(endOn);
+      const gapStart=after(endOn)>item.startOn?after(endOn):item.startOn;
       if(gapStart<day)pauses.push({startOn:gapStart,endOn:before(day)});
     }
     endOn=null;
@@ -180,7 +196,7 @@ export function monthlyEquivalent(item:Pick<FixedCostEntry,'amount'|'frequency'>
   return item.frequency==='yearly'?item.amount/12:item.frequency==='weekly'?item.amount*52/12:item.amount;
 }
 export function fixedCostState(item:Pick<FixedCostEntry,'startOn'|'endOn'|'pauses'>,day:string):'active'|'paused'|'ended'|'scheduled'{
-  if(item.endOn!==null&&item.endOn<day)return 'ended';
+  if(item.endOn!==null&&(item.endOn<day||item.endOn<item.startOn&&item.endOn===day))return 'ended';
   if(item.startOn>day)return 'scheduled';
   if(pausedOnDay(item.pauses,day))return 'paused';
   return 'active';

@@ -55,15 +55,21 @@ export function editPointRate(cardId:string,old:CardPreference|undefined,mode:Po
   return {pointRatePercent:history.at(-1)!.ratePercent,pointRateHistory:history};
 }
 export function pointsForAmount(amount:number,ratePercent:number):number {
-  if(!Number.isSafeInteger(amount)||!Number.isFinite(ratePercent)||ratePercent<0||ratePercent>100)throw new Error('ポイント計算に不正な数値があります。');
-  return Math.max(0,Math.floor(amount*ratePercent/100));
+  if(!Number.isSafeInteger(amount)||!Number.isFinite(ratePercent)||ratePercent<0||ratePercent>100||Math.abs(ratePercent*100-Math.round(ratePercent*100))>1e-8)throw new Error('ポイント計算に不正な数値があります。');
+  if(amount<=0)return 0;
+  return Number(BigInt(amount)*BigInt(Math.round(ratePercent*100))/10000n);
+}
+export function safePointSum(a:number,b:number):number {
+  const sum=a+b;
+  if(!Number.isSafeInteger(a)||!Number.isSafeInteger(b)||!Number.isSafeInteger(sum))throw new Error('ポイント計算の合計が安全な整数範囲を超えました。');
+  return sum;
 }
 /** Preserve issuer-level monthly rounding when a single statement spans multiple rates. */
 function groupPoints(charges:readonly {amount:number;rate:number}[]):number {
   const groups=new Map<number,number>();
-  for(const {amount,rate} of charges){const updated=(groups.get(rate)??0)+amount;
+  for(const {amount,rate} of charges){const updated=safePointSum(groups.get(rate)??0,amount);
     if(!Number.isSafeInteger(updated))throw new Error('カード金額の合計が大きすぎます。');groups.set(rate,updated);}
-  return [...groups].reduce((total,[rate,amount])=>total+pointsForAmount(amount,rate),0);
+  return [...groups].reduce((total,[rate,amount])=>safePointSum(total,pointsForAmount(amount,rate)),0);
 }
 export function statementPoints(statement:Pick<ParsedStatement,'cardId'|'rows'>,preferences?:Record<string,CardPreference>):number {
   if(!statement.cardId)return 0;
@@ -79,7 +85,7 @@ export function pointBenefitsFromCards(cards:readonly SummaryCard[],preferences?
   }
   const items=[...byCard.values()].map(card=>({...card,points:pointsForAmount(card.amount,card.ratePercent)}));
   items.sort((a,b)=>b.points-a.points||a.name.localeCompare(b.name,'ja'));
-  return {total:items.reduce((sum,item)=>sum+item.points,0),cards:items};
+  return {total:items.reduce((sum,item)=>safePointSum(sum,item.points),0),cards:items};
 }
 /** Use an already-validated month without recomputing it for the points panel. */
 export function pointBenefitsFromMonthlyReport(report:MonthlyReport,source:MonthlySource,
@@ -91,7 +97,7 @@ export function pointBenefitsFromMonthlyReport(report:MonthlyReport,source:Month
     let entry=summary.get(card.cardId);
     if(!entry){entry={base:{cardId:card.cardId,name:source.assets.cardPreferences?.[card.cardId]?.name??CARDS.find(c=>c.id===card.cardId)?.name??card.name,
       amount:0,ratePercent:pointRate(card.cardId,source.assets.cardPreferences),points:0},charges:[],rates:new Set()};summary.set(card.cardId,entry);}
-    entry.base.amount+=card.amount;
+    entry.base.amount=safePointSum(entry.base.amount,card.amount);
     for(const row of record.statement.rows){
       const date=validDay(row.usedOn)?row.usedOn:card.paymentDate??undefined;
       const rate=pointRate(card.cardId,source.assets.cardPreferences,date);
@@ -104,7 +110,7 @@ export function pointBenefitsFromMonthlyReport(report:MonthlyReport,source:Month
       ...(rates.length>1?{rateLabel:rates.sort((a,b)=>a-b).map(x=>`${x}%`).join(' / ')}:{})};
   });
   items.sort((a,b)=>b.points-a.points||a.name.localeCompare(b.name,'ja'));
-  return {total:items.reduce((total,item)=>total+item.points,0),cards:items};
+  return {total:items.reduce((total,item)=>safePointSum(total,item.points),0),cards:items};
 }
 export function monthlyPointBenefits(period:string,source:MonthlySource):PointBenefits {
   return pointBenefitsFromMonthlyReport(monthlyReport(period,source),source);
@@ -114,11 +120,11 @@ export function periodPointBenefitsFromReports(reports:readonly MonthlyReport[],
   const byId=new Map(source.records.map(record=>[record.id,record]));
   const totals=new Map<string,CardPointBenefit>();let total=0;
   for(const report of reports){
-    const month=pointBenefitsFromMonthlyReport(report,source,byId);total+=month.total;
+    const month=pointBenefitsFromMonthlyReport(report,source,byId);total=safePointSum(total,month.total);
     for(const card of month.cards){
       const old=totals.get(card.cardId);const combined=old?[old.rateLabel??`${old.ratePercent}%`,card.rateLabel??`${card.ratePercent}%`]:[];
       const rates=new Set(combined.flatMap(text=>text.split(' / ')));
-      totals.set(card.cardId,{...card,amount:(old?.amount??0)+card.amount,points:(old?.points??0)+card.points,
+      totals.set(card.cardId,{...card,amount:safePointSum(old?.amount??0,card.amount),points:safePointSum(old?.points??0,card.points),
         ...(rates.size>1?{rateLabel:[...rates].join(' / ')}:{})});
     }
   }

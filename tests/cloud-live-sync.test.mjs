@@ -446,13 +446,13 @@ test('45件の一括保存で準備件数を追跡し年度保存の前に成功
  mock.failYear=null;assert.equal((await a.inspectPendingYearBatch())[0].status,'unsaved');await a.resumePendingYearBatch();assert.equal(a.hasPendingYearBatch,false);assert.deepEqual(await a.original('same-bill'),new Uint8Array([2]));assert.equal(a.records().length,1);
  });
 
-test('PDF batch checks generation once under its lock and once during final sync',async()=>{
+test('PDF batch checks generation under its lock and both boundaries of final sync',async()=>{
   const [vault,,mock]=drivers();await vault.create(secret);
   await vault.saveBatch([{id:'existing',statement:statement('2026-10')}]);
   const reads=[];const read=mock.readFinanceIndex.bind(mock);
   mock.readFinanceIndex=async(fresh)=>{reads.push(fresh);return read();};
   await vault.saveBatch([{id:'pdf-new',statement:{...statement(),sourceKind:'pdf'},source:{bytes:new Uint8Array([37,80,68,70,1]),mime:'application/pdf'}}]);
-  assert.deepEqual(reads,[true,true]);
+  assert.deepEqual(reads,[true,true,true,true,true,true]); // Lock, cross-year scope, one-time writer upgrade and both sync boundaries.
   assert.equal(vault.records().length,2);
 });
 
@@ -601,7 +601,7 @@ test('v2.0.3: mixed saved / unsaved / cleanup / conflict recovery excludes only 
   assert.deepEqual(mock.calls.filter(x=>x.startsWith('year:')),before);
   assert.equal(a.hasPendingYearBatch,true);
   let approved=0,refreshes=0;
-  const refresh=a.refresh.bind(a);a.refresh=async()=>{refreshes++;return refresh();};
+  const refresh=a.refresh.bind(a);a.refresh=async(...args)=>{refreshes++;return refresh(...args);};
   assert.deepEqual(await a.resumePendingYearBatch(async rows=>{approved++;assert.deepEqual(rows.filter(x=>x.status==='conflict').map(x=>x.id),['other-edit']);return true;}),['move','already','remaining']);
   assert.equal(approved,1);assert.equal(refreshes,2,'initial read and final sync only');
   assert.deepEqual(mock.calls.filter(x=>x.startsWith('year:')).slice(before.length),['year:2028','year:2024']);
@@ -634,7 +634,7 @@ test('v2.0.3: failure at final sync preserves the plan and retry never resends c
   const [a,,mock]=drivers();await a.create(secret);
   mock.failYear='2026';await assert.rejects(a.saveBatch([{id:'retry',statement:statement()}]),/保存済みの可能性/);mock.failYear=null;
   const refresh=a.refresh.bind(a);let reads=0;
-  a.refresh=async()=>{if(++reads===2)throw new Error('synthetic final sync outage');return refresh();};
+  a.refresh=async(...args)=>{if(++reads===2)throw new Error('synthetic final sync outage');return refresh(...args);};
   await assert.rejects(a.resumePendingYearBatch(),error=>error.name==='CloudWriteUncertainError');
   assert.equal(a.hasPendingYearBatch,true);assert.equal(mock.calls.filter(x=>x==='year:2026').length,1);
   a.refresh=refresh;assert.deepEqual(await a.resumePendingYearBatch(),['retry']);
@@ -674,4 +674,129 @@ test('Phase B: upload proof is not reused in a later operation when moving a PDF
   await a.saveBatch([item]);store.originals.clear();
   await assert.rejects(a.saveBatch([{id:item.id,statement:{...item.statement,billingMonth:'2027-01'}}]),/PDF原本の存在と復号/);
   assert.equal(a.records()[0].statement.billingMonth,'2026-11');assert.equal(store.files.has('year:2027'),false);
+});
+
+test('H201: interrupted move after restart preserves both copies, excludes both and resolves the explicitly chosen year',async()=>{
+ const [a,,mock,store]=drivers();await a.create(secret);
+ const initial={...statement('2025-11'),paymentDate:'2025-11-27',rows:[{id:'row-a',usedOn:'2025-10-01',merchant:'SAMPLE',amount:100}]};
+ await a.saveBatch([{id:'move-restart',statement:initial}]);
+ const next={...initial,billingMonth:'2026-11',paymentDate:'2026-11-27',statedTotal:200,rows:[{...initial.rows[0],amount:200}]};
+ mock.failYear='2025';await assert.rejects(a.saveBatch([{id:'move-restart',statement:next}]),/保存済みの可能性/);mock.failYear=null;
+ a.lock();const restarted=new LiveVault(mock);await restarted.unlock(secret);
+ const reviewed=restarted.yearConflictCopies('move-restart');assert.deepEqual(reviewed.map(x=>x.year),['2025','2026']);
+ assert.equal(restarted.records().length,2);assert.equal(restarted.hasYearConflict('move-restart'),true);
+ const {confirmedRecords}=await import('../dist/src/importers/batch-policy.js');assert.equal(confirmedRecords(restarted.readonlyRecords()).length,0);
+ await assert.rejects(restarted.delete('move-restart'),/年度間/);await assert.rejects(restarted.saveBatch([{id:'move-restart',statement:next}]),/年度間/);await assert.rejects(restarted.original('move-restart'),/年度間/);
+ const before=store.files.get('year:2025');
+ // Unrelated edits in a reviewed shard invalidate the user's old approval.
+ store.files.set('year:2025',{...before,revision:before.revision+1});const writes=mock.calls.filter(x=>x.startsWith('year:')).length;
+ await assert.rejects(restarted.resolveYearConflict('move-restart','2026',reviewed),/別端末で変更/);assert.equal(mock.calls.filter(x=>x.startsWith('year:')).length,writes);
+ await restarted.refresh();const current=restarted.yearConflictCopies('move-restart');
+ mock.failYear='2025';await assert.rejects(restarted.resolveYearConflict('move-restart','2026',current),/復旧結果/);mock.failYear=null;
+ await restarted.refresh();assert.equal(restarted.records().length,2);
+ await restarted.resolveYearConflict('move-restart','2026',restarted.yearConflictCopies('move-restart'));
+ assert.equal(restarted.records().length,1);assert.equal(restarted.records()[0].statement.statedTotal,200);assert.equal(restarted.hasYearConflict('move-restart'),false);
+ const reopened=new LiveVault(mock);await reopened.unlock(secret);assert.deepEqual(reopened.records(),restarted.records());
+});
+
+test('M201: final metadata detects a change to an earlier year and keeps the old snapshot',async()=>{
+ const [a,b,mock,store]=drivers();await a.create(secret);await a.saveBatch([{id:'early',statement:statement('2025-11')},{id:'late',statement:statement('2026-11')}]);await b.unlock(secret);
+ const original=b.readonlyRecords();const list=mock.listYearFiles.bind(mock);let calls=0;
+ mock.listYearFiles=async()=>{if(++calls===2){const old=store.files.get('year:2025');store.files.set('year:2025',{...old,revision:old.revision+1});}return list();};
+ await assert.rejects(b.refresh(),/取得中にOneDrive保管庫が更新/);assert.strictEqual(b.readonlyRecords(),original);
+ mock.listYearFiles=list;await b.refresh();assert.equal(b.records().length,2);
+});
+
+test('M201: an active foreign save prevents ordinary refresh from publishing its intermediate snapshot',async()=>{
+ const [a,b,mock]=drivers();await a.create(secret);await b.unlock(secret);const prior=b.readonlyRecords();
+ mock.inspectVaultMutationLock=async()=>({state:'present',createdAt:null});
+ await assert.rejects(b.refresh(),/保存操作が進行中/);assert.strictEqual(b.readonlyRecords(),prior);
+ mock.inspectVaultMutationLock=async()=>({state:'absent',createdAt:null});await b.refresh();
+});
+
+test('M201: unlocking under a residual marker authenticates only for recovery, never publishes intermediate finances',async()=>{
+ const [a,,mock]=drivers();await a.create(secret);await a.saveBatch([{id:'previous',statement:statement()}]);
+ mock.inspectVaultMutationLock=async()=>({state:'present',createdAt:null});
+ const reopened=new LiveVault(mock);await reopened.unlock(secret);assert.equal(reopened.unlocked,true);assert.equal(reopened.recoveryOnly,true);assert.deepEqual(reopened.records(),[]);
+ const before=mock.calls.filter(x=>x.startsWith('year:')).length;
+ await assert.rejects(reopened.saveBatch([{id:'blocked',statement:statement('2027-01')}]),/復旧/);
+ assert.equal(mock.calls.filter(x=>x.startsWith('year:')).length,before);
+ mock.inspectVaultMutationLock=async()=>({state:'absent',createdAt:null});await reopened.refresh();assert.equal(reopened.recoveryOnly,false);assert.equal(reopened.records()[0].id,'previous');
+});
+
+test('M203: encrypted originals cannot be substituted; digest survives ordinary edit and year movement',async()=>{
+  const [a,b,,store]=drivers();await a.create(secret);
+  const bytes=new Uint8Array([37,80,68,70,11]),other=new Uint8Array([37,80,68,70,22]);
+  await a.saveBatch([{id:'pdf-a',statement:{...statement('2026-11'),sourceKind:'pdf'},source:{bytes,mime:'application/pdf'}},{id:'pdf-b',statement:{...statement('2026-10'),sourceKind:'pdf'},source:{bytes:other,mime:'application/pdf'}}]);
+  const first=a.records().find(r=>r.id==='pdf-a'),second=a.records().find(r=>r.id==='pdf-b');
+  assert.match(first.originalSha256,/^[a-f0-9]{64}$/);assert.notEqual(first.originalSha256,second.originalSha256);
+  assert.ok(!store.files.get('year:2026').text.includes(first.originalSha256));
+  const key=`${first.originalMonth}:${first.originalId}`,otherKey=`${second.originalMonth}:${second.originalId}`,original=store.originals.get(key);
+  store.originals.set(key,store.originals.get(otherKey));
+  await assert.rejects(a.original('pdf-a'),/一致しません/);assert.equal(store.originals.size,2);
+  store.originals.set(key,original);
+  const edited=structuredClone(first.statement);edited.billingMonth='2027-01';
+  await a.saveBatch([{id:'pdf-a',statement:edited}]);await b.unlock(secret);
+  assert.equal(b.records().find(r=>r.id==='pdf-a').originalSha256,first.originalSha256);
+  assert.deepEqual(await b.original('pdf-a'),bytes);
+});
+
+test('M203: refresh refuses known PDF digest downgrade by an old writer in the same session',async()=>{
+  const [a,,,store]=drivers();await a.create(secret);
+  await a.saveBatch([{id:'pdf',statement:{...statement(),sourceKind:'pdf'},source:{bytes:new Uint8Array([7,8]),mime:'application/pdf'}}]);
+  const record=a.records()[0],key=a.verifiedBrowserKey();
+  const old=structuredClone(record);delete old.originalSha256;
+  const cipher=await encryptDocument({...emptyDocument(),records:[old]},key.key,key.salt);
+  const remote=store.files.get('year:2026');store.files.set('year:2026',{text:cipher,revision:remote.revision+1});
+  await assert.rejects(a.refresh(),/検証情報が変更または消失/);
+  assert.equal(a.records()[0].originalSha256,record.originalSha256);
+});
+
+test('H201 integration: stale clients cannot edit or delete an ID with a remote cross-year conflict',async()=>{
+  const [a,b,mock,store]=drivers();await a.create(secret);
+  const old=statement('2025-11');await a.saveBatch([{id:'stale-move',statement:old}]);await b.unlock(secret);
+  mock.failYear='2025';await assert.rejects(a.saveBatch([{id:'stale-move',statement:statement('2026-11')}]),/保存済みの可能性/);mock.failYear=null;
+  const before=structuredClone(store.files),writes=mock.calls.filter(x=>x.startsWith('year:')).length;
+  await assert.rejects(b.saveBatch([{id:'stale-move',statement:{...old,sourceName:'stale edit'}}]),/年度間/);
+  await assert.rejects(b.delete('stale-move'),/年度間/);
+  assert.equal(mock.calls.filter(x=>x.startsWith('year:')).length,writes);assert.deepEqual(store.files,before);
+  await b.refresh();assert.equal(b.yearConflictCopies('stale-move').length,2);
+});
+test('H201 integration: a stale move must not remove a remotely edited source or resurrect a completed move',async()=>{
+  const [a,b,mock,store]=drivers();await a.create(secret);
+  const old=statement('2025-11');await a.saveBatch([{id:'move-guard',statement:old}]);await b.unlock(secret);
+  await a.saveBatch([{id:'move-guard',statement:{...old,sourceName:'remote edit'}}]);
+  const before=structuredClone(store.files);
+  await assert.rejects(b.saveBatch([{id:'move-guard',statement:statement('2026-11')}]),/移動元の明細/);
+  assert.deepEqual(store.files,before);await a.saveBatch([{id:'move-guard',statement:statement('2026-11')}]);
+  const after=structuredClone(store.files);
+  b.setStatementConflictResolver(()=>true);
+  await assert.rejects(b.saveBatch([{id:'move-guard',statement:{...old,sourceName:'stale edit'}}]),/年度間/);
+  await assert.rejects(b.delete('move-guard'),/年度間/);
+  assert.deepEqual(store.files,after);await b.refresh();assert.equal(b.records().length,1);assert.equal(b.records()[0].statement.billingMonth,'2026-11');
+});
+
+test('M203 integration: writer compatibility fence upgrades only on new metadata and is retained across year registration',async()=>{
+ const [a,b,mock,store]=drivers();await a.create(secret);
+ const initial=await mock.readFinanceIndex();assert.equal(JSON.parse(initial.text).format,'finance-cloud-index-envelope-v3');
+ await b.unlock(secret);await b.refresh();assert.deepEqual(await mock.readFinanceIndex(),initial);
+ await a.saveBatch([{id:'new-digest',statement:{...statement(),sourceKind:'pdf'},source:{bytes:new Uint8Array([37,80,68,70]),mime:'application/pdf'}}]);
+ const upgraded=await mock.readFinanceIndex();assert.equal(JSON.parse(upgraded.text).format,'finance-cloud-index-envelope-v4');
+ // A client implementing the preceding index format cannot proceed through its generation guard.
+ const oldIndexParser=text=>{const v=JSON.parse(text);if(!['finance-cloud-index-envelope-v1','finance-cloud-index-envelope-v2','finance-cloud-index-envelope-v3'].includes(v.format))throw new Error('old format');return v;};
+ assert.throws(()=>oldIndexParser(upgraded.text),/old format/);
+ const writes=mock.calls.filter(x=>x==='index:finance').length;
+ await b.saveBatch([{id:'other-year',statement:statement('2027-01')}]);assert.equal(JSON.parse((await mock.readFinanceIndex()).text).format,'finance-cloud-index-envelope-v4');
+ assert.equal(mock.calls.filter(x=>x==='index:finance').length,writes+1,'only register the new year; do not repeat the compatibility upgrade');
+ const reopened=new LiveVault(mock);await reopened.unlock(secret);assert.equal(reopened.records().length,2);assert.equal(store.originals.size,1);
+});
+
+test('H201: denied ordinary edit in mixed PDF batch never uploads the new original',async()=>{
+ const [a,b,mock,store]=drivers();await a.create(secret);
+ const initial=statement('2027-01','initial');await a.saveBatch([{id:'conflict-edit',statement:initial}]);await b.unlock(secret);
+ await a.saveBatch([{id:'conflict-edit',statement:statement('2027-01','remote')}]);
+ const before=structuredClone(store.files),originals=structuredClone(store.originals);let called=0;
+ b.setStatementConflictResolver(()=>{called++;return false;});
+ await assert.rejects(b.saveBatch([{id:'new-pdf',statement:{...statement('2026-11'),sourceKind:'pdf'},source:{bytes:new Uint8Array([37,80,68,70]),mime:'application/pdf'}},{id:'conflict-edit',statement:statement('2027-01','local')}]),/中止/);
+ assert.equal(called,1);assert.deepEqual(store.files,before);assert.deepEqual(store.originals,originals);assert.equal(b.hasPendingYearBatch,false);
 });

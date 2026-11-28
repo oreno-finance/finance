@@ -32,8 +32,9 @@ test('settings use closed disclosures with one CSS chevron, NISA has footer warn
   assert.match(html,/<summary>NISA連携<\/summary>/);
   assert.doesNotMatch(html,/settings-payroll-chevron|cloud-advanced-icon|class="cloud-chevron"/);
   const actions=html.indexOf('id="assets-nisa-save"');
-  const warning=html.indexOf('カード積立と定期入金を重複登録しないようご確認ください。');
+  const warning=html.indexOf('同じ積立を銀行の定期振替にも登録している場合は、該当する予定を選択してください。');
   assert.ok(warning>actions);
+  assert.match(html,/<label[^>]*for="assets-nisa-funding"[^>]*>銀行積立との関係<select id="assets-nisa-funding">/);
   assert.match(html,/id="assets-nisa-match-count"[^>]*\bhidden\b/);
   assert.doesNotMatch(assets,/保存済みの該当明細：/);
   assert.match(chevronCss,/> summary::after/);

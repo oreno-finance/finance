@@ -1,5 +1,5 @@
 import { statementMonthKey, planStatementImport, statementSignature } from './import-policy.js';
-import { CARDS, calculatedTotal, isZeroUsage } from '../models/types.js';
+import { CARDS, isZeroUsage } from '../models/types.js';
 function realDate(value) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value))
         return false;
@@ -23,7 +23,9 @@ export function importErrors(statement, hasPdf) {
         issues.push('取引がありません');
     if (statement.rows.some(row => !realDate(row.usedOn) || !row.merchant.trim() || !Number.isSafeInteger(row.amount)))
         issues.push('利用日・利用先・金額に不備があります');
-    if (statement.statedTotal !== null && calculatedTotal(statement) !== statement.statedTotal)
+    if (statement.rows.some(row => typeof row.id !== 'string' || !row.id) || new Set(statement.rows.map(row => row.id)).size !== statement.rows.length)
+        issues.push('取引行IDが重複または不正です');
+    if (statement.rows.every(row => Number.isSafeInteger(row.amount)) && (statement.statedTotal === null || !Number.isSafeInteger(statement.statedTotal) || statement.rows.reduce((sum, row) => sum + BigInt(row.amount), 0n) !== BigInt(statement.statedTotal)))
         issues.push('請求総額と明細合計が一致しません');
     if (statement.sourceKind === 'pdf' && !hasPdf)
         issues.push('PDF原本がありません');
@@ -88,4 +90,32 @@ export function redundantImportDrafts(statements, isDraft, isEligible) {
             redundant.push(...extras);
     }
     return redundant;
+}
+/** One read-only validation context per exact record snapshot. Both sides of any
+ * duplicate are ineligible; no ordering is used to select a winner. */
+export function statementConflicts(records) {
+    const ids = new Map(), months = new Map();
+    for (const record of records) {
+        if (!record?.statement)
+            continue;
+        ids.set(record.id, (ids.get(record.id) ?? 0) + 1);
+        const key = statementMonthKey(record.statement);
+        if (key)
+            months.set(key, (months.get(key) ?? 0) + 1);
+    }
+    return { ids: new Set([...ids].filter(([, n]) => n > 1).map(([id]) => id)), months: new Set([...months].filter(([, n]) => n > 1).map(([id]) => id)) };
+}
+export function recordIssues(record, conflicts) {
+    const s = record.statement, key = statementMonthKey(s);
+    return [
+        ...(conflicts.ids.has(record.id) ? ['保存済み明細IDが重複しています'] : []),
+        ...('storageYear' in record ? ['年度間明細の保存位置に競合があります'] : []),
+        ...(key && conflicts.months.has(key) ? ['同じカード・請求月の明細が複数あります'] : []),
+        ...(record.originalMonth != null && !/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(record.originalMonth) ? ['PDF原本保存月が不正です'] : []),
+        ...importErrors(s, s.sourceKind !== 'pdf' || !!record.originalId),
+    ];
+}
+export function confirmedRecords(records) {
+    const conflicts = statementConflicts(records);
+    return records.filter(record => record.statement.confirmation === 'confirmed' && !recordIssues(record, conflicts).length);
 }

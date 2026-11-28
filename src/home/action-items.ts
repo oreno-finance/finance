@@ -7,7 +7,7 @@ import { shiftedDay } from './account-events.js';
 
 export type HomeDestination='import'|'manage'|'summary'|'assets'|'settings'|'subscriptions'|'subscription-candidates';
 export interface HomeAction {
-  id:string; kind:'shortage'|'card-account'|'invalid-statement'|'unknown-confirmation'|'provisional'|'missing-statements'|'stale-balance'|'payroll'|'subscription';
+  id:string; kind:'shortage'|'overdue-movement'|'card-account'|'invalid-statement'|'unknown-confirmation'|'provisional'|'missing-statements'|'stale-balance'|'payroll'|'subscription';
   severity:'high'|'medium'|'low'; title:string; detail?:string;
   target:HomeDestination; recordId?:string;
 }
@@ -68,7 +68,9 @@ export function homeActions(source:MonthlySource,report:MonthlyReport,forecast:A
     const limit=BALANCE_WARNING_ACCOUNTS.some(id=>id===account.accountId)
       ?source.assets.balanceWarningLimits?.[account.accountId as BalanceWarningAccountId]??0:0;
     const current=account.days.filter(day=>day.date<=today).at(-1)?.balance??account.observed.balance;
-    const days=[{date:today,balance:current},...account.days.filter(day=>day.date>today)];
+    const overdueDebit=account.overdue?.debit??0;
+    if(account.overdue?.count)add({id:`overdue:${account.accountId}`,kind:'overdue-movement',severity:'medium',title:`${account.name}の期限経過・未確認の入出金を確認`,detail:`${account.overdue.count}件 · 残高を確認してください`,target:'assets'});
+    const days=[{date:today,balance:current+overdueDebit},...account.days.filter(day=>day.date>today).map(day=>({...day,balance:day.balance+overdueDebit}))];
     // One action per account. A real negative prediction takes priority over a reserve warning.
     const danger=days.find(day=>day.balance<0)??days.find(day=>day.balance<limit);
     if(!danger)continue;

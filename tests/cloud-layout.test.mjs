@@ -26,3 +26,17 @@ test('cloud index rejects unsafe folder keys and duplicate years',()=>{
   assert.throws(()=>validateIndex({format:'finance-cloud-index-v1',years:['../payroll']}),/不正/);
   assert.throws(()=>validateIndex({format:'finance-cloud-index-v1',years:['2026/11']}),/不正/);
 });
+
+test('writer v4 index authenticates its format and generation, and keeps old indexes readable',async()=>{
+ const salt=freshSalt(),key=await deriveCloudKey('safe-passphrase-for-test',salt),generation=crypto.randomUUID();
+ const index={...emptyIndex(),years:['2026']};
+ for(const coordinated of [false,true,'v4']){
+  const text=await encryptIndex(index,key,salt,generation,coordinated);const env=parseIndexEnvelope(text);
+  assert.deepEqual(await decryptIndex(env,key),index);
+  if(coordinated==='v4'){
+   assert.equal(env.format,'finance-cloud-index-envelope-v4');
+   await assert.rejects(decryptIndex({...env,format:'finance-cloud-index-envelope-v3'},key),/破損/);
+   await assert.rejects(decryptIndex({...env,dataSetId:crypto.randomUUID()},key),/破損/);
+  }
+ }
+});

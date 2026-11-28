@@ -125,7 +125,7 @@ export async function diagnoseVaultFiles(client, passphrase = '', onProgress) {
         try {
             const file = await method();
             if (!file) {
-                lines.push(`${label}：未作成（問題なし）`);
+                lines.push(`${label}：ファイルなし（初回利用か消失かは判定できません）`);
                 continue;
             }
             // If the index failed, read each file's own salt; this avoids treating

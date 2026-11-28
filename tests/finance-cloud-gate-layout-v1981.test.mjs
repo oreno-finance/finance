@@ -74,5 +74,7 @@ test('checking takes precedence over locked on every page, then manual unlock re
     assert.equal(retries,pages.length);assert.equal(settings,pages.length);
     syncFinanceCloudGates({...base,checking:false,locked:false});
     for(const root of roots.values()){assert.deepEqual(flatten(root).filter(n=>n.tag==='button').map(n=>n.textContent),['設定を開く']);}
+    syncFinanceCloudGates({...base,checking:false,locked:false,recovery:true});
+    for(const root of roots.values()){const items=flatten(root);assert.ok(items.some(n=>n.textContent==='保存ロックの確認が必要です'));assert.deepEqual(items.filter(n=>n.tag==='button').map(n=>n.textContent),['設定を開く']);}
   }finally{globalThis.document=old;}
 });
