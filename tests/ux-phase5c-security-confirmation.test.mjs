@@ -1,3 +1,4 @@
+import {traceFinanceOperation} from '../dist/src/cloud/performance-diagnostics.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -68,7 +69,7 @@ test('a PDF read completed after vault lock or replacement cannot create a downl
  for(const mode of ['locked','replaced','normal']){
   let resolve;const s={};const btn={disabled:false};let downloads=0;
   const vault={unlocked:true,original:()=>new Promise(r=>resolve=r)};
-  const env={active:()=>s,savedIds:new Map([[s,'sample']]),liveVault:vault,lockSequence:0,filesBusy:false,cloudRefreshing:false,$:()=>btn,
+  const env={traceFinanceOperation,active:()=>s,savedIds:new Map([[s,'sample']]),liveVault:vault,lockSequence:0,filesBusy:false,cloudRefreshing:false,$:()=>btn,
     Uint8Array,downloadFile:()=>downloads++,canonicalStatementFilename:()=> 'sample.pdf',toast(){}};
   const ctx=vm.createContext(env);vm.runInContext(main.slice(start,end),ctx);
   const promise=ctx.downloadManagedOriginal();

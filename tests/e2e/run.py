@@ -200,7 +200,7 @@ class FinanceBrowserTests(unittest.TestCase):
                 source=source.rstrip()[:-len('init();')]+"""
 window.financeImportTest={
   prepare(records){
-    liveVault={unlocked:true,records:()=>structuredClone(records),readonlyRecords:()=>structuredClone(records),assetSettings:()=>({}),merchantRules:()=>[],fixedCostMigrations:()=>[],merchantCategories:()=>[],takeMutationWarning:()=>null,
+    liveVault={unlocked:true,records:()=>structuredClone(records),readonlyRecords:()=>structuredClone(records),assetSettings:()=>({}),cardPreferenceName:()=>undefined,merchantRules:()=>[],fixedCostMigrations:()=>[],merchantCategories:()=>[],takeMutationWarning:()=>null,
       async saveBatch(items){for(const item of items){const old=records.find(r=>r.id===item.id);if(!old)throw Error('missing fixture record');if(item.source)throw Error('manual confirmation must preserve original');old.statement=structuredClone(item.statement);}return items.map(item=>item.id);}};
     for(const record of records){const s=structuredClone(record.statement);statements.push(s);savedIds.set(s,record.id);originalSaved.add(s);savedFingerprints.set(s,statementWorkingFingerprint(s));importedSignatures.set(s,statementSignature(s));}
     for(const node of document.querySelectorAll('.workspace .content > :is(section,div)[id]'))node.classList.toggle('hidden',node.id!=='import-view');
@@ -217,7 +217,7 @@ window.financeImportTest={
     renderManager();
   },
   rulesPicker(records,registered){
-    liveVault={unlocked:true,merchantRules:()=>registered,merchantCategories:()=>[],assetSettings:()=>({})};
+    liveVault={unlocked:true,merchantRules:()=>registered,merchantCategories:()=>[],assetSettings:()=>({}),cardPreferenceName:()=>undefined};
     for(const record of records){statements.push(record.statement);savedIds.set(record.statement,record.id);}
     for(const id of ['rule-card','recent-merchants-card'])for(const card of CARDS)$(id).append(new Option(card.name,card.id));
     for(const node of document.querySelectorAll('.workspace .content > :is(section,div)[id]'))node.classList.toggle('hidden',node.id!=='rules-view');
@@ -493,7 +493,7 @@ window.financeImportTest={
                       window.summary=summary.initMonthlySummary({source:()=>null,openRecord:()=>{},openDrilldown:()=>{}});
                       window.summary.setPeriod('2026-12');
                       window.analysis=analysis.initAnalysis({source:()=>null,openMonth:()=>{},openDrilldown:()=>{},openSettings:()=>{}});window.analysis.render();
-                      const vault={unlocked:true,listArchivedMonths:async()=>[],loadArchivedReport:async()=>null};
+                      const vault={unlocked:true,loadArchivedReports:async()=>[[],null]};
                       window.reports=reports.initMonthlyReports({source:()=>null,vault:()=>vault,openMonth:()=>{}});window.reports.openPeriod('2026-12');window.reports.render();
                       window.managerPeriod='2026-12';
                       nav.bindMonthNavigator($('manage-period-controls'),{previous:$('manage-prev-month'),picker:$('manage-period'),next:$('manage-next-month'),current:$('manage-current-month'),all:$('manage-show-all')},()=>window.managerPeriod,next=>window.managerPeriod=next,()=>({label:'請求月',today:'2026-11',all:()=>window.managerPeriod=''}));
@@ -1752,7 +1752,7 @@ window.financeImportTest={
                       const summary=initMonthlySummary({source:()=>source,openRecord:id=>opened.push(id),openDrilldown(){}});
                       const analysis=initAnalysis({source:()=>source,openMonth:p=>{show('summary-view');summary.setPeriod(p)},openDrilldown(){},openSettings(){}});
                       const home=initHome({source:()=>source,navigate(){}});
-                      const reports=initMonthlyReports({source:()=>source,vault:()=>({unlocked:true,listArchivedMonths:async()=>[],loadArchivedReport:async()=>null}),openMonth(){}});
+                      const reports=initMonthlyReports({source:()=>source,vault:()=>({unlocked:true,loadArchivedReports:async()=>[[],null]}),openMonth(){}});
                       window.reviewFixture={source,summary,analysis,home,reports,show,opened,undated(){source.records.push(bill('undated-bill','2026-09','confirmed',null));analysis.render()}};
                       show('analysis-view');analysis.render();
                     }""")
@@ -1812,7 +1812,7 @@ window.financeImportTest={
                       const assets=emptyAssets();assets.snapshots=[{id:'balance-test',accountId:'rakuten-bank',balance:100000,observedAt:previous+'-01T00:00:00Z'}];
                       const source={records:[],rules:[],categories:[],assets,payroll:{ready:true,syncedAt:1000,entries:[{id:'salary-a',employerId:'main',job:'main',paidOn:day,payPeriod:current,netPay:50000,grossPay:null,taxablePay:null,currency:'JPY',kind:'salary',revision:1}]},currentPeriod:current};
                       let writes=0,archive=null,settings=0;
-                      const vault={unlocked:true,listArchivedMonths:async()=>archive?[current]:[],loadArchivedReport:async period=>period===current?archive:null,
+                      const vault={unlocked:true,loadArchivedReports:async period=>[archive?[current]:[],period===current?archive:null],
                         saveArchivedReport:async(snapshot,note)=>{writes++;archive={format:'finance-monthly-report-v1',period:current,current:{id:'saved',savedAt:new Date().toISOString(),note,snapshot,sourceHash:'a'.repeat(64)},history:[]};return archive;}};
                       const show=id=>{for(const n of document.querySelectorAll('.workspace .content > :is(section,div)[id]'))n.classList.toggle('hidden',n.id!==id);document.getElementById(id).classList.remove('hidden');};
                       const summary=initMonthlySummary({source:()=>source,openRecord(){},openDrilldown(){},openCardSettings(){settings++;}});
@@ -2311,7 +2311,7 @@ window.financeImportTest={
             page.evaluate('''async()=>{
               const months=[];
               for(const y of [2024,2025,2026])for(let m=1;m<=12;m++)months.push(`${y}-${String(m).padStart(2,'0')}`);
-              const vault={unlocked:true,listArchivedMonths:async()=>months,loadArchivedReport:async()=>null};
+              const vault={unlocked:true,loadArchivedReports:async()=>[months,null]};
               const mod=await import('/dist/src/ui/monthly-reports.js');
               window.reportE2E=mod.initMonthlyReports({source:()=>null,vault:()=>vault,openMonth:()=>{}});
               window.reportE2E.openPeriod('2026-11');window.reportE2E.render();
@@ -2555,7 +2555,7 @@ window.financeImportTest={
                         payrollOperationGuard(){const at=revision;return ()=>{if(revision!==at||!vault.unlocked)throw Error('changed vault');};},
                         async readPayrollCredential(){return remote;},payrollReadClient(){return {};}};
                       const result={id:'fixture-income',employerId:'fixture',job:'main',paidOn:'2026-11-27',payPeriod:'2026-11',netPay:200000,grossPay:null,taxablePay:null,currency:'JPY',kind:'salary',revision:1};
-                      PayrollReadSession.connect=async(_,credential)=>{connects.push(credential);return {refresh:()=>new Promise(resolve=>pending=()=>{pending=null;resolve([result]);})};};
+                      PayrollReadSession.connectAndRefresh=async(_,credential,guard)=>{connects.push(credential);const session={refresh:()=>new Promise(resolve=>pending=()=>{pending=null;resolve([result]);})};const items=await session.refresh();guard();return {session,items};};
                       const ui=initAssetsSettings(()=>vault,()=>[],()=>{},()=>{changes++;});ui.render();
                       let task;
                       window.payrollRace={start(){task=ui.refreshPayroll();},finish(){pending();},waiting:()=>!!pending,settled:()=>task,
@@ -2590,6 +2590,42 @@ window.financeImportTest={
                     self.assertEqual(page.evaluate('payrollRace.connects'),['synthetic-credential-a','synthetic-credential-b','synthetic-credential-c','synthetic-credential-c'])
                     self.assertFalse(errors,errors)
                 finally:context.close()
+
+    def test_performance_auto_console_switch(self):
+        # Load the compiled diagnostic module in an isolated blank page. No
+        # Graph calls, authentication, or actual vault are involved.
+        import base64
+        module = (ROOT / 'dist/src/cloud/performance-diagnostics.js').read_bytes()
+        url = 'data:text/javascript;base64,' + base64.b64encode(module).decode('ascii')
+        context = self.browser.new_context()
+        try:
+            page = context.new_page()
+            logs = []
+            page.on('console', lambda message: logs.append(message.text))
+            result = page.evaluate('''async url=>{
+                const mod=await import(url);
+                const start=window.financePerformanceAuto(true);
+                await mod.traceFinanceOperation('statement-delete',async()=>{
+                    mod.countFinanceRequest('graph.get');
+                    mod.countFinanceStatus(404);
+                    await mod.measureFinancePhase('graph.request',async()=>{});
+                });
+                await mod.traceFinanceOperation('refresh',async()=>{});
+                const stop=window.financePerformanceAuto(false);
+                await mod.traceFinanceOperation('refresh',async()=>mod.countFinanceRequest('graph.get'));
+                return {start,stop,total:window.financePerformanceReport().requests['graph.get']};
+            }''',url)
+            self.assertEqual(result, {'start':True,'stop':False,'total':2})
+            lines = [line for line in logs if line.startswith('[Finance性能]')]
+            self.assertEqual(len(lines),1)
+            self.assertIn('明細削除',lines[0])
+            import json
+            report = json.loads(lines[0].split('\n',1)[1])
+            self.assertEqual(report['httpStatuses'], {'404':1})
+            self.assertEqual(report['retries'], 0)
+            self.assertEqual(report['totalRequests'], 1)
+        finally:
+            context.close()
 
     def test_remembered_browser_cross_tab_lock_after_commit(self):
         # Same-origin secure-context IndexedDB and storage events; no account or Finance data.

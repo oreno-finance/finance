@@ -528,7 +528,6 @@ body{overflow:hidden}
 .cloud-panel button{padding:10px 15px;border-radius:9px}
 .cloud-panel button:disabled{opacity:.48}
 .cloud-account{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:14px;font-size:13px;font-weight:700;overflow-wrap:anywhere;margin:5px 0 12px}
-.cloud-probe-panel .cloud-field{max-width:520px}
 .cloud-probe-result{font-size:12px;font-variant-numeric:tabular-nums;background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:13px;overflow-wrap:anywhere}
 .cloud-status{padding:13px 17px;border:1px solid var(--line);background:var(--panel);border-radius:10px;color:var(--muted);font-size:12px;line-height:1.65;overflow-wrap:anywhere}
 .cloud-status.ok{color:var(--accent);background:var(--accent-bg)}
@@ -626,7 +625,7 @@ body{overflow:hidden}
 .cloud-explainer p{margin:0;font-size:12px;line-height:1.75}
 .cloud-advanced{border:1px solid var(--line);border-radius:13px;background:var(--panel);overflow:hidden}
 .cloud-advanced>summary{display:flex;align-items:center;gap:13px;padding:17px 20px;cursor:pointer;list-style:none}
-.cloud-advanced>summary::-webkit-details-marker,.cloud-probe-details>summary::-webkit-details-marker{display:none}
+.cloud-advanced>summary::-webkit-details-marker{display:none}
 .cloud-advanced>summary:hover{background:var(--bg)}
 .cloud-advanced-icon{display:grid;place-items:center;flex:0 0 36px;width:36px;height:36px;border:1px solid var(--line);border-radius:10px;background:var(--bg);font-size:20px;color:var(--muted)}
 .cloud-advanced>summary strong{display:block;font-size:13px;font-weight:740;color:var(--ink)}
@@ -638,14 +637,9 @@ body{overflow:hidden}
 .cloud-advanced-content .cloud-panel{padding:20px}
 .cloud-advanced-content .cloud-help{font-size:11px;line-height:1.7}
 .cloud-advanced-content .cloud-help-last{margin-bottom:0}
-.cloud-advanced-content .cloud-probe-panel .cloud-probe-result{margin:13px 0 0}
 .cloud-maintenance-divider{height:1px;background:var(--line);margin:20px 0 15px}
 .cloud-advanced .cloud-button{display:inline-flex;align-items:center;justify-content:center;min-width:190px}
-.cloud-probe-details{margin-top:14px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
-.cloud-probe-details>summary{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 17px;cursor:pointer;font-size:12px;font-weight:700;color:var(--ink);list-style:none}
-.cloud-probe-details[open]>summary span{transform:rotate(180deg)}
-.cloud-probe-details>.cloud-panel{border-radius:0;border-left:0;border-right:0;border-bottom:0;box-shadow:none}
-.cloud-advanced>summary:focus-visible,.cloud-probe-details>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.cloud-advanced>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 [data-theme="dark"] .cloud-status-cell,[data-theme="dark"] .cloud-advanced-icon{background:var(--bg)}
 @media(max-width:680px){
   .cloud-overview{padding:19px 17px}
@@ -1326,8 +1320,6 @@ body{overflow:hidden}
 .settings-view .cloud-maintenance-body{gap:12px;padding:2px 20px 20px;border-top:1px solid var(--line)}
 .settings-view .cloud-maintenance-body>.field-label{margin-top:7px}
 .settings-view .cloud-maintenance-body pre:empty{display:none}
-.settings-view .cloud-probe-details{margin-top:10px}
-.settings-view .cloud-probe-details:not([open]){opacity:.82}
 @media(max-width:720px){
   .settings-view .assets-payroll-panel{padding:16px}
   .settings-view .cloud-overview,.settings-view .cloud-rotate-panel{padding:17px}
@@ -1457,10 +1449,6 @@ body{overflow:hidden}
 .settings-view .cloud-maintenance-body>.field-label{margin:5px 0 0}
 .settings-view .cloud-maintenance-body>.password-control,
 .settings-view .cloud-maintenance-body>.cloud-diagnostic-report{width:100%}
-.settings-view .cloud-dev-test{margin-top:13px;min-width:0}
-.settings-view .cloud-dev-test>.panel-heading{margin-bottom:13px}
-.settings-view .cloud-dev-test .cloud-dev-content{min-width:0}
-.settings-view .cloud-dev-test .cloud-buttons{flex-wrap:wrap}
 
 /* Sorting is an operation on the visible rows, never on their saved order. */
 .manage-editor .manage-sort-button{
@@ -1647,7 +1635,6 @@ select:not([multiple]):disabled{
   margin:0!important;
   padding:21px 23px!important;
 }
-.settings-view .cloud-settings-left>.cloud-dev-test{padding:19px 21px!important}
 .settings-view .cloud-advanced-content .cloud-grid>.cloud-troubleshooting{
   align-self:start;
   height:auto;
@@ -2221,11 +2208,9 @@ details[open] > summary::after{
 .cloud-advanced > summary .cloud-chevron,
 .assets-nisa-link > summary > span[aria-hidden="true"],
 .assets-payroll-summary > summary .assets-payroll-chevron,
-.cloud-rotate-details > summary > span[aria-hidden="true"],
-.cloud-probe-details > summary > span[aria-hidden="true"]{display:none!important}
+.cloud-rotate-details > summary > span[aria-hidden="true"]{display:none!important}
 /* Do not rotate any inline summary contents in older CSS. */
 .cloud-rotate-details[open] > summary span,
-.cloud-probe-details[open] > summary span,
 .cloud-advanced[open] > summary span,
 .sidebar .sidebar-group[open] .sidebar-group-chevron,
 .assets-payroll-summary[open] .assets-payroll-chevron{transform:none!important;transition:none!important}
@@ -2422,16 +2407,10 @@ details[open] > summary::after{
 .settings-view .assets-payroll-layout>form .assets-operation-status{margin:0!important;line-height:1.45}
 .settings-view .assets-payroll-layout>form .assets-payroll-actions{margin:0}
 .settings-view .assets-payroll-history-card .assets-payroll-summary-body{padding-bottom:4px;border:0!important}
-
-/* The password fields must use the whole width of their respective cards. */
-.settings-view .cloud-dev-test .cloud-dev-content,
-.settings-view .cloud-dev-test .password-control,
 .settings-view .cloud-troubleshooting .cloud-tool-diagnostic>.password-control{
   width:100%;max-width:none!important;min-width:0;
 }
-.settings-view .cloud-dev-test .cloud-password-control input,
-.settings-view .cloud-troubleshooting #cloud-diagnostic-secret,
-.settings-view .cloud-dev-test #cloud-passphrase{
+.settings-view .cloud-troubleshooting #cloud-diagnostic-secret{
   width:100%;max-width:none!important;min-width:0;
 }
 .settings-view .cloud-troubleshooting #cloud-diagnostic-copy{margin-top:0!important;align-self:center}

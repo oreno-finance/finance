@@ -88,5 +88,34 @@ test('複数年度をすべて取得した後で、先に取得した年度の�
   async readPayrollPublishedMetadata(path,name){calls.push('check:'+name);return {id:name,etag:name==='2025.enc'&&secondRead?'new':'old'};}};
  const session=await PayrollReadSession.connect(graph,passphrase);
  await assert.rejects(session.refresh(),/収入ファイルが同期中に更新/);
- assert.deepEqual(calls,['read:index.enc','read:index.enc','read:2025.enc','read:2026.enc','check:2025.enc']);
+ assert.deepEqual(calls,['read:index.enc','read:index.enc','read:2025.enc','read:2026.enc','check:2025.enc','check:2026.enc']); // The parallel group may finish; the index is never accepted after a mismatch.
+});
+
+
+test('v2.2.1: Payroll reads and rechecks years in bounded groups, then checks index last',async()=>{
+ await setup();
+ const years=['2020','2021','2022','2023','2024','2025'];
+ const index=await encrypted('index',{format:'payroll-index-v1',years,incomeYears:years});
+ const files=new Map();for(const [i,y] of years.entries())files.set(`${y}.enc`,await encrypted('income',{format:'payroll-income-v1',year:y,records:[record(i+1,`${y}-01-25`,100)]}));
+ let active=0,peak=0,checked=0,activeChecks=0,peakChecks=0,readCount=0;
+ const pause=()=>new Promise(resolve=>setImmediate(resolve));
+ const graph={async readPayrollPublishedFile(_path,name){if(name==='index.enc')return {id:name,etag:'same',text:index};
+   active++;peak=Math.max(peak,active);await pause();active--;readCount++;return {id:name,etag:'same',text:files.get(name)};},
+  async readPayrollPublishedMetadata(_path,name){assert.equal(readCount,years.length);if(name==='index.enc'){assert.equal(checked,years.length);assert.equal(activeChecks,0);return {id:name,etag:'same'};}
+   activeChecks++;peakChecks=Math.max(peakChecks,activeChecks);await pause();activeChecks--;checked++;return {id:name,etag:'same'};}};
+ const session=await PayrollReadSession.connect(graph,passphrase),entries=await session.refresh();
+ assert.equal(entries.length,years.length);assert.ok(peak>1&&peak<=4);assert.ok(peakChecks>1&&peakChecks<=4);
+});
+
+test('v2.2.1: immediate connect and refresh share the decrypted index, later refresh reads a new index',async()=>{
+ const graph=await client();const {session,items}=await PayrollReadSession.connectAndRefresh(graph,passphrase,()=>{});
+ assert.equal(items.length,2);assert.deepEqual(graph.calls.map(x=>x[1]),['index.enc','2026.enc']);
+ assert.deepEqual(graph.metadataCalls.map(x=>x[1]),['2026.enc','index.enc']);
+ graph.calls.length=0;await session.refresh();assert.deepEqual(graph.calls.map(x=>x[1]),['index.enc','2026.enc']);
+});
+test('v2.2.1: initial index change and revoked local operation still reject combined connection',async()=>{
+ const graph=await client({changed:'index.enc'});
+ await assert.rejects(PayrollReadSession.connectAndRefresh(graph,passphrase,()=>{}),/索引が同期中に更新/);
+ const other=await client();await assert.rejects(PayrollReadSession.connectAndRefresh(other,passphrase,()=>{throw Error('revoked');}),/revoked/);
+ assert.deepEqual(other.calls.map(x=>x[1]),['index.enc']);
 });

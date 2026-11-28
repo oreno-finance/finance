@@ -229,9 +229,13 @@ export function sortedRules(rules:readonly MerchantRule[]):MerchantRule[] {
     Math.max(...[a.pattern,...(a.patterns??[])].map(p=>normalizeMerchant(p).length)) || a.id.localeCompare(b.id));
 }
 export function matchingRule(original:string, cardId:string|null, rules:readonly MerchantRule[]):MerchantRule|undefined {
+  return matchingSortedRule(original,cardId,sortedRules(rules));
+}
+/** Match rules already ordered by sortedRules; callers may reuse a render-local snapshot. */
+export function matchingSortedRule(original:string,cardId:string|null,rules:readonly MerchantRule[]):MerchantRule|undefined {
   const merchant=normalizeMerchant(original);
   if(!merchant)return undefined;
-  return sortedRules(rules).find(rule=>{
+  return rules.find(rule=>{
     if(!rule.enabled || (rule.cardId && rule.cardId!==cardId))return false;
     return [rule.pattern,...(rule.patterns??[])].some(term=>{
       const pattern=normalizeMerchant(term);

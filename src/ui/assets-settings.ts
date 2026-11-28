@@ -1,3 +1,4 @@
+import { traceFinanceOperation } from '../cloud/performance-diagnostics.js';
 import {fixedCostCalculationAssets} from '../fixed-costs/rule-fixed-costs.js';
 import {bindModalDismiss,requestConfirmation,confirmationPending,cancelConfirmation} from './modal.js';
 import {DATA_STATUS,formatYen as sharedYen,formatDate,formatDateTime} from './formatters.js';
@@ -730,6 +731,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
   }
   /** Manual registration is explicit; automatic reads use only the encrypted settings document. */
   async function syncPayroll(automatic=false):Promise<void> {
+    return traceFinanceOperation('payroll-sync',async()=>{
     if(busy||payrollBusy)return;
     const vault=getVault();
     if(!vault?.unlocked||vault.recoveryOnly){if(!automatic)status($('assets-payroll-status'),'Financeの保管庫を解除してから連携してください。',true);return;}
@@ -756,10 +758,9 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
       if(automatic&&payrollOwner===vault&&payrollSession&&payrollSynced&&Date.now()-payrollSyncedAt<10*60*1000)return;
       if(!payrollOwner||payrollOwner!==vault||entered&&entered!==saved)clearPayroll();
       const secret=entered||saved!;
-      const session=!entered&&payrollOwner===vault&&payrollSession?payrollSession:await PayrollReadSession.connect(vault.payrollReadClient(),secret);
-      guard();
       status($('assets-payroll-status'),automatic?'Payrollの収入を自動同期しています…':'Payrollの暗号化収入を取得・検証しています…');
-      const items=await session.refresh();guard();
+      const existing=!entered&&payrollOwner===vault?payrollSession:null;
+      const {session,items}=existing?{session:existing,items:await existing.refresh()}:await PayrollReadSession.connectAndRefresh(vault.payrollReadClient(),secret,guard);guard();
       const verified=await vault.readPayrollCredential();guard();
       if(verified!==saved){observeVerifiedPayroll(verified);throw new Error('Payroll連携設定が変更されました。最新の設定で再同期してください。');}
       let credentialError:unknown;
@@ -793,6 +794,7 @@ export function initAssetsSettings(getVault:()=>LiveVault|null,getCategories:()=
     }finally{
       if(epoch===payrollEpoch){payrollBusy=false;$<HTMLButtonElement>('assets-payroll-sync').disabled=!getVault()?.unlocked;$<HTMLButtonElement>('assets-payroll-forget').disabled=!getVault()?.unlocked;}
     }
+      });
   }
   async function refreshPayroll():Promise<void> {
     const vault=getVault();

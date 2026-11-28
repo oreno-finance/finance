@@ -7,7 +7,7 @@ const html = readFileSync(new URL('../dist/index.html', import.meta.url), 'utf8'
 const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
 const cloud = readFileSync(new URL('../src/cloud/cloud-settings.ts', import.meta.url), 'utf8');
 
-for (const id of ['vault-passphrase', 'vault-passphrase-confirm', 'cloud-passphrase']) {
+for (const id of ['vault-passphrase', 'vault-passphrase-confirm', 'cloud-current-secret']) {
   test(`${id}: paste-friendly input and visibility control exist`, () => {
     const input = html.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`, 'g'))?.[0];
     assert.ok(input, `${id} input is absent`);
@@ -43,7 +43,7 @@ test('native password interactions preserve exact pasted characters, and clear r
     for (const [id, label] of [
       ['vault-passphrase', 'パスフレーズ'],
       ['vault-passphrase-confirm', '確認用パスフレーズ'],
-      ['cloud-passphrase', 'パスフレーズ'],
+      ['cloud-current-secret', 'パスフレーズ'],
     ]) {
       inputs.set(id, new StubInput(id));
       toggles.push(new StubToggle(id, label));
@@ -82,10 +82,10 @@ test('native password interactions preserve exact pasted characters, and clear r
   }
 });
 
-test('cloud vault dialog and probe stay paste-friendly', () => {
+test('cloud vault dialog and diagnostic stay paste-friendly', () => {
   assert.match(main, /pass\.autocomplete=mode==='create'\?'new-password':'current-password'/);
   assert.match(main, /clearPasswordField\('vault-passphrase'\)/);
-  assert.match(cloud, /uploadEncryptedProbe\(encrypted\)/);
-  assert.match(cloud, /decryptEncryptedProbe\(await \(await graphClient\(\)\)\.downloadEncryptedProbe\(\),input\.value\)/);
+  assert.match(cloud, /clearPasswordField\('cloud-diagnostic-secret'\)/);
+  assert.doesNotMatch(cloud, /uploadEncryptedProbe|downloadEncryptedProbe/);
   assert.doesNotMatch(cloud, /input\.value\s*=\s*''/);
 });

@@ -14,7 +14,7 @@ test('new UI refinements load after the existing layout styles',()=>{
 
 test('import merchant cells keep badges on the same one-line row',()=>{
   assert.match(main,/const merchantContent=div\('preview-merchant-content'\)/);
-  assert.match(main,/merchantContent\.append\(categoryChip\(meta\)\)/);
+  assert.match(main,/merchantContent\.append\(categoryChip\(meta\.category\)\)/);
   assert.match(css,/preview-merchant-content\s*\{[\s\S]*?display:flex/);
   assert.match(css,/transaction-table tbody td\s*\{[\s\S]*?height:44px/);
 });

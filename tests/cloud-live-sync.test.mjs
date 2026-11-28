@@ -800,3 +800,36 @@ test('H201: denied ordinary edit in mixed PDF batch never uploads the new origin
  await assert.rejects(b.saveBatch([{id:'new-pdf',statement:{...statement('2026-11'),sourceKind:'pdf'},source:{bytes:new Uint8Array([37,80,68,70]),mime:'application/pdf'}},{id:'conflict-edit',statement:statement('2027-01','local')}]),/中止/);
  assert.equal(called,1);assert.deepEqual(store.files,before);assert.deepEqual(store.originals,originals);assert.equal(b.hasPendingYearBatch,false);
 });
+
+
+test('v2.2.1: existing-year edit and delete reuse the locked scope and retain the final metadata fence',async()=>{
+ const [a,b,mock,store]=drivers();await a.create(secret);
+ await a.saveBatch([{id:'old',statement:statement('2025-10')},{id:'edit',statement:statement('2026-11')}]);
+ // Inspect via production vault's operation lease.
+ const calls=[];const list=mock.listYearFiles.bind(mock),index=mock.readFinanceIndex.bind(mock);
+ mock.listYearFiles=async()=>{calls.push(['list',!!a.activeMutation]);return list();};
+ mock.readFinanceIndex=async(...args)=>{calls.push(['index',!!a.activeMutation]);return index(...args);};
+ mock.inspectVaultMutationLock=async()=>{calls.push(['lock-inspect',!!a.activeMutation]);return {state:'absent',createdAt:null};};
+ mock.readFinanceMetadata=async kind=>{calls.push([`metadata:${kind}`,!!a.activeMutation]);return kind==='index'?index():null;};
+ mock.writeYearVault=async function(year,text,ref){this.write('year',year,text,ref);return {id:`year-${year}`,etag:`"${this.file('year',year).revision}"`};};
+ await b.unlock(secret);await b.saveBatch([{id:'remote',statement:statement('2025-12')}]);calls.length=0;
+ await a.saveBatch([{id:'edit',statement:statement('2026-11','changed')}]);
+ assert.deepEqual(a.records().map(x=>x.id).sort(),['edit','old','remote']);
+ assert.equal(calls.filter(([kind])=>kind==='list').length,2); // scope + closing fence; no second body read
+ assert.equal(calls.filter(([kind])=>kind==='index').length,2); // preflight + locked generation; no third body read
+ assert.equal(calls.filter(([kind])=>kind==='lock-inspect').length,0);
+ assert.deepEqual(calls.filter(([kind])=>kind.startsWith('metadata:')), [['metadata:index',true],['metadata:rules',true],['metadata:assets',true]]);
+ calls.length=0;await a.delete('edit');assert.deepEqual(a.records().map(x=>x.id).sort(),['old','remote']);
+ assert.equal(calls.filter(([kind])=>kind==='list').length,2);assert.equal(calls.filter(([kind])=>kind==='lock-inspect').length,0);
+ assert.ok(store.files.has('year:2026'));
+});
+
+test('v2.2.1: changed unrelated shard during closing fence is not published as a successful sync',async()=>{
+ const [a,,mock,store]=drivers();await a.create(secret);
+ await a.saveBatch([{id:'old',statement:statement('2025-10')},{id:'edit',statement:statement('2026-11')}]);
+ const original=a.records().find(x=>x.id==='old');const list=mock.listYearFiles.bind(mock);let count=0;
+ mock.listYearFiles=async()=>{if(++count===2){const old=store.files.get('year:2025');store.files.set('year:2025',{...old,revision:old.revision+1});}return list();};
+ await a.saveBatch([{id:'edit',statement:statement('2026-11','changed')}]);
+ assert.match(a.takeMutationWarning(),/保存は確認できましたが/);
+ assert.deepEqual(a.records().find(x=>x.id==='old'),original);assert.equal(a.records().find(x=>x.id==='edit').statement.rows[0].merchant,'changed');
+});

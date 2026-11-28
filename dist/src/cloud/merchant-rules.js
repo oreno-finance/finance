@@ -214,10 +214,14 @@ export function sortedRules(rules) {
             Math.max(...[a.pattern, ...(a.patterns ?? [])].map(p => normalizeMerchant(p).length)) || a.id.localeCompare(b.id));
 }
 export function matchingRule(original, cardId, rules) {
+    return matchingSortedRule(original, cardId, sortedRules(rules));
+}
+/** Match rules already ordered by sortedRules; callers may reuse a render-local snapshot. */
+export function matchingSortedRule(original, cardId, rules) {
     const merchant = normalizeMerchant(original);
     if (!merchant)
         return undefined;
-    return sortedRules(rules).find(rule => {
+    return rules.find(rule => {
         if (!rule.enabled || (rule.cardId && rule.cardId !== cardId))
             return false;
         return [rule.pattern, ...(rule.patterns ?? [])].some(term => {

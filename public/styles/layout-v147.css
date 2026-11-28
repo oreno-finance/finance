@@ -44,7 +44,6 @@ select:not([multiple]):disabled{
   margin:0!important;
   padding:21px 23px!important;
 }
-.settings-view .cloud-settings-left>.cloud-dev-test{padding:19px 21px!important}
 .settings-view .cloud-advanced-content .cloud-grid>.cloud-troubleshooting{
   align-self:start;
   height:auto;

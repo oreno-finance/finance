@@ -77,7 +77,7 @@ test('month switch during an in-flight report load supersedes old loading and fi
   const root=new Node('div');
   globalThis.document={getElementById:(id)=>id==='reports-content'?root:null,createElement:(tag)=>new Node(tag)};
   const pending=new Map();
-  const vault={unlocked:true,listArchivedMonths:async()=>[],loadArchivedReport:(period)=>{
+  const vault={unlocked:true,loadArchivedReports:(period)=>{
     const deferred=later();pending.set(period,deferred);return deferred.promise;
   }};
   try{
@@ -87,10 +87,10 @@ test('month switch during an in-flight report load supersedes old loading and fi
     assert.deepEqual(root.children.map(n=>[n.tag,n.textContent,n.attrs.role]),[['p','読み込み中…','status']]);
     ui.openPeriod('2026-10');ui.render();
     assert.equal(ui.isBusy(),true);
-    pending.get('2026-11').resolve(null);
+    pending.get('2026-11').resolve([[],null]);
     await Promise.resolve();await Promise.resolve();
     assert.equal(ui.isBusy(),true,'outdated request must not clear the newer one');
-    pending.get('2026-10').resolve(null);
+    pending.get('2026-10').resolve([[],null]);
     await Promise.resolve();await Promise.resolve();await Promise.resolve();
     assert.equal(ui.isBusy(),false,'new request must clear its own busy flag');
     ui.reset();
@@ -104,7 +104,7 @@ test('saving locks its target month and reset discards any late UI response',asy
   globalThis.document={getElementById:(id)=>id==='reports-content'?root:null,createElement:(tag)=>new Node(tag)};
   const deferred=later();
   let writtenPeriod='';
-  const vault={unlocked:true,listArchivedMonths:async()=>[],loadArchivedReport:async()=>null,
+  const vault={unlocked:true,loadArchivedReports:async()=>[[],null],
     saveArchivedReport:(snapshot)=>{writtenPeriod=snapshot.period;return deferred.promise;}};
   const src={records:[],assets:emptyAssets(),rules:[],categories:[],currentPeriod:'2026-10',payroll:{ready:false,syncedAt:null,entries:[]}};
   try{
@@ -134,7 +134,7 @@ test('L303: failed comparison is visible and preserves the saved report',async()
  const src={records:[],assets:emptyAssets(),rules:[],categories:[],currentPeriod:'2026-10',payroll:{ready:false,syncedAt:null,entries:[]}};
  const snapshot=reportSnapshot('2026-10',src),hash=await snapshotHash(snapshot);
  const archive={current:{id:'fixture',snapshot,sourceHash:hash,note:'saved note',savedAt:'2026-10-20T00:00:00Z'},history:[]};
- let writes=0,memoWrites=0;const vault={unlocked:true,listArchivedMonths:async()=>[],loadArchivedReport:async()=>archive,saveArchivedReport:async()=>{writes++;return archive;},saveArchivedReportNote:async(period,note,revision)=>{assert.equal(period,'2026-10');assert.equal(note,'saved note');assert.equal(revision,'fixture');memoWrites++;return archive;}};
+ let writes=0,memoWrites=0;const vault={unlocked:true,loadArchivedReports:async()=>[[],archive],saveArchivedReport:async()=>{writes++;return archive;},saveArchivedReportNote:async(period,note,revision)=>{assert.equal(period,'2026-10');assert.equal(note,'saved note');assert.equal(revision,'fixture');memoWrites++;return archive;}};
  try{
   const ui=initMonthlyReports({source:()=>{throw new Error('synthetic calculation failure');},vault:()=>vault,openMonth:()=>{}});
   ui.openPeriod('2026-10');ui.render();

@@ -38,8 +38,6 @@
 .settings-view .cloud-maintenance-body{gap:12px;padding:2px 20px 20px;border-top:1px solid var(--line)}
 .settings-view .cloud-maintenance-body>.field-label{margin-top:7px}
 .settings-view .cloud-maintenance-body pre:empty{display:none}
-.settings-view .cloud-probe-details{margin-top:10px}
-.settings-view .cloud-probe-details:not([open]){opacity:.82}
 @media(max-width:720px){
   .settings-view .assets-payroll-panel{padding:16px}
   .settings-view .cloud-overview,.settings-view .cloud-rotate-panel{padding:17px}
