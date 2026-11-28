@@ -134,9 +134,13 @@ try {
     const reviewedPr16=sha==='8f82d025b61f3744a9eb9aa2e404c989129bb970' &&
       parents[0]==='0edaa5b0a9a8abd27b1993f903702744e2225794' &&
       parents[1]==='22d4f7fe7bea4156b982105666a35776f9b22565';
+    // PR 24: independently verified GitHub-signed merge with custom subject.
+    const reviewedPr24=sha==='c243f0120b5c9124b602bb6c07c0c48ce2ed6e81' &&
+      parents[0]==='5d9b70f573e51fc142075f4f9c1138d4f94a4808' &&
+      parents[1]==='53111417a06fa2d7d793e4ad83cf519624b0e709';
     const githubMergeCommitter=allowedIdentity(name,email) &&
       committer==='GitHub' && committerEmail==='noreply'+'@github.com' &&
-      parents.length===2 && (reviewedPr12 || reviewedPr16 || /^Merge pull request #\d+ from /i.test(subject));
+      parents.length===2 && (reviewedPr12 || reviewedPr16 || reviewedPr24 || /^Merge pull request #\d+ from /i.test(subject));
     if(!githubMergeCommitter)checkIdentity(committer,committerEmail,'コミット履歴のCommitter');
   }
 }catch(error){errors.push('Git作成者・履歴を取得できません');}
